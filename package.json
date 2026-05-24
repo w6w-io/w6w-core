@@ -1,6 +1,6 @@
 {
   "name": "w6w-core",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "private": true,
   "description": "Core monorepo for the w6w workflow platform.",
   "license": "MIT",
