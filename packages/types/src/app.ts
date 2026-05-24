@@ -100,7 +100,7 @@ export interface AppManifest {
  */
 export type W6WPackageMetadata =
   & Partial<AppManifest>
-  & Pick<AppManifest, "id" | "displayName" | "categories" | "appearance">
+  & Pick<AppManifest, "id" | "displayName" | "appearance">
   & {
     /** Opt-in: load the manifest from a separate file instead of package.json. */
     manifest?: string;

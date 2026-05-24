@@ -48,6 +48,7 @@ interface PackageJson {
   version?: string;
   description?: string;
   keywords?: string[];
+  categories?: string[];
   homepage?: string;
   license?: string;
   bugs?: string | { url?: string };
@@ -96,7 +97,7 @@ function manifestFromPackageJson(pkg: PackageJson): AppManifest {
     displayName: require(w.displayName, "w6w.displayName"),
     version: w.version ?? require(pkg.version, "version"),
     description: w.description ?? pkg.description ?? "",
-    categories: require(w.categories, "w6w.categories"),
+    categories: require(w.categories ?? pkg.categories, "categories"),
     appearance: require(w.appearance, "w6w.appearance"),
     author: require(w.author ?? normalizeAuthor(pkg.author), "author"),
     license: w.license ?? require(pkg.license, "license"),

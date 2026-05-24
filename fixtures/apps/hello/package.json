@@ -4,11 +4,11 @@
   "description": "A trivial fixture app exercising the reference runtime.",
   "license": "MIT",
   "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
   "private": true,
   "w6w": {
     "id": "com.w6w.hello",
     "displayName": "Hello",
-    "categories": ["developer-tools"],
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },
     "actions": [
       "./actions/get-greeting.action.json",
