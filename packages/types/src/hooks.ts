@@ -73,3 +73,21 @@ export type SignHook = (
 
 /** A generic hook signature; specific kinds narrow `input`/`output`. */
 export type Hook<I = unknown, O = unknown> = (input: I, ctx: HookContext) => O | Promise<O>;
+
+/** Auth `exchange` — turn auth code / form input into the stored opaque credential. */
+export type ExchangeHook = (
+  input: { fields?: Record<string, unknown>; code?: string; redirectUri?: string },
+  ctx: HookContext,
+) => unknown | Promise<unknown>;
+
+/** Auth `refresh` — produce a fresh credential from the current one. */
+export type RefreshHook = (
+  input: { credential: unknown },
+  ctx: HookContext,
+) => unknown | Promise<unknown>;
+
+/** Auth `afterConnect` — fetch display data for the connection label. */
+export type AfterConnectHook = (
+  input: { credential: unknown },
+  ctx: HookContext,
+) => Record<string, unknown> | Promise<Record<string, unknown>>;

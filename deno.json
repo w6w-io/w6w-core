@@ -3,6 +3,9 @@
     "./packages/types",
     "./packages/runtime"
   ],
+  "imports": {
+    "@w6w/types": "./packages/types/mod.ts"
+  },
   "tasks": {
     "test": "deno test -A --unstable-worker-options packages/",
     "check": "deno check packages/",

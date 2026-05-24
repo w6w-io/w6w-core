@@ -10,9 +10,6 @@
     "id": "com.w6w.hello",
     "displayName": "Hello",
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },
-    "actions": [
-      "./actions/get-greeting.ts",
-      "./actions/escape-attempt.ts"
-    ]
+    "entry": "./index.ts"
   }
 }

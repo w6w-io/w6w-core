@@ -52,9 +52,9 @@ export function describe(app: LoadedApp): AppDescription {
   };
 }
 
-/** Pick the LoadedAuth a Connection refers to (by `auth` path), else the app's sole auth. */
+/** Pick the LoadedAuth a Connection refers to (by `auth` key), else the app's sole auth. */
 function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined {
-  return app.auths.find((a) => a.ref === connection.auth) ?? app.auths[0];
+  return app.auths.find((a) => a.auth.key === connection.auth) ?? app.auths[0];
 }
 
 /** Perform a request on the host: enforce the allowlist, then fetch. */
@@ -116,7 +116,8 @@ export async function invoke(
   //    Connection and we split it: redacted projection for the action, raw
   //    credential reserved for `sign`.
   const connection = opts.connection;
-  const signPath = connection ? authFor(app, connection)?.hooks.sign : undefined;
+  const auth = connection ? authFor(app, connection) : undefined;
+  const canSign = !!auth?.hooks.has("sign");
   const redacted = connection ? redact(connection) : undefined;
 
   // 3. Resolve params.
@@ -125,11 +126,12 @@ export async function invoke(
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
   const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
     let signed = request;
-    if (signPath && connection) {
+    if (canSign && auth && connection) {
       // `sign` runs in its own worker with NO network, and is the only code
       // given the credential. It returns the request with auth injected.
       signed = await runHook<SignableRequest>({
-        hookPath: signPath,
+        entryPath: app.entryPath,
+        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
         input: { request, credential: connection.credential },
         readScope: app.dir,
         timeoutMs: opts.timeoutMs,
@@ -139,10 +141,10 @@ export async function invoke(
     return hostFetch(app.netAllowlist, signed);
   };
 
-  // 5. Invoke the action module's `execute` in the sandbox.
+  // 5. Invoke the action's `execute` in the sandbox.
   const value = await runHook({
-    hookPath: loaded.modulePath,
-    method: "execute",
+    entryPath: app.entryPath,
+    selector: { kind: "action", key: loaded.definition.key },
     input: resolved,
     readScope: app.dir,
     connection: redacted,

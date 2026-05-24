@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
-import { invoke, loadApp } from "../mod.ts";
+import { describe, invoke, loadApp } from "../mod.ts";
 import type { Connection, Invocation } from "@w6w/types";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
@@ -9,7 +9,7 @@ const CONNECTION: Connection = {
   manifestVersion: "1",
   id: "conn_test",
   app: "com.w6w.sendgrid",
-  auth: "./auth/api-key.json",
+  auth: "api-key",
   owner: "user_1",
   state: "connected",
   credential: { apiKey: "test-key-123" },
@@ -32,6 +32,17 @@ function captureServer() {
   const port = (server.addr as Deno.NetAddr).port;
   return { server, port, get: () => captured };
 }
+
+Deno.test("describe extracts auth config from the code module", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { auth } = describe(app);
+  assertEquals(auth.length, 1);
+  assertEquals(auth[0].key, "api-key");
+  assertEquals(auth[0].type, "apiKey");
+  // hook functions must not leak into the serializable config:
+  assertFalse("sign" in auth[0]);
+  assertFalse("test" in auth[0]);
+});
 
 Deno.test("sign injects the credential at the wire; the action never sees it", async () => {
   const app = await loadApp(SENDGRID_DIR);

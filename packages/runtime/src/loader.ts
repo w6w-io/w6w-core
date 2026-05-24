@@ -1,41 +1,31 @@
 /**
  * App loader. Takes a local directory (already fetched — cloning from GitHub is
- * a wrapper concern) and produces a `LoadedApp`: the parsed manifest plus the
- * Actions and Auth methods it references, with hook paths resolved to absolute.
+ * a wrapper concern) and produces a `LoadedApp`: the identity manifest (from
+ * package.json) plus the behavior (actions + auth) extracted from the app's
+ * entry module.
  */
-import { dirname, isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
-import type { Action, AppManifest, Author, Auth, W6WPackageMetadata } from "@w6w/types";
+import { isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
+import type { Action, AppManifest, Author, Auth, AuthHookKind, W6WPackageMetadata } from "@w6w/types";
 import { LoadError } from "./errors.ts";
-import { describeActions } from "./sandbox/run-hook.ts";
+import { describeApp } from "./sandbox/run-hook.ts";
 
 export interface LoadedAction {
   /** Serializable config extracted from the action module (no `execute`). */
   definition: Action;
-  /** Absolute path to the action module. Imported in the sandbox to run `execute`. */
-  modulePath: string;
 }
 
 export interface LoadedAuth {
+  /** Serializable config (no hook functions). */
   auth: Auth;
-  /** The manifest-relative path listed in `app.auth`; matches `Connection.auth`. */
-  ref: string;
-  /** Absolute directory of the auth manifest (root for its relative hook paths). */
-  baseDir: string;
-  /** Lifecycle hook module paths, resolved to absolute. */
-  hooks: {
-    preflight?: string;
-    exchange?: string;
-    test?: string;
-    afterConnect?: string;
-    sign?: string;
-    refresh?: string;
-    revoke?: string;
-  };
+  /** Which lifecycle hooks the auth module actually defines. */
+  hooks: Set<AuthHookKind>;
 }
 
 export interface LoadedApp {
   /** Absolute app root directory. */
   dir: string;
+  /** Absolute path to the entry module. Imported in the sandbox to run any hook. */
+  entryPath: string;
   manifest: AppManifest;
   actions: Map<string, LoadedAction>;
   auths: LoadedAuth[];
@@ -51,6 +41,7 @@ interface PackageJson {
   categories?: string[];
   homepage?: string;
   license?: string;
+  main?: string;
   bugs?: string | { url?: string };
   repository?: string | { url?: string };
   author?: string | Author;
@@ -117,8 +108,6 @@ function manifestFromPackageJson(pkg: PackageJson): AppManifest {
     localizations: w.localizations,
     engines: w.engines,
     network: w.network,
-    actions: w.actions,
-    auth: w.auth,
   };
 }
 
@@ -162,67 +151,48 @@ function computeAllowlist(manifest: AppManifest, auths: LoadedAuth[]): string[] 
   return [...hosts];
 }
 
-function resolveAuthHooks(baseDir: string, auth: Auth): LoadedAuth["hooks"] {
-  const h = auth.hooks ?? ({} as NonNullable<Auth["hooks"]>);
-  const resolved: LoadedAuth["hooks"] = {};
-  for (const kind of ["preflight", "exchange", "test", "afterConnect", "sign", "refresh", "revoke"] as const) {
-    const ref = h[kind];
-    if (ref) resolved[kind] = resolveRef(baseDir, ref);
-  }
-  return resolved;
-}
-
 /**
  * Load an app from a local directory.
  *
- * The manifest entry point is `package.json`'s `w6w.manifest` field, defaulting
- * to `app.json`. The manifest's `actions`/`auth` path lists are resolved
- * relative to the manifest file; each Action's `execute` is resolved relative
- * to that Action's manifest file.
+ * Identity comes from `package.json` (the `w6w` block plus native fields), or a
+ * standalone file via `w6w.manifest`. Behavior comes from the entry module
+ * (`w6w.entry`, else package `main`, else `./index.ts`), imported in the sandbox
+ * so its config can be extracted without running untrusted code on the host.
  */
 export async function loadApp(dir: string): Promise<LoadedApp> {
   const root = resolve(dir);
   const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
 
-  // The manifest comes from package.json's `w6w` block by default. An app may
-  // opt into a standalone manifest file via `w6w.manifest`.
   let manifest: AppManifest;
-  let manifestDir: string;
   if (pkg.w6w?.manifest) {
-    const manifestPath = resolveRef(root, pkg.w6w.manifest);
-    manifestDir = dirname(manifestPath);
-    manifest = await readJson<AppManifest>(manifestPath, "missing_manifest");
+    manifest = await readJson<AppManifest>(resolveRef(root, pkg.w6w.manifest), "missing_manifest");
     if (!manifest.id) throw new LoadError("invalid_manifest", "App manifest is missing `id`.");
   } else {
     manifest = manifestFromPackageJson(pkg);
-    manifestDir = root;
   }
 
-  const auths: LoadedAuth[] = [];
-  for (const ref of manifest.auth ?? []) {
-    const authPath = resolveRef(manifestDir, ref);
-    const auth = await readJson<Auth>(authPath, "missing_auth");
-    const baseDir = dirname(authPath);
-    auths.push({ auth, ref, baseDir, hooks: resolveAuthHooks(baseDir, auth) });
-  }
+  const entryPath = resolveRef(root, pkg.w6w?.entry ?? pkg.main ?? "./index.ts");
+  const described = await describeApp(entryPath, root);
 
-  // Actions are code modules (config + execute co-located). Import them in the
-  // sandbox to extract their serializable config without running untrusted code
-  // on the host.
   const actions = new Map<string, LoadedAction>();
-  const actionPaths = (manifest.actions ?? []).map((ref) => resolveRef(manifestDir, ref));
-  if (actionPaths.length > 0) {
-    const described = await describeActions(actionPaths, root);
-    for (const { path, definition } of described) {
-      if (!definition?.key) {
-        throw new LoadError(
-          "invalid_action",
-          `Action module ${path} did not default-export a definition with a \`key\`.`,
-        );
-      }
-      actions.set(definition.key, { definition, modulePath: path });
+  for (const definition of described.actions) {
+    if (!definition?.key) {
+      throw new LoadError("invalid_action", `An action in ${entryPath} is missing a \`key\`.`);
     }
+    actions.set(definition.key, { definition });
   }
 
-  return { dir: root, manifest, actions, auths, netAllowlist: computeAllowlist(manifest, auths) };
+  const auths: LoadedAuth[] = described.auth.map(({ auth, hooks }) => ({
+    auth,
+    hooks: new Set(hooks),
+  }));
+
+  return {
+    dir: root,
+    entryPath,
+    manifest,
+    actions,
+    auths,
+    netAllowlist: computeAllowlist(manifest, auths),
+  };
 }

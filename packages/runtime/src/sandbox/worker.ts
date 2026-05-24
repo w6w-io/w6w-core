@@ -1,14 +1,23 @@
 /**
  * Sandbox worker entry point. Runs INSIDE a Deno Web Worker spawned with a
- * restricted permission set (see run-hook.ts). It imports untrusted app
- * modules and either calls them or extracts their (serializable) config.
+ * restricted permission set (see run-hook.ts). It imports an app's untrusted
+ * entry module and either calls a located function or extracts the app's
+ * serializable config.
  *
  * The worker has no network permission. When a hook calls `ctx.fetch`, the
  * request is proxied to the host, which signs and performs it. So both the
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import type { DescribedAction, HostMessage, WireResponse, WorkerMessage } from "./protocol.ts";
+import { AUTH_HOOK_KINDS } from "@w6w/types";
+import type { AppDefinition } from "@w6w/types";
+import type {
+  DescribedApp,
+  HostMessage,
+  Selector,
+  WireResponse,
+  WorkerMessage,
+} from "./protocol.ts";
 
 declare const self: {
   onmessage: ((e: { data: HostMessage }) => void) | null;
@@ -49,19 +58,33 @@ function proxyFetch(enabled: boolean) {
   };
 }
 
-async function importDefault(path: string): Promise<unknown> {
-  const mod = await import(`file://${path}`);
-  return mod.default ?? mod.handler;
+async function importApp(entryPath: string): Promise<AppDefinition> {
+  const mod = await import(`file://${entryPath}`);
+  const app = mod.default ?? mod.app;
+  if (!app || typeof app !== "object") {
+    throw new Error(`Entry module "${entryPath}" must default-export an AppDefinition object.`);
+  }
+  return app as AppDefinition;
+}
+
+/** Resolve the function a selector addresses, bound to its owner object. */
+function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) => unknown) | null {
+  if (sel.kind === "action") {
+    const action = app.actions?.find((a) => a.key === sel.key);
+    return action?.execute ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action) : null;
+  }
+  const auth = app.auth?.find((a) => a.key === sel.key);
+  const fn = auth?.[sel.hook];
+  return typeof fn === "function" ? (fn as (i: unknown, c: unknown) => unknown).bind(auth) : null;
 }
 
 async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
-  const target = await importDefault(msg.hookPath);
-  const fn = msg.method
-    ? (target as Record<string, unknown> | undefined)?.[msg.method]
-    : target;
-  if (typeof fn !== "function") {
-    const what = msg.method ? `method "${msg.method}"` : "default export";
-    throw new Error(`Module "${msg.hookPath}" has no callable ${what}.`);
+  const app = await importApp(msg.entryPath);
+  const fn = locate(app, msg.selector);
+  if (!fn) {
+    const s = msg.selector;
+    const what = s.kind === "action" ? `action "${s.key}".execute` : `auth "${s.key}".${s.hook}`;
+    throw new Error(`Entry module has no callable ${what}.`);
   }
   const ctx = {
     fetch: proxyFetch(msg.enableFetch),
@@ -69,32 +92,32 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
       post({ type: "log", level, message, data }),
     connection: msg.connection,
   };
-  const value = await (fn as (i: unknown, c: unknown) => unknown).call(
-    msg.method ? target : undefined,
-    msg.input,
-    ctx,
-  );
+  const value = await fn(msg.input, ctx);
   post({ type: "result", value });
 }
 
-async function handleDescribeActions(msg: Extract<HostMessage, { op: "describe-actions" }>) {
-  const described: DescribedAction[] = [];
-  for (const path of msg.paths) {
-    const def = await importDefault(path);
-    if (!def || typeof def !== "object") {
-      throw new Error(`Action module "${path}" must default-export an ActionDefinition object.`);
-    }
-    // Strip the execute function (and anything non-serializable) to a plain config.
-    const definition = JSON.parse(JSON.stringify({ ...def, execute: undefined }));
-    described.push({ path, definition });
-  }
+async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" }>) {
+  const app = await importApp(msg.entryPath);
+
+  // Strip all functions to plain config via JSON round-trip.
+  const actions = (app.actions ?? []).map((a) =>
+    JSON.parse(JSON.stringify({ ...a, execute: undefined }))
+  );
+  const auth = (app.auth ?? []).map((a) => {
+    const present = AUTH_HOOK_KINDS.filter((k) => typeof a[k] === "function");
+    const config = { ...a } as Record<string, unknown>;
+    for (const k of AUTH_HOOK_KINDS) delete config[k];
+    return { auth: JSON.parse(JSON.stringify(config)), hooks: present };
+  });
+
+  const described: DescribedApp = { actions, auth };
   post({ type: "result", value: described });
 }
 
 async function run(msg: Extract<HostMessage, { type: "start" }>) {
   try {
     if (msg.op === "call") await handleCall(msg);
-    else await handleDescribeActions(msg);
+    else await handleDescribeApp(msg);
   } catch (err) {
     const error = err as Error;
     post({

@@ -9,7 +9,13 @@
  */
 import type { RedactedConnection, SignableRequest } from "@w6w/types";
 import { W6WError } from "../errors.ts";
-import type { DescribedAction, HostMessage, WireResponse, WorkerMessage } from "./protocol.ts";
+import type {
+  DescribedApp,
+  HostMessage,
+  Selector,
+  WireResponse,
+  WorkerMessage,
+} from "./protocol.ts";
 
 const NO_NET_PERMS = {
   net: false as const,
@@ -94,37 +100,37 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
 }
 
 export interface RunHookOptions extends WorkerRunOptions {
-  /** Absolute path to the module. */
-  hookPath: string;
-  /** When set, call `default[method]` (e.g. an action's `"execute"`); otherwise call the default export. */
-  method?: string;
+  /** Absolute path to the app's entry module. */
+  entryPath: string;
+  /** Which callable inside the exported app object to run. */
+  selector: Selector;
   /** Value passed as the call's first argument. */
   input: unknown;
   /** Redacted connection exposed via `ctx.connection`. Never the credential. */
   connection?: RedactedConnection | unknown;
 }
 
-/** Import a module in the sandbox and call it (a hook function, or an action's method). */
+/** Import the entry module in the sandbox and call a located function. */
 export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
   return runWorker<T>({
     type: "start",
     op: "call",
-    hookPath: opts.hookPath,
-    method: opts.method,
+    entryPath: opts.entryPath,
+    selector: opts.selector,
     input: opts.input,
     connection: opts.connection,
     enableFetch: !!opts.onFetch,
   }, opts);
 }
 
-/** Import action modules in the sandbox and extract their serializable config. */
-export function describeActions(
-  paths: string[],
+/** Import the entry module in the sandbox and extract its serializable app config. */
+export function describeApp(
+  entryPath: string,
   readScope: string,
   timeoutMs?: number,
-): Promise<DescribedAction[]> {
-  return runWorker<DescribedAction[]>(
-    { type: "start", op: "describe-actions", paths },
+): Promise<DescribedApp> {
+  return runWorker<DescribedApp>(
+    { type: "start", op: "describe-app", entryPath },
     { readScope, timeoutMs },
   );
 }

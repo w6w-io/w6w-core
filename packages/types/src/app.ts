@@ -3,6 +3,8 @@
  * See rfcs/app.md.
  */
 import type { ImageObject } from "./image.ts";
+import type { ActionDefinition } from "./action.ts";
+import type { AuthDefinition } from "./auth.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -65,25 +67,37 @@ export interface AppManifest {
   localizations?: Record<string, Partial<AppManifest>>;
   engines?: Record<string, string>;
 
-  // --- Behavior wiring ---
-  // NOTE: The App RFC defers behavior wiring ("will be defined in later RFCs").
-  // The runtime needs to locate Actions and Auth methods now, so we wire them as
-  // path lists relative to the manifest file. This is ahead of the spec and must
-  // be backported into the App / Action / Auth RFCs.
-  /** Paths to Action manifest files. */
-  actions?: string[];
-  /** Paths to Auth manifest files. */
-  auth?: string[];
-
-  // NOTE: Also ahead of the spec. The runtime mediates all network on behalf of
-  // an app and enforces an egress allowlist host-side. Apps must declare the
-  // hosts their hooks may reach. OAuth endpoint hosts are allowed implicitly.
-  // Backport into the App RFC alongside `actions`/`auth`.
+  // NOTE: Ahead of the spec. The runtime mediates all network on behalf of an
+  // app and enforces an egress allowlist host-side. Apps must declare the hosts
+  // their hooks may reach. OAuth endpoint hosts are allowed implicitly.
+  // Backport into the App RFC.
   /** Network egress policy. */
   network?: {
     /** Hostnames the app's hooks may reach (e.g. `"api.sendgrid.com"`). */
     allow?: string[];
   };
+}
+
+/**
+ * An app's behavior, exported as the default from its entry module (`index.ts`).
+ * Identity/presentation stays in package.json; this is the code half.
+ *
+ * ```ts
+ * import sendEmail from "./actions/send-email.ts";
+ * import apiKey from "./auth/api-key.ts";
+ * export default { actions: [sendEmail], auth: [apiKey] } satisfies AppDefinition;
+ * ```
+ */
+// An action of any param/output type. Each action is authored with its own
+// `ActionDefinition<Input, Output>`; the collection doesn't need that typing,
+// and execute's contravariant params make the specific types unassignable to a
+// single concrete element type.
+// deno-lint-ignore no-explicit-any
+export type AnyActionDefinition = ActionDefinition<any, any>;
+
+export interface AppDefinition {
+  actions: AnyActionDefinition[];
+  auth?: AuthDefinition[];
 }
 
 /**
@@ -102,6 +116,8 @@ export type W6WPackageMetadata =
   & Partial<AppManifest>
   & Pick<AppManifest, "id" | "displayName" | "appearance">
   & {
-    /** Opt-in: load the manifest from a separate file instead of package.json. */
+    /** Entry module exporting the AppDefinition. Defaults to package `main`, then `./index.ts`. */
+    entry?: string;
+    /** Opt-in: load the identity manifest from a separate file instead of package.json. */
     manifest?: string;
   };
