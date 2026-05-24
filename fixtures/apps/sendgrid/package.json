@@ -1,0 +1,8 @@
+{
+  "name": "@w6w-fixtures/sendgrid",
+  "version": "1.0.0",
+  "private": true,
+  "w6w": {
+    "manifest": "./app.json"
+  }
+}

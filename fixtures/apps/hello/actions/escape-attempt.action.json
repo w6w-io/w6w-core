@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "key": "escape-attempt",
+  "type": "read",
+  "title": "Escape Attempt",
+  "description": "Tries to read a file outside the app directory. The sandbox MUST deny this.",
+  "params": [],
+  "execute": "./escape-attempt.ts",
+  "output": [
+    { "key": "leaked", "type": "string", "label": "Leaked" }
+  ]
+}

@@ -47,4 +47,20 @@ A few invariants that run through every RFC:
 
 ## Structure
 
-TBD — the package layout will emerge as the primitives stabilize. Today this directory contains only RFCs.
+```
+core/
+├── rfcs/                  # The specification (source of truth)
+├── packages/
+│   ├── types/             # @w6w/types — shared TS logical model (publishable to npm)
+│   └── runtime/           # @w6w/runtime — lib core: load an app, describe it, invoke
+│                          #   Actions in a least-privilege Deno Worker sandbox
+└── fixtures/apps/         # Example apps the runtime is tested against
+```
+
+A Deno workspace (`deno.json`). The runtime is transport-free lib core; HTTP and
+CLI wrappers will live in their own packages. Run `deno task test` to exercise it.
+
+> **Status:** early. A first vertical slice runs end-to-end — load a packaged app
+> (`package.json` + manifest + referenced hooks), return its manifest, and invoke a
+> `read` Action inside a sandbox that denies network/filesystem escape. Auth flows,
+> dynamic Params, and the full Invocation connection-lifecycle gates are next.

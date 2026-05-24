@@ -1,0 +1,19 @@
+{
+  "manifestVersion": "1",
+  "id": "com.w6w.sendgrid",
+  "name": "sendgrid",
+  "displayName": "SendGrid",
+  "version": "1.0.0",
+  "description": "Send transactional email via SendGrid.",
+  "categories": ["communication"],
+  "appearance": {
+    "icon": { "svg": "./assets/icon.svg" }
+  },
+  "author": { "name": "w6w" },
+  "license": "MIT",
+  "network": {
+    "allow": ["api.sendgrid.com", "127.0.0.1"]
+  },
+  "auth": ["./auth/api-key.json"],
+  "actions": ["./actions/send-email.action.json"]
+}

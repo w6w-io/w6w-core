@@ -1,0 +1,8 @@
+{
+  "name": "@w6w/runtime",
+  "version": "0.0.1",
+  "exports": "./mod.ts",
+  "imports": {
+    "@w6w/types": "../types/mod.ts"
+  }
+}
