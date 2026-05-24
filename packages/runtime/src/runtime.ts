@@ -17,6 +17,7 @@ import type {
   Auth,
   Connection,
   Invocation,
+  RedactedConnection,
   SignableRequest,
 } from "@w6w/types";
 import { redact } from "@w6w/types";
@@ -91,10 +92,77 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
   };
 }
 
+interface ResolvedConnection {
+  /** The live credential to feed `sign` (post-refresh if it was stale). */
+  credential: unknown;
+  /** The redacted projection exposed to the action. */
+  redacted: RedactedConnection;
+}
+
+/**
+ * Apply the Connection lifecycle gates from the Invocation + Connection RFCs.
+ * Throws (phase `auth`) for non-live states; for `needs_refresh`, runs the Auth
+ * `refresh` hook and proceeds with the new credential, or transitions to broken.
+ */
+async function resolveConnection(
+  app: LoadedApp,
+  conn: Connection,
+  auth: LoadedAuth | undefined,
+  opts: InvokeOptions,
+): Promise<ResolvedConnection> {
+  switch (conn.state) {
+    case "connected":
+      return { credential: conn.credential, redacted: redact(conn) };
+    case "pending":
+      throw new W6WError(
+        "connection_pending",
+        "auth",
+        "Connection is pending; finish the auth flow.",
+      );
+    case "revoked":
+      throw new W6WError("connection_revoked", "auth", "Connection was revoked; reconnect.");
+    case "broken":
+      throw new W6WError("connection_broken", "auth", "Connection is broken; reconnect.");
+    case "needs_refresh": {
+      if (!auth?.hooks.has("refresh")) {
+        throw new W6WError(
+          "connection_broken",
+          "auth",
+          "Connection needs refresh but its auth method has no `refresh` hook.",
+        );
+      }
+      let credential: unknown;
+      try {
+        // `refresh` gets the old credential and an un-signed, host-mediated
+        // fetch (to reach the token endpoint). On success it returns the new
+        // credential; any failure transitions the connection to broken.
+        credential = await runHook({
+          entryPath: app.entryPath,
+          selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
+          input: { credential: conn.credential },
+          readScope: app.dir,
+          timeoutMs: opts.timeoutMs,
+          onFetch: (req) => hostFetch(app.netAllowlist, req),
+        });
+      } catch (e) {
+        throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
+      }
+      const refreshed: Connection = { ...conn, credential, state: "connected" };
+      return { credential, redacted: redact(refreshed) };
+    }
+    default:
+      throw new W6WError(
+        "connection_broken",
+        "auth",
+        `Unknown connection state "${(conn as Connection).state}".`,
+      );
+  }
+}
+
 /**
  * Execute an Action, following the Invocation RFC's resolution sequence:
- * resolve action -> (connection lifecycle gates: later slice) -> resolve params
- * -> invoke `execute` in the sandbox, signing outbound requests.
+ * resolve action -> resolve connection (lifecycle gates + refresh) -> resolve
+ * params -> invoke `execute` in the sandbox, signing outbound requests.
  */
 export async function invoke(
   app: LoadedApp,
@@ -114,15 +182,26 @@ export async function invoke(
     throw new W6WError("unknown_action", "resolution", `Unknown action "${invocation.action}".`);
   }
 
-  // 2. Resolve Connection.
-  //    TODO(slice): apply the lifecycle gates (pending/needs_refresh/broken/
-  //    revoked) from the Connection RFC. For now the host supplies a resolved
-  //    Connection and we split it: redacted projection for the action, raw
-  //    credential reserved for `sign`.
-  const connection = opts.connection;
-  const auth = connection ? authFor(app, connection) : undefined;
+  // 2. Resolve Connection — apply the lifecycle gates, refreshing if needed.
+  const auth = opts.connection ? authFor(app, opts.connection) : undefined;
+  let credential: unknown;
+  let redacted: RedactedConnection | undefined;
+  if (opts.connection) {
+    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  } else if (invocation.connection) {
+    throw new W6WError(
+      "unknown_connection",
+      "auth",
+      `Invocation references connection "${invocation.connection}" but none was provided.`,
+    );
+  } else if (app.auths.length > 0) {
+    throw new W6WError(
+      "connection_required",
+      "auth",
+      `Action "${invocation.action}" requires a connection — the app declares auth.`,
+    );
+  }
   const canSign = !!auth?.hooks.has("sign");
-  const redacted = connection ? redact(connection) : undefined;
 
   // 3. Resolve params.
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
@@ -130,13 +209,13 @@ export async function invoke(
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
   const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
     let signed = request;
-    if (canSign && auth && connection) {
+    if (canSign && auth) {
       // `sign` runs in its own worker with NO network, and is the only code
-      // given the credential. It returns the request with auth injected.
+      // given the (live, post-refresh) credential. It injects auth.
       signed = await runHook<SignableRequest>({
         entryPath: app.entryPath,
         selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential: connection.credential },
+        input: { request, credential },
         readScope: app.dir,
         timeoutMs: opts.timeoutMs,
         // no onFetch -> the sign worker cannot make network calls.

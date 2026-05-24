@@ -69,8 +69,10 @@ Auth method is a code module that co-locates its config with its functions
 (`execute`, `sign`, `test`, …), n8n/Zapier-style. No `.action.json`/`.auth.json`
 files. `w6w.manifest` can still opt into a standalone identity file.
 
-> **Status:** early. Two vertical slices run end-to-end: (1) load a packaged app,
-> return its manifest, invoke a `read` Action in a sandbox that denies fs/network
-> escape; (2) Auth — outbound requests are signed by a credential-bearing `sign`
-> hook that runs in its own network-less worker, so neither sandbox can leak the
-> credential. The Invocation connection-lifecycle gates and dynamic Params are next.
+> **Status:** early. Working end-to-end: load a packaged app, return its manifest,
+> and invoke an Action in a sandbox that denies fs/network escape. Auth — outbound
+> requests are signed by a credential-bearing `sign` hook in its own network-less
+> worker, so neither sandbox can leak the credential. The Invocation
+> connection-lifecycle gates (`pending`/`broken`/`revoked` reject; `needs_refresh`
+> runs `refresh`) are enforced. Dynamic Params (`options.source` + the fixpoint
+> resolution loop) are next.

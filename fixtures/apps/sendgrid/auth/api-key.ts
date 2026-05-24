@@ -24,6 +24,16 @@ const apiKey: AuthDefinition = {
   test() {
     return { ok: true };
   },
+
+  /**
+   * Exercises the runtime's `needs_refresh` gate. A real OAuth refresh would
+   * `ctx.fetch` the token endpoint; here it just derives a new credential so
+   * the lifecycle path is testable without a token server.
+   */
+  refresh({ credential }) {
+    const { apiKey } = credential as { apiKey: string };
+    return { apiKey: `${apiKey}-refreshed` };
+  },
 };
 
 export default apiKey;

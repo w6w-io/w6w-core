@@ -1,6 +1,6 @@
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
-import { describe, invoke, loadApp } from "../mod.ts";
+import { describe, invoke, loadApp, W6WError } from "../mod.ts";
 import type { Connection, Invocation } from "@w6w/types";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
@@ -31,6 +31,23 @@ function captureServer() {
   );
   const port = (server.addr as Deno.NetAddr).port;
   return { server, port, get: () => captured };
+}
+
+function withState(state: Connection["state"]): Connection {
+  return { ...CONNECTION, state };
+}
+
+function sendInvocation(
+  apiBase: string,
+  connection: string | undefined = CONNECTION.id,
+): Invocation {
+  return {
+    manifestVersion: "1",
+    app: "com.w6w.sendgrid",
+    action: "send-email",
+    connection,
+    params: { to: "a@b.c", from: "x@y.z", subject: "s", body: "b", apiBase },
+  };
 }
 
 Deno.test("describe extracts auth config from the code module", async () => {
@@ -103,4 +120,71 @@ Deno.test("requests to hosts off the allowlist are denied by the host", async ()
     threw = true;
   }
   assert(threw, "expected the off-allowlist request to fail the invocation");
+});
+
+// --- Connection lifecycle gates (Invocation RFC resolution sequence step 2) ---
+
+for (
+  const [state, code] of [
+    ["pending", "connection_pending"],
+    ["revoked", "connection_revoked"],
+    ["broken", "connection_broken"],
+  ] as const
+) {
+  Deno.test(`gate: "${state}" connection is rejected before execute`, async () => {
+    const app = await loadApp(SENDGRID_DIR);
+    const err = await assertRejects(
+      () =>
+        invoke(app, sendInvocation("https://api.sendgrid.com"), { connection: withState(state) }),
+      W6WError,
+    );
+    assertEquals(err.code, code);
+    assertEquals(err.phase, "auth");
+  });
+}
+
+Deno.test("gate: needs_refresh runs the refresh hook, then signs with the new credential", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = captureServer();
+  try {
+    const result = await invoke(app, sendInvocation(`http://127.0.0.1:${port}`), {
+      connection: withState("needs_refresh"),
+    });
+    assertEquals((result.value as { status: number }).status, 202);
+    // refresh derived "<key>-refreshed"; sign used the refreshed credential.
+    assertEquals(get()?.authorization, "Bearer test-key-123-refreshed");
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test("gate: an auth app requires a connection", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const invocation: Invocation = {
+    manifestVersion: "1",
+    app: "com.w6w.sendgrid",
+    action: "send-email",
+    // no `connection` at all
+    params: {
+      to: "a@b.c",
+      from: "x@y.z",
+      subject: "s",
+      body: "b",
+      apiBase: "https://api.sendgrid.com",
+    },
+  };
+  const err = await assertRejects(() => invoke(app, invocation), W6WError);
+  assertEquals(err.code, "connection_required");
+  assertEquals(err.phase, "auth");
+});
+
+Deno.test("gate: a referenced connection not provided to the runtime is unknown_connection", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  // invocation references a connection id, but no Connection object is passed.
+  const err = await assertRejects(
+    () => invoke(app, sendInvocation("https://api.sendgrid.com")),
+    W6WError,
+  );
+  assertEquals(err.code, "unknown_connection");
+  assertEquals(err.phase, "auth");
 });
