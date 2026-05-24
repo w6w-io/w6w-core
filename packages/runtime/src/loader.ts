@@ -5,7 +5,14 @@
  * entry module.
  */
 import { isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
-import type { Action, AppManifest, Author, Auth, AuthHookKind, W6WPackageMetadata } from "@w6w/types";
+import type {
+  Action,
+  AppManifest,
+  Auth,
+  AuthHookKind,
+  Author,
+  W6WPackageMetadata,
+} from "@w6w/types";
 import { LoadError } from "./errors.ts";
 import { describeApp } from "./sandbox/run-hook.ts";
 

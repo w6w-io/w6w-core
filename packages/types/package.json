@@ -1,0 +1,19 @@
+{
+  "name": "@w6w/types",
+  "version": "0.0.1",
+  "description": "Shared logical model for the w6w workflow platform. Pure, dependency-free TypeScript.",
+  "license": "MIT",
+  "type": "module",
+  "types": "./mod.ts",
+  "exports": {
+    ".": {
+      "types": "./mod.ts",
+      "default": "./mod.ts"
+    }
+  },
+  "files": ["mod.ts", "src"],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

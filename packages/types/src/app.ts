@@ -79,6 +79,15 @@ export interface AppManifest {
 }
 
 /**
+ * An action of any param/output type. Each action is authored with its own
+ * `ActionDefinition<Input, Output>`; the collection doesn't need that typing,
+ * and execute's contravariant params make the specific types unassignable to a
+ * single concrete element type.
+ */
+// deno-lint-ignore no-explicit-any
+export type AnyActionDefinition = ActionDefinition<any, any>;
+
+/**
  * An app's behavior, exported as the default from its entry module (`index.ts`).
  * Identity/presentation stays in package.json; this is the code half.
  *
@@ -88,13 +97,6 @@ export interface AppManifest {
  * export default { actions: [sendEmail], auth: [apiKey] } satisfies AppDefinition;
  * ```
  */
-// An action of any param/output type. Each action is authored with its own
-// `ActionDefinition<Input, Output>`; the collection doesn't need that typing,
-// and execute's contravariant params make the specific types unassignable to a
-// single concrete element type.
-// deno-lint-ignore no-explicit-any
-export type AnyActionDefinition = ActionDefinition<any, any>;
-
 export interface AppDefinition {
   actions: AnyActionDefinition[];
   auth?: AuthDefinition[];
@@ -107,8 +109,7 @@ export interface AppDefinition {
  * `bugs`, `keywords`) are reused, and everything App-specific goes here.
  *
  * Only the fields npm's schema can't express are required (`id`, `displayName`,
- * `categories`, `appearance`); the rest fall back to native package.json fields
- * or sensible defaults.
+ * `appearance`); the rest fall back to native package.json fields or defaults.
  *
  * NOTE: ahead of the App RFC — backport alongside the other wiring fields.
  */

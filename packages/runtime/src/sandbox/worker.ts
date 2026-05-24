@@ -71,7 +71,9 @@ async function importApp(entryPath: string): Promise<AppDefinition> {
 function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) => unknown) | null {
   if (sel.kind === "action") {
     const action = app.actions?.find((a) => a.key === sel.key);
-    return action?.execute ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action) : null;
+    return action?.execute
+      ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action)
+      : null;
   }
   const auth = app.auth?.find((a) => a.key === sel.key);
   const fn = auth?.[sel.hook];

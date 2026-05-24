@@ -1,0 +1,22 @@
+{
+  // Standard TypeScript config an app author uses. A real published app drops
+  // the `paths` block and just lists `@w6w/types` as a dependency (resolved
+  // from node_modules). Here `paths` bridges to the local source in-repo.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@w6w/types": ["../../../packages/types"]
+    }
+  },
+  "include": ["index.ts", "actions/**/*.ts"]
+}

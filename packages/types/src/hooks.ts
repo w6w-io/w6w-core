@@ -13,7 +13,7 @@ import type { RedactedConnection } from "./connection.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
-  /** Network access, gated by the sandbox's net allowlist. */
+  /** Network access, mediated by the host (egress allowlist + signing). */
   fetch: typeof fetch;
   /** Structured logging routed back to the host. */
   log: (level: "debug" | "info" | "warn" | "error", message: string, data?: unknown) => void;

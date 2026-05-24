@@ -19,7 +19,7 @@ export interface Connection {
   id: string;
   /** The App this Connection authorizes against. */
   app: string;
-  /** Path to the Auth manifest that produced this Connection. */
+  /** Key of the Auth method that produced this Connection. */
   auth: string;
   /** Host-issued identifier of the owning principal. */
   owner: string;

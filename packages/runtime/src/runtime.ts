@@ -63,7 +63,11 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
   try {
     host = new URL(req.url).hostname;
   } catch {
-    throw new W6WError("invalid_request_url", "execute", `Hook produced an invalid URL: ${req.url}`);
+    throw new W6WError(
+      "invalid_request_url",
+      "execute",
+      `Hook produced an invalid URL: ${req.url}`,
+    );
   }
   if (!allowlist.includes(host)) {
     throw new W6WError(

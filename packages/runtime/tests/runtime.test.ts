@@ -89,7 +89,7 @@ Deno.test("invoke rejects an unknown action", async () => {
   assertEquals(err.code, "unknown_action");
 });
 
-Deno.test("sandbox denies filesystem escape", async () => {
+Deno.test("sandbox denies direct (un-proxied) network access", async () => {
   const app = await loadApp(HELLO_DIR);
   const err = await assertRejects(
     () => invoke(app, inv("escape-attempt")),
