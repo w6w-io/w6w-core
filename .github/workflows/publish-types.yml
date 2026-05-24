@@ -14,12 +14,11 @@ name: Publish @w6w/types
 # Release flow:
 #   1. bump "version" in packages/types/package.json AND packages/types/deno.json
 #   2. commit
-#   3. git tag types-vX.Y.Z && git push origin types-vX.Y.Z
+#   3. publish a GitHub Release with tag "types-vX.Y.Z"
 
 on:
-  push:
-    tags:
-      - "types-v*"
+  release:
+    types: [published]
 
 # Required for OIDC. This is what replaces stored tokens.
 permissions:
@@ -35,14 +34,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Tag must match package.json and deno.json versions
+      - name: Release tag must match package.json and deno.json versions
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${GITHUB_REF_NAME#types-v}"
+          VER="${TAG#types-v}"; VER="${VER#v}"
           PKG="$(node -p "require('./package.json').version")"
           DEN="$(node -p "require('./deno.json').version")"
-          echo "tag=$TAG  package.json=$PKG  deno.json=$DEN"
-          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$DEN" ]; then
-            echo "::error::Tag '$TAG' must match package.json ($PKG) and deno.json ($DEN)"
+          echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"
+          if [ "$VER" != "$PKG" ] || [ "$VER" != "$DEN" ]; then
+            echo "::error::Release tag '$TAG' (version $VER) must match package.json ($PKG) and deno.json ($DEN)"
             exit 1
           fi
 

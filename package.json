@@ -1,0 +1,14 @@
+{
+  "name": "w6w-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Core monorepo for the w6w workflow platform.",
+  "license": "MIT",
+  "scripts": {
+    "test": "deno test -A --unstable-worker-options packages/",
+    "check": "deno check packages/",
+    "lint": "deno lint packages/",
+    "fmt": "deno fmt packages/ fixtures/",
+    "fmt:check": "deno fmt --check packages/ fixtures/"
+  }
+}
