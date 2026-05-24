@@ -47,4 +47,30 @@ A few invariants that run through every RFC:
 
 ## Structure
 
-TBD — the package layout will emerge as the primitives stabilize. Today this directory contains only RFCs.
+```
+core/
+├── rfcs/                  # The specification (source of truth)
+├── packages/
+│   ├── types/             # @w6w/types — shared TS logical model (publishable to npm)
+│   └── runtime/           # @w6w/runtime — lib core: load an app, describe it, invoke
+│                          #   Actions in a least-privilege Deno Worker sandbox
+└── fixtures/apps/         # Example apps the runtime is tested against
+```
+
+A Deno workspace (`deno.json`). The runtime is transport-free lib core; HTTP and
+CLI wrappers will live in their own packages. Run `deno task test` to exercise it.
+
+An **app is an npm-style package**. Its **identity** lives in `package.json` —
+native fields (`version`, `description`, `author`, `license`, …) plus a `w6w`
+block for the rest (`id`, `displayName`, `categories`, `appearance`, `network`).
+Its **behavior** lives in an entry module (`w6w.entry`, default `./index.ts`)
+that default-exports an `AppDefinition` — `{ actions, auth }`. Each Action and
+Auth method is a code module that co-locates its config with its functions
+(`execute`, `sign`, `test`, …), n8n/Zapier-style. No `.action.json`/`.auth.json`
+files. `w6w.manifest` can still opt into a standalone identity file.
+
+> **Status:** early. Two vertical slices run end-to-end: (1) load a packaged app,
+> return its manifest, invoke a `read` Action in a sandbox that denies fs/network
+> escape; (2) Auth — outbound requests are signed by a credential-bearing `sign`
+> hook that runs in its own network-less worker, so neither sandbox can leak the
+> credential. The Invocation connection-lifecycle gates and dynamic Params are next.

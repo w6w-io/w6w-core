@@ -1,0 +1,5 @@
+{
+  "name": "@w6w/types",
+  "version": "0.0.2",
+  "exports": "./mod.ts"
+}

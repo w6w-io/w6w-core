@@ -1,0 +1,74 @@
+name: Publish @w6w/types
+
+# Publishes the types package to npm and JSR — tokenless, via OIDC.
+# No NPM_TOKEN / secrets: each run mints a short-lived credential.
+#
+# One-time setup:
+#   npm — npmjs.com → @w6w/types → Settings → Trusted Publisher → add a GitHub
+#         Actions publisher: org/repo "w6w-io/w6w-core", workflow
+#         "publish-types.yml". (A brand-new package name may need one manual
+#         `npm publish` to exist before the trusted publisher can be attached.)
+#   JSR — jsr.io → create the "@w6w" scope → create the "@w6w/types" package →
+#         link it to the GitHub repo "w6w-io/w6w-core" (enables OIDC publishing).
+#
+# Release flow:
+#   1. bump "version" in packages/types/package.json AND packages/types/deno.json
+#   2. commit
+#   3. publish a GitHub Release with tag "types-vX.Y.Z"
+
+on:
+  release:
+    types: [published]
+
+# Required for OIDC. This is what replaces stored tokens.
+permissions:
+  contents: read
+  id-token: write
+
+defaults:
+  run:
+    working-directory: packages/types
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release tag must match package.json and deno.json versions
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VER="${TAG#types-v}"; VER="${VER#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          DEN="$(node -p "require('./deno.json').version")"
+          echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"
+          if [ "$VER" != "$PKG" ] || [ "$VER" != "$DEN" ]; then
+            echo "::error::Release tag '$TAG' (version $VER) must match package.json ($PKG) and deno.json ($DEN)"
+            exit 1
+          fi
+
+  npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing (OIDC) requires npm >= 11.5.1.
+      - run: npm install --global npm@latest
+      # No NODE_AUTH_TOKEN: npm detects the OIDC trusted publisher automatically.
+      - run: npm publish --provenance --access public
+
+  jsr:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      # OIDC: with id-token:write and the package linked to this repo on JSR,
+      # no token is needed.
+      - run: npx --yes jsr publish

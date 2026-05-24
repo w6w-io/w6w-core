@@ -1,0 +1,15 @@
+{
+  "name": "@w6w-fixtures/hello",
+  "version": "1.0.0",
+  "description": "A trivial fixture app exercising the reference runtime.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "com.w6w.hello",
+    "displayName": "Hello",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts"
+  }
+}
