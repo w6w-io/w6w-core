@@ -1,15 +1,14 @@
 /**
  * Sandbox worker entry point. Runs INSIDE a Deno Web Worker spawned with a
- * restricted permission set (see run-hook.ts). It dynamically imports a hook
- * module, builds the `HookContext`, runs the default export, and posts the
- * result back.
+ * restricted permission set (see run-hook.ts). It imports untrusted app
+ * modules and either calls them or extracts their (serializable) config.
  *
- * The worker itself has no network permission. When a hook calls `ctx.fetch`,
- * the request is proxied to the host, which signs and performs it, then returns
- * the response. So the credential-bearing `sign` worker and the request-making
- * action worker are both off the network — the trusted host does all I/O.
+ * The worker has no network permission. When a hook calls `ctx.fetch`, the
+ * request is proxied to the host, which signs and performs it. So both the
+ * credential-bearing `sign` worker and the request-making action worker are off
+ * the network — the trusted host does all I/O.
  */
-import type { HostMessage, WireResponse, WorkerMessage } from "./protocol.ts";
+import type { DescribedAction, HostMessage, WireResponse, WorkerMessage } from "./protocol.ts";
 
 declare const self: {
   onmessage: ((e: { data: HostMessage }) => void) | null;
@@ -18,7 +17,6 @@ declare const self: {
 
 const post = (msg: WorkerMessage) => self.postMessage(msg);
 
-// In-flight proxied fetches, keyed by id.
 const pending = new Map<number, {
   resolve: (r: WireResponse) => void;
   reject: (e: Error) => void;
@@ -51,22 +49,52 @@ function proxyFetch(enabled: boolean) {
   };
 }
 
-async function run(msg: Extract<HostMessage, { type: "start" }>) {
-  const { hookPath, input, connection, enableFetch } = msg;
-  try {
-    const mod = await import(`file://${hookPath}`);
-    const fn = mod.default ?? mod.handler;
-    if (typeof fn !== "function") {
-      throw new Error(`Hook module "${hookPath}" has no default export function.`);
+async function importDefault(path: string): Promise<unknown> {
+  const mod = await import(`file://${path}`);
+  return mod.default ?? mod.handler;
+}
+
+async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
+  const target = await importDefault(msg.hookPath);
+  const fn = msg.method
+    ? (target as Record<string, unknown> | undefined)?.[msg.method]
+    : target;
+  if (typeof fn !== "function") {
+    const what = msg.method ? `method "${msg.method}"` : "default export";
+    throw new Error(`Module "${msg.hookPath}" has no callable ${what}.`);
+  }
+  const ctx = {
+    fetch: proxyFetch(msg.enableFetch),
+    log: (level: string, message: string, data?: unknown) =>
+      post({ type: "log", level, message, data }),
+    connection: msg.connection,
+  };
+  const value = await (fn as (i: unknown, c: unknown) => unknown).call(
+    msg.method ? target : undefined,
+    msg.input,
+    ctx,
+  );
+  post({ type: "result", value });
+}
+
+async function handleDescribeActions(msg: Extract<HostMessage, { op: "describe-actions" }>) {
+  const described: DescribedAction[] = [];
+  for (const path of msg.paths) {
+    const def = await importDefault(path);
+    if (!def || typeof def !== "object") {
+      throw new Error(`Action module "${path}" must default-export an ActionDefinition object.`);
     }
-    const ctx = {
-      fetch: proxyFetch(enableFetch),
-      log: (level: string, message: string, data?: unknown) =>
-        post({ type: "log", level, message, data }),
-      connection,
-    };
-    const value = await fn(input, ctx);
-    post({ type: "result", value });
+    // Strip the execute function (and anything non-serializable) to a plain config.
+    const definition = JSON.parse(JSON.stringify({ ...def, execute: undefined }));
+    described.push({ path, definition });
+  }
+  post({ type: "result", value: described });
+}
+
+async function run(msg: Extract<HostMessage, { type: "start" }>) {
+  try {
+    if (msg.op === "call") await handleCall(msg);
+    else await handleDescribeActions(msg);
   } catch (err) {
     const error = err as Error;
     post({

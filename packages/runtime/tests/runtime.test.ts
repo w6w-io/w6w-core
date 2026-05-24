@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
 import { describe, invoke, loadApp, W6WError } from "../mod.ts";
 import type { Invocation } from "@w6w/types";
@@ -17,6 +17,20 @@ Deno.test("loadApp + describe returns the manifest and actions", async () => {
   assertEquals(desc.app.displayName, "Hello");
   const keys = desc.actions.map((a) => a.key).sort();
   assertEquals(keys, ["escape-attempt", "get-greeting"]);
+});
+
+Deno.test("action config is extracted from the code module; execute does not leak", async () => {
+  const app = await loadApp(HELLO_DIR);
+  const { actions } = describe(app);
+
+  const greeting = actions.find((a) => a.key === "get-greeting");
+  assert(greeting, "expected get-greeting in the description");
+  assertEquals(greeting.type, "read");
+  assertEquals(greeting.title, "Get Greeting");
+  // params came from the .ts module, not a .json manifest:
+  assertEquals(greeting.params?.map((p) => p.key), ["name", "excited"]);
+  // the execute function must not be present in the serializable description:
+  assertFalse("execute" in greeting);
 });
 
 Deno.test("manifest is sourced from package.json (no app.json)", async () => {

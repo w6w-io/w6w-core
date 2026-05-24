@@ -12,6 +12,6 @@
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },
     "network": { "allow": ["api.sendgrid.com", "127.0.0.1"] },
     "auth": ["./auth/api-key.json"],
-    "actions": ["./actions/send-email.action.json"]
+    "actions": ["./actions/send-email.ts"]
   }
 }

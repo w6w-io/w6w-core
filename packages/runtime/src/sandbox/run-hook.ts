@@ -1,7 +1,7 @@
 /**
  * Host side of the sandbox. Spawns a Deno Worker with a least-privilege
- * permission set scoped to one hook execution, sends the input, services any
- * proxied `ctx.fetch` calls, enforces a timeout, and resolves with the result.
+ * permission set, sends a start message, services any proxied `ctx.fetch`
+ * calls, enforces a timeout, and resolves with the worker's result.
  *
  * Every worker is spawned with NO network permission. Network happens only on
  * the trusted host, via the `onFetch` callback the caller supplies — that is
@@ -9,28 +9,7 @@
  */
 import type { RedactedConnection, SignableRequest } from "@w6w/types";
 import { W6WError } from "../errors.ts";
-import type { WireResponse, WorkerMessage } from "./protocol.ts";
-
-export interface RunHookOptions {
-  /** Absolute path to the hook module. */
-  hookPath: string;
-  /** Value passed as the hook's first argument. */
-  input: unknown;
-  /** Directory the worker may read (the app root). */
-  readScope: string;
-  /** Redacted connection exposed via `ctx.connection`. Never contains the credential. */
-  connection?: RedactedConnection | unknown;
-  /** Hard timeout in milliseconds. Default 30s. */
-  timeoutMs?: number;
-  /** Sink for `ctx.log` calls. */
-  onLog?: (level: string, message: string, data?: unknown) => void;
-  /**
-   * Handler for the hook's `ctx.fetch`. When provided, `ctx.fetch` is enabled
-   * and every request is routed here (sign + allowlist + real network). When
-   * omitted, `ctx.fetch` throws inside the worker.
-   */
-  onFetch?: (request: SignableRequest) => Promise<WireResponse>;
-}
+import type { DescribedAction, HostMessage, WireResponse, WorkerMessage } from "./protocol.ts";
 
 const NO_NET_PERMS = {
   net: false as const,
@@ -42,7 +21,15 @@ const NO_NET_PERMS = {
   import: false as const,
 };
 
-export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
+interface WorkerRunOptions {
+  readScope: string;
+  timeoutMs?: number;
+  onLog?: (level: string, message: string, data?: unknown) => void;
+  onFetch?: (request: SignableRequest) => Promise<WireResponse>;
+}
+
+/** Spawn a sandbox worker, drive one start message to completion, return its result. */
+function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
 
   const worker = new Worker(import.meta.resolve("./worker.ts"), {
@@ -54,7 +41,7 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
   return new Promise<T>((resolvePromise, reject) => {
     const timer = setTimeout(() => {
       worker.terminate();
-      reject(new W6WError("hook_timeout", "execute", `Hook timed out after ${timeoutMs}ms.`));
+      reject(new W6WError("hook_timeout", "execute", `Worker timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
 
     const finish = (fn: () => void) => {
@@ -102,12 +89,42 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
       finish(() => reject(new W6WError("hook_crashed", "execute", e.message || "Worker crashed.")));
     };
 
-    worker.postMessage({
-      type: "start",
-      hookPath: opts.hookPath,
-      input: opts.input,
-      connection: opts.connection,
-      enableFetch: !!opts.onFetch,
-    });
+    worker.postMessage(start);
   });
+}
+
+export interface RunHookOptions extends WorkerRunOptions {
+  /** Absolute path to the module. */
+  hookPath: string;
+  /** When set, call `default[method]` (e.g. an action's `"execute"`); otherwise call the default export. */
+  method?: string;
+  /** Value passed as the call's first argument. */
+  input: unknown;
+  /** Redacted connection exposed via `ctx.connection`. Never the credential. */
+  connection?: RedactedConnection | unknown;
+}
+
+/** Import a module in the sandbox and call it (a hook function, or an action's method). */
+export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
+  return runWorker<T>({
+    type: "start",
+    op: "call",
+    hookPath: opts.hookPath,
+    method: opts.method,
+    input: opts.input,
+    connection: opts.connection,
+    enableFetch: !!opts.onFetch,
+  }, opts);
+}
+
+/** Import action modules in the sandbox and extract their serializable config. */
+export function describeActions(
+  paths: string[],
+  readScope: string,
+  timeoutMs?: number,
+): Promise<DescribedAction[]> {
+  return runWorker<DescribedAction[]>(
+    { type: "start", op: "describe-actions", paths },
+    { readScope, timeoutMs },
+  );
 }

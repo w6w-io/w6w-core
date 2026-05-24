@@ -11,8 +11,8 @@
     "displayName": "Hello",
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },
     "actions": [
-      "./actions/get-greeting.action.json",
-      "./actions/escape-attempt.action.json"
+      "./actions/get-greeting.ts",
+      "./actions/escape-attempt.ts"
     ]
   }
 }

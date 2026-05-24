@@ -47,7 +47,7 @@ export interface InvokeResult {
 export function describe(app: LoadedApp): AppDescription {
   return {
     app: app.manifest,
-    actions: [...app.actions.values()].map((a) => a.action),
+    actions: [...app.actions.values()].map((a) => a.definition),
     auth: app.auths.map((a) => a.auth),
   };
 }
@@ -120,7 +120,7 @@ export async function invoke(
   const redacted = connection ? redact(connection) : undefined;
 
   // 3. Resolve params.
-  const resolved = resolveParams(loaded.action.params ?? [], invocation.params ?? {});
+  const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
   const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
@@ -139,9 +139,10 @@ export async function invoke(
     return hostFetch(app.netAllowlist, signed);
   };
 
-  // 5. Invoke execute in the sandbox.
+  // 5. Invoke the action module's `execute` in the sandbox.
   const value = await runHook({
-    hookPath: loaded.executePath,
+    hookPath: loaded.modulePath,
+    method: "execute",
     input: resolved,
     readScope: app.dir,
     connection: redacted,

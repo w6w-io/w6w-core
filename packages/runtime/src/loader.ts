@@ -6,13 +6,13 @@
 import { dirname, isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
 import type { Action, AppManifest, Author, Auth, W6WPackageMetadata } from "@w6w/types";
 import { LoadError } from "./errors.ts";
+import { describeActions } from "./sandbox/run-hook.ts";
 
 export interface LoadedAction {
-  action: Action;
-  /** Absolute path to the `execute` hook module. */
-  executePath: string;
-  /** Absolute directory of the action manifest (root for its relative hook paths). */
-  baseDir: string;
+  /** Serializable config extracted from the action module (no `execute`). */
+  definition: Action;
+  /** Absolute path to the action module. Imported in the sandbox to run `execute`. */
+  modulePath: string;
 }
 
 export interface LoadedAuth {
@@ -206,20 +206,22 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     auths.push({ auth, ref, baseDir, hooks: resolveAuthHooks(baseDir, auth) });
   }
 
+  // Actions are code modules (config + execute co-located). Import them in the
+  // sandbox to extract their serializable config without running untrusted code
+  // on the host.
   const actions = new Map<string, LoadedAction>();
-  for (const ref of manifest.actions ?? []) {
-    const actionPath = resolveRef(manifestDir, ref);
-    const action = await readJson<Action>(actionPath, "missing_action");
-    if (!action.key) throw new LoadError("invalid_action", `Action at ${ref} is missing \`key\`.`);
-    if (!action.execute) {
-      throw new LoadError("invalid_action", `Action "${action.key}" is missing \`execute\`.`);
+  const actionPaths = (manifest.actions ?? []).map((ref) => resolveRef(manifestDir, ref));
+  if (actionPaths.length > 0) {
+    const described = await describeActions(actionPaths, root);
+    for (const { path, definition } of described) {
+      if (!definition?.key) {
+        throw new LoadError(
+          "invalid_action",
+          `Action module ${path} did not default-export a definition with a \`key\`.`,
+        );
+      }
+      actions.set(definition.key, { definition, modulePath: path });
     }
-    const baseDir = dirname(actionPath);
-    actions.set(action.key, {
-      action,
-      executePath: resolveRef(baseDir, action.execute),
-      baseDir,
-    });
   }
 
   return { dir: root, manifest, actions, auths, netAllowlist: computeAllowlist(manifest, auths) };

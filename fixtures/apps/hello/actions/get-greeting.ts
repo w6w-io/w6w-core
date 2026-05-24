@@ -1,4 +1,4 @@
-import type { ActionExecuteHook } from "@w6w/types";
+import type { ActionDefinition } from "@w6w/types";
 
 interface Input {
   name: string;
@@ -9,10 +9,27 @@ interface Output {
   greeting: string;
 }
 
-const execute: ActionExecuteHook<Input, Output> = (input, ctx) => {
-  ctx.log("info", "building greeting", { name: input.name });
-  const punctuation = input.excited ? "!" : ".";
-  return { greeting: `Hello, ${input.name}${punctuation}` };
+const getGreeting: ActionDefinition<Input, Output> = {
+  key: "get-greeting",
+  type: "read",
+  title: "Get Greeting",
+  description: "Returns a greeting for the given name.",
+  params: [
+    {
+      key: "name",
+      label: "Name",
+      type: "string",
+      required: true,
+      validation: { minLength: 1, maxLength: 50 },
+    },
+    { key: "excited", label: "Excited", type: "boolean", default: false },
+  ],
+  output: [{ key: "greeting", type: "string", label: "Greeting" }],
+
+  execute(input, ctx) {
+    ctx.log("info", "building greeting", { name: input.name });
+    return { greeting: `Hello, ${input.name}${input.excited ? "!" : "."}` };
+  },
 };
 
-export default execute;
+export default getGreeting;
