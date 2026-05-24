@@ -19,6 +19,21 @@ Deno.test("loadApp + describe returns the manifest and actions", async () => {
   assertEquals(keys, ["escape-attempt", "get-greeting"]);
 });
 
+Deno.test("manifest is sourced from package.json (no app.json)", async () => {
+  const app = await loadApp(HELLO_DIR);
+  const { app: m } = describe(app);
+
+  // From the `w6w` block:
+  assertEquals(m.id, "com.w6w.hello");
+  assertEquals(m.displayName, "Hello");
+  assertEquals(m.categories, ["developer-tools"]);
+  // Reused from native package.json fields:
+  assertEquals(m.name, "hello"); // npm scope stripped from @w6w-fixtures/hello
+  assertEquals(m.version, "1.0.0");
+  assertEquals(m.license, "MIT");
+  assertEquals(m.author.name, "w6w");
+});
+
 Deno.test("invoke runs an action in the sandbox", async () => {
   const app = await loadApp(HELLO_DIR);
   const result = await invoke(app, inv("get-greeting", { name: "Ada" }));

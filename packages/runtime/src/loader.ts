@@ -4,7 +4,7 @@
  * Actions and Auth methods it references, with hook paths resolved to absolute.
  */
 import { dirname, isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
-import type { Action, AppManifest, Auth } from "@w6w/types";
+import type { Action, AppManifest, Author, Auth, W6WPackageMetadata } from "@w6w/types";
 import { LoadError } from "./errors.ts";
 
 export interface LoadedAction {
@@ -46,7 +46,79 @@ export interface LoadedApp {
 interface PackageJson {
   name?: string;
   version?: string;
-  w6w?: { manifest?: string };
+  description?: string;
+  keywords?: string[];
+  homepage?: string;
+  license?: string;
+  bugs?: string | { url?: string };
+  repository?: string | { url?: string };
+  author?: string | Author;
+  w6w?: W6WPackageMetadata;
+}
+
+/** Strip an npm scope: `@acme/slack` -> `slack`. */
+function unscopedName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const slash = name.lastIndexOf("/");
+  return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
+/** npm `author` may be a string `"Name <email> (url)"` or an object. */
+function normalizeAuthor(author: string | Author | undefined): Author | undefined {
+  if (!author) return undefined;
+  if (typeof author !== "string") return author;
+  const m = author.match(/^([^<(]+?)\s*(?:<([^>]+)>)?\s*(?:\(([^)]+)\))?$/);
+  if (!m) return { name: author };
+  return { name: m[1], ...(m[2] && { email: m[2] }), ...(m[3] && { url: m[3] }) };
+}
+
+/** npm `repository`/`bugs` may be a string or `{ url }`. */
+function firstUrl(field: string | { url?: string } | undefined): string | undefined {
+  if (!field) return undefined;
+  return typeof field === "string" ? field : field.url;
+}
+
+/** Build an AppManifest from package.json, reusing native fields and the `w6w` block. */
+function manifestFromPackageJson(pkg: PackageJson): AppManifest {
+  const w = pkg.w6w ?? ({} as W6WPackageMetadata);
+
+  const require = <T>(value: T | undefined, field: string): T => {
+    if (value === undefined || value === null) {
+      throw new LoadError("invalid_manifest", `App is missing required field \`${field}\`.`);
+    }
+    return value;
+  };
+
+  return {
+    manifestVersion: w.manifestVersion ?? "1",
+    id: require(w.id, "w6w.id"),
+    name: w.name ?? require(unscopedName(pkg.name), "name"),
+    displayName: require(w.displayName, "w6w.displayName"),
+    version: w.version ?? require(pkg.version, "version"),
+    description: w.description ?? pkg.description ?? "",
+    categories: require(w.categories, "w6w.categories"),
+    appearance: require(w.appearance, "w6w.appearance"),
+    author: require(w.author ?? normalizeAuthor(pkg.author), "author"),
+    license: w.license ?? require(pkg.license, "license"),
+    keywords: w.keywords ?? pkg.keywords,
+    homepage: w.homepage ?? pkg.homepage,
+    repository: w.repository ?? firstUrl(pkg.repository),
+    bugs: w.bugs ?? firstUrl(pkg.bugs),
+    classification: w.classification,
+    longDescription: w.longDescription,
+    screenshots: w.screenshots,
+    publisher: w.publisher,
+    documentation: w.documentation,
+    support: w.support,
+    privacyPolicy: w.privacyPolicy,
+    termsOfService: w.termsOfService,
+    defaultLocale: w.defaultLocale,
+    localizations: w.localizations,
+    engines: w.engines,
+    network: w.network,
+    actions: w.actions,
+    auth: w.auth,
+  };
 }
 
 async function readJson<T>(path: string, code: string): Promise<T> {
@@ -109,22 +181,21 @@ function resolveAuthHooks(baseDir: string, auth: Auth): LoadedAuth["hooks"] {
  */
 export async function loadApp(dir: string): Promise<LoadedApp> {
   const root = resolve(dir);
+  const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
 
-  let manifestRel = "app.json";
-  try {
-    const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
-    if (pkg.w6w?.manifest) manifestRel = pkg.w6w.manifest;
-  } catch (e) {
-    // package.json is the documented entry point, but fall back to a bare
-    // app.json so a manifest-only fixture still loads.
-    if ((e as LoadError).code !== "missing_package_json") throw e;
+  // The manifest comes from package.json's `w6w` block by default. An app may
+  // opt into a standalone manifest file via `w6w.manifest`.
+  let manifest: AppManifest;
+  let manifestDir: string;
+  if (pkg.w6w?.manifest) {
+    const manifestPath = resolveRef(root, pkg.w6w.manifest);
+    manifestDir = dirname(manifestPath);
+    manifest = await readJson<AppManifest>(manifestPath, "missing_manifest");
+    if (!manifest.id) throw new LoadError("invalid_manifest", "App manifest is missing `id`.");
+  } else {
+    manifest = manifestFromPackageJson(pkg);
+    manifestDir = root;
   }
-
-  const manifestPath = resolveRef(root, manifestRel);
-  const manifestDir = dirname(manifestPath);
-  const manifest = await readJson<AppManifest>(manifestPath, "missing_manifest");
-
-  if (!manifest.id) throw new LoadError("invalid_manifest", "App manifest is missing `id`.");
 
   const auths: LoadedAuth[] = [];
   for (const ref of manifest.auth ?? []) {

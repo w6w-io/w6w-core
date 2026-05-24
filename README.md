@@ -60,7 +60,14 @@ core/
 A Deno workspace (`deno.json`). The runtime is transport-free lib core; HTTP and
 CLI wrappers will live in their own packages. Run `deno task test` to exercise it.
 
-> **Status:** early. A first vertical slice runs end-to-end — load a packaged app
-> (`package.json` + manifest + referenced hooks), return its manifest, and invoke a
-> `read` Action inside a sandbox that denies network/filesystem escape. Auth flows,
-> dynamic Params, and the full Invocation connection-lifecycle gates are next.
+An **app is an npm-style package**. Its identity lives in `package.json` — native
+fields (`version`, `description`, `author`, `license`, …) plus a `w6w` block for
+the rest (`id`, `displayName`, `categories`, `appearance`, `actions`, `auth`,
+`network`). No separate manifest file is required; `w6w.manifest` can opt into one.
+Actions and Auth are referenced files that pair with their hook code.
+
+> **Status:** early. Two vertical slices run end-to-end: (1) load a packaged app,
+> return its manifest, invoke a `read` Action in a sandbox that denies fs/network
+> escape; (2) Auth — outbound requests are signed by a credential-bearing `sign`
+> hook that runs in its own network-less worker, so neither sandbox can leak the
+> credential. The Invocation connection-lifecycle gates and dynamic Params are next.

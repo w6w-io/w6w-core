@@ -85,3 +85,23 @@ export interface AppManifest {
     allow?: string[];
   };
 }
+
+/**
+ * The `w6w` block inside an app's `package.json`. This is how apps declare
+ * themselves without a standalone manifest file: native package.json fields
+ * (`version`, `description`, `author`, `license`, `homepage`, `repository`,
+ * `bugs`, `keywords`) are reused, and everything App-specific goes here.
+ *
+ * Only the fields npm's schema can't express are required (`id`, `displayName`,
+ * `categories`, `appearance`); the rest fall back to native package.json fields
+ * or sensible defaults.
+ *
+ * NOTE: ahead of the App RFC — backport alongside the other wiring fields.
+ */
+export type W6WPackageMetadata =
+  & Partial<AppManifest>
+  & Pick<AppManifest, "id" | "displayName" | "categories" | "appearance">
+  & {
+    /** Opt-in: load the manifest from a separate file instead of package.json. */
+    manifest?: string;
+  };

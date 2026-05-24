@@ -1,8 +1,17 @@
 {
   "name": "@w6w-fixtures/sendgrid",
   "version": "1.0.0",
+  "description": "Send transactional email via SendGrid.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
   "private": true,
   "w6w": {
-    "manifest": "./app.json"
+    "id": "com.w6w.sendgrid",
+    "displayName": "SendGrid",
+    "categories": ["communication"],
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "network": { "allow": ["api.sendgrid.com", "127.0.0.1"] },
+    "auth": ["./auth/api-key.json"],
+    "actions": ["./actions/send-email.action.json"]
   }
 }
