@@ -8,6 +8,23 @@ The core monorepo for the workflow platform.
 
 This monorepo defines the primitives, runtime, and SDKs that power workflows across the platform. It is the source of truth for *what a workflow is* and *how its parts compose*.
 
+It contains two halves: the **specification** (the [`rfcs/`](./rfcs) — what a workflow *is*) and a **Deno workspace of packages** (the reference implementation — code that proves the spec runs).
+
+## Packages
+
+| Package | What it is |
+|---|---|
+| [`@w6w/types`](./packages/types/README.md) | Shared, dependency-free TypeScript logical model + hook contracts. Published to npm + JSR. |
+| [`@w6w/runtime`](./packages/runtime/README.md) | Lib core: load an app, describe it, and invoke actions in a least-privilege Deno sandbox. |
+| [`@w6w/sources`](./packages/sources/README.md) | Resolve a source reference (`file:`, `github:`) to a local directory for the runtime. |
+| [`@w6w/validator`](./packages/validator/README.md) | Validate manifests against the spec rules. |
+| [`@w6w/expr`](./packages/expr/README.md) | JSONLogic engine for Param `showIf` and expression evaluation. |
+
+Each package is transport-free and independently focused; deployment concerns
+(an HTTP server, a CLI, credential storage) are wrappers built on top — some
+here, some in the host platform. Run `deno task test` (or `npm test`) to exercise
+the whole workspace.
+
 ## Primitives
 
 The platform is built from a small set of primitives. Each one has (or will have) a dedicated RFC defining its logical schema, a reference serializer/validator, and a reference implementation.
@@ -41,7 +58,7 @@ A few invariants that run through every RFC:
 
 - **Serialization-agnostic.** Manifests are logical schemas. The same manifest round-trips losslessly through JSON, YAML, XML, or TOML — the file format is a detail.
 - **Forward-compatible.** Every standalone manifest declares a `manifestVersion`.
-- **Standalone manifests, referenced by path.** Actions and Auth methods live in their own files and are referenced from the App manifest.
+- **Code-first behavior.** Actions and Auth methods are code modules that co-locate config with their functions (`execute`, `sign`, …), exported from the app's entry module. (The RFCs still describe per-file manifests; reconciling them is a pending backport.)
 - **Hooks at the boundaries.** Behavior that varies per publisher (signing requests, populating dropdowns, validating input, exchanging tokens) is exposed as hook files referenced from the manifest.
 - **Opaque credentials.** Actions never see raw credentials; Auth's `sign` hook injects auth into outbound requests.
 
@@ -51,10 +68,13 @@ A few invariants that run through every RFC:
 core/
 ├── rfcs/                  # The specification (source of truth)
 ├── packages/
-│   ├── types/             # @w6w/types — shared TS logical model (publishable to npm)
-│   └── runtime/           # @w6w/runtime — lib core: load an app, describe it, invoke
-│                          #   Actions in a least-privilege Deno Worker sandbox
-└── fixtures/apps/         # Example apps the runtime is tested against
+│   ├── types/             # @w6w/types — shared logical model + hook contracts
+│   ├── runtime/           # @w6w/runtime — load · describe · invoke (sandboxed)
+│   ├── sources/           # @w6w/sources — resolve source refs to a local dir
+│   ├── validator/         # @w6w/validator — spec-rule validation
+│   └── expr/              # @w6w/expr — JSONLogic engine
+├── fixtures/apps/         # Example apps the runtime is tested against
+└── .github/workflows/     # CI (tests) + publish (npm OIDC + JSR, on release)
 ```
 
 A Deno workspace (`deno.json`). The runtime is transport-free lib core; HTTP and
@@ -69,8 +89,10 @@ Auth method is a code module that co-locates its config with its functions
 (`execute`, `sign`, `test`, …), n8n/Zapier-style. No `.action.json`/`.auth.json`
 files. `w6w.manifest` can still opt into a standalone identity file.
 
-> **Status:** early. Two vertical slices run end-to-end: (1) load a packaged app,
-> return its manifest, invoke a `read` Action in a sandbox that denies fs/network
-> escape; (2) Auth — outbound requests are signed by a credential-bearing `sign`
-> hook that runs in its own network-less worker, so neither sandbox can leak the
-> credential. The Invocation connection-lifecycle gates and dynamic Params are next.
+> **Status:** early. Working end-to-end: load a packaged app, return its manifest,
+> and invoke an Action in a sandbox that denies fs/network escape. Auth — outbound
+> requests are signed by a credential-bearing `sign` hook in its own network-less
+> worker, so neither sandbox can leak the credential. The Invocation
+> connection-lifecycle gates (`pending`/`broken`/`revoked` reject; `needs_refresh`
+> runs `refresh`) are enforced. Dynamic Params (`options.source` + the fixpoint
+> resolution loop) are next.
