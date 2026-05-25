@@ -1,7 +1,10 @@
 {
   "workspace": [
     "./packages/types",
-    "./packages/runtime"
+    "./packages/runtime",
+    "./packages/sources",
+    "./packages/validator",
+    "./packages/expr"
   ],
   "imports": {
     "@w6w/types": "./packages/types/mod.ts"
