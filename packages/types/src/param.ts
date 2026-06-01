@@ -16,7 +16,8 @@ export type ParamType =
   | "secret"
   | "file"
   | "json"
-  | "code";
+  | "code"
+  | "group";
 
 /** A single choice in a static option list. */
 export interface Option {
@@ -73,6 +74,11 @@ export interface Param {
   showIf?: unknown;
   options?: Options;
   validation?: Validation;
+  /**
+   * Nested params, used when `type: "group"`. Combined with `repeat: true`
+   * expresses a list of structured items (e.g. an array of header rows).
+   */
+  children?: Param[];
 }
 
 /** Narrow `Options` to the dynamic (hook-driven) form. */

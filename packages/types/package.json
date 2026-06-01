@@ -1,6 +1,6 @@
 {
   "name": "@w6w/types",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "Shared logical model for the w6w workflow platform. Pure, dependency-free TypeScript.",
   "license": "MIT",
   "repository": {

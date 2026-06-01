@@ -14,6 +14,8 @@ export interface Classification {
   maturity?: Maturity;
   /** Defaults to `"public"`. */
   visibility?: Visibility;
+  /** When `maturity = "deprecated"`, the reverse-DNS id of the App that replaces this one. */
+  successor?: string;
 }
 
 export interface Appearance {
@@ -41,7 +43,11 @@ export interface AppManifest {
   displayName: string;
   /** Semantic version of this manifest release. */
   version: string;
+  /** Free-form version of the underlying integrated service (e.g. `"2024-10-22"`, `"v2"`). */
+  appVersion?: string;
   classification?: Classification;
+  /** Base directory for resolving relative asset paths. Defaults to the manifest file's directory. */
+  assetsRoot?: string;
   /** One-line summary, <= 200 chars. */
   description: string;
   /** Markdown prose, inline or referenced file path. */
