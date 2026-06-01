@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "id": "com.acme.too-many",
+  "name": "too-many",
+  "displayName": "Too Many",
+  "version": "0.1.0",
+  "description": "Exceeds the 1–3 categories limit.",
+  "categories": ["a", "b", "c", "d"],
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}

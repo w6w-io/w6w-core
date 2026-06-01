@@ -1,0 +1,10 @@
+{
+  "manifestVersion": "1",
+  "key": "api-key",
+  "type": "apiKey",
+  "displayName": "API Key",
+  "apiKey": { "in": "header", "name": "Authorization", "prefix": "Bearer " },
+  "fields": [
+    { "key": "apiKey", "label": "API Key", "type": "secret", "required": true }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://w6w.io/schemas/v1/param.schema.json",
+  "title": "Param",
+  "description": "Declarative config for a single form field. Every form surface (Action, Trigger, Auth) is a Param[].",
+  "$defs": {
+    "option": {
+      "type": "object",
+      "required": ["value", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "value":       { "type": ["string", "number", "boolean"] },
+        "label":       { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "disabled":    { "type": "boolean" }
+      }
+    },
+    "options": {
+      "oneOf": [
+        { "type": "array", "items": { "$ref": "#/$defs/option" } },
+        {
+          "type": "object",
+          "required": ["source"],
+          "additionalProperties": false,
+          "properties": {
+            "source":     { "type": "string", "minLength": 1 },
+            "searchable": { "type": "boolean" },
+            "cache":      { "type": "string", "enum": ["none", "session"] }
+          }
+        }
+      ]
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pattern":   { "type": "string" },
+        "minLength": { "type": "integer", "minimum": 0 },
+        "maxLength": { "type": "integer", "minimum": 0 },
+        "min":       { "type": "number" },
+        "max":       { "type": "number" },
+        "integer":   { "type": "boolean" },
+        "enum":      { "type": "array", "minItems": 1 },
+        "hook":      { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "type": "object",
+  "required": ["key", "label", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "key":         { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "label":       { "type": "string", "minLength": 1 },
+    "type": {
+      "type": "string",
+      "enum": [
+        "string", "text", "number", "boolean",
+        "select", "multiselect",
+        "date", "datetime",
+        "secret", "file", "json", "code", "group"
+      ]
+    },
+    "placeholder": { "type": "string" },
+    "hint":        { "type": "string" },
+    "required":    { "type": "boolean" },
+    "default":     true,
+    "secret":      { "type": "boolean" },
+    "readOnly":    { "type": "boolean" },
+    "repeat":      { "type": "boolean" },
+    "ui":          { "type": "string" },
+    "dependsOn": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+    },
+    "showIf":     true,
+    "options":    { "$ref": "#/$defs/options" },
+    "validation": { "$ref": "#/$defs/validation" },
+    "children": {
+      "type": "array",
+      "items": { "$ref": "#" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "group" } }, "required": ["type"] },
+      "then": { "required": ["children"] }
+    }
+  ]
+}

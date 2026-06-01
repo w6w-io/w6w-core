@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://w6w.io/schemas/v1/image-object.schema.json",
+  "title": "ImageObject",
+  "description": "Reusable image reference (icons, screenshots, badges). At least one of svg, url, or sizes must be present.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "svg":     { "type": "string", "minLength": 1 },
+    "url":     { "type": "string", "minLength": 1 },
+    "sizes": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[1-9][0-9]*x[1-9][0-9]*$": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "alt":     { "type": "string" },
+    "caption": { "type": "string" }
+  },
+  "anyOf": [
+    { "required": ["svg"] },
+    { "required": ["url"] },
+    { "required": ["sizes"] }
+  ]
+}

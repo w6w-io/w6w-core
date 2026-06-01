@@ -1,8 +1,15 @@
 {
   "name": "@w6w/types",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Shared logical model for the w6w workflow platform. Pure, dependency-free TypeScript.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/w6w-io/w6w-core.git",
+    "directory": "packages/types"
+  },
+  "homepage": "https://github.com/w6w-io/w6w-core/tree/main/packages/types#readme",
+  "bugs": "https://github.com/w6w-io/w6w-core/issues",
   "type": "module",
   "types": "./mod.ts",
   "exports": {

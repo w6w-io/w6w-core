@@ -33,11 +33,21 @@ export interface Action {
   type: ActionType;
   title: string;
   description?: string;
+  /** UI grouping hint. Actions sharing the same `resource` value are grouped together in the editor. */
+  resource?: string;
   /** Inputs collected from the user. */
   params?: Param[];
   output?: Output;
-  /** Whether a `perform` action is safe to retry. (Action RFC open question; reserved.) */
+  /** Example value matching `output`. Used by the editor for richer previews. Not validated. */
+  sample?: unknown;
+  /** Whether a `perform` action is safe to retry. Drives retry policy + Invocation dedupe. */
   idempotent?: boolean;
+  /**
+   * When the enclosing App declares Auth methods, set `false` to opt this Action
+   * out of requiring a Connection (e.g. a public `health` endpoint). Defaults to
+   * `true` when the App has auth, `false` when it doesn't.
+   */
+  requiresAuth?: boolean;
 }
 
 /**

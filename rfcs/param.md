@@ -1,8 +1,8 @@
 # RFC: Param
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-04-15
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
@@ -18,7 +18,7 @@ Actions, Triggers, Webhooks, and Auth all need to collect user input. Without a 
 
 ## Goals
 
-- Cover common value types: `string`, `text`, `number`, `boolean`, `select`, `multiselect`, `date`, `datetime`, `secret`, `file`, `json`, `code`.
+- Cover common value types: `string`, `text`, `number`, `boolean`, `select`, `multiselect`, `date`, `datetime`, `secret`, `file`, `json`, `code`, `group`.
 - Decouple **value type** from **render presentation** via an optional `ui` hint.
 - Support both **static** and **hook-driven** option lists.
 - First-class **dependencies** — params that depend on others re-render when the deps change.
@@ -161,7 +161,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `repeat` | boolean | ⬜ | Allow multiple values (array of `type`). UI renders as an add/remove list. |
 | `ui` | string | ⬜ | Render hint — see UI hints by type. |
 | `dependsOn` | string[] | ⬜ | Keys of other params. Disabled until all listed keys have values; changes invalidate cached `options` and re-run `validate`. |
-| `showIf` | expression | ⬜ | Conditional visibility based on other field values. Syntax TBD (see Open Questions). |
+| `showIf` | [JSONLogic](https://jsonlogic.com) rule | ⬜ | Conditional visibility based on other field values. Evaluated against the current form state; truthy → visible. The platform ships a JSONLogic engine in [`@w6w/expr`](../packages/expr/README.md). |
 | `options` | Options | ⬜ | For choice types. Static list or dynamic hook source. |
 | `validation` | Validation | ⬜ | Declarative rules and/or a custom hook. |
 
@@ -181,6 +181,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `file` | string (ref) | Reference to uploaded file; actual storage is the host's concern. |
 | `json` | any | Structured JSON; host renders a JSON editor. |
 | `code` | string | Code with language via `ui` (e.g. `"code:sql"`). |
+| `group` | object | Nested form. Value is a `Record<string, unknown>` whose keys are the `key`s of the params in `children`. See [Groups](#groups). |
 
 ### UI hints
 
@@ -228,6 +229,25 @@ The `source` hook receives the current form state (including all `dependsOn` val
 
 Validation runs on field change and again on submit.
 
+## Groups
+
+The `group` type holds a nested `Param[]` under the `children` field. Combined with `repeat: true` it expresses a list of structured items (e.g. an array of HTTP header rows).
+
+```json
+{
+  "key": "headers",
+  "label": "Custom Headers",
+  "type": "group",
+  "repeat": true,
+  "children": [
+    { "key": "name",  "label": "Name",  "type": "string", "required": true },
+    { "key": "value", "label": "Value", "type": "string", "required": true }
+  ]
+}
+```
+
+The submitted value is `Array<{ name: string; value: string }>`. `dependsOn` inside `children` may reference sibling keys within the same group; references to params outside the group are resolved against the enclosing form.
+
 ## Hooks
 
 | Hook | Receives | Returns | Purpose |
@@ -235,7 +255,7 @@ Validation runs on field change and again on submit.
 | `options.source` | `{ form, dependsOn }` | `Option[]` | Populate choices from an API or other dynamic source. |
 | `validation.hook` | `{ value, form }` | `{ ok, message? }` | Custom validation beyond declarative rules. |
 
-Hooks share the runtime contract with Auth hooks (defined in a separate runtime RFC).
+Both hooks execute under the [Hook Runtime RFC](./hook-runtime.md) — same module format, same `HookContext` (with mediated `fetch` and structured `log`), same error shape, same default 30 s timeout, same sandbox posture as every other hook in the spec.
 
 ## Dependencies
 
@@ -247,9 +267,11 @@ When param `B` declares `dependsOn: ["A"]`:
 
 Circular dependencies are rejected at manifest load time.
 
-## Open questions
+## Resolved questions
 
-1. **`showIf` expression language.** Invent a mini expression shape (`{ "equals": ["plan", "pro"] }`), adopt JSONLogic, or require a hook?
-2. **Grouping / sections / tabs.** Forms are flat lists today. When do we add section headers, tabs, or collapsible groups?
-3. **i18n of labels / hints.** Localize inline on the Param (object keyed by locale) or defer to the enclosing manifest's `localizations` block?
-4. **`repeat` vs nested schema.** `repeat: true` gives a list of a single scalar or field. For lists of structured items (e.g., `[{ header, value }, …]`) — do we need nested `Param[]` as a value type?
+| Question | Resolution |
+|---|---|
+| `showIf` expression language | **JSONLogic.** The reference engine ships as [`@w6w/expr`](../packages/expr/README.md). No bespoke mini-language. |
+| Grouping / sections / tabs | **Deferred.** Flat list works for `manifestVersion: "1"`. Will be revisited when a real form needs it. |
+| i18n on Param | **Deferred to the enclosing manifest's `localizations` block.** No per-Param locale object — avoids double-sourcing translations. |
+| `repeat` vs nested schema | Added a `group` type that takes a nested `Param[]` via `children`. Lists of structured items use `type: "group", repeat: true`. |

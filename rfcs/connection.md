@@ -1,8 +1,8 @@
 # RFC: Connection
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-05-18
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-05-18 (revised 2026-06-01)
 
 ## Summary
 
@@ -132,11 +132,17 @@ The Auth RFC declares credentials opaque. This RFC tightens that into testable i
 4. No userland surface — Action `execute`, Workflow expressions, editor previews, logs, traces — ever sees the blob.
 5. A Connection record exposed to userland MUST be the redacted projection.
 
-## Open questions
+## Import
 
-1. **Sharing.** Can a Connection be shared between workspaces / teams / multiple owners? If so, `owner` becomes a list or moves to a separate access table.
-2. **Multi-account hints.** OAuth flows that authorize multiple workspaces in one credential (Slack, GitHub orgs) — one Connection with sub-accounts, or N Connections sharing a refresh token?
-3. **Credential rotation outside `refresh`.** Some credentials rotate via the `sign` hook (e.g., AWS SigV4 deriving short-lived signatures from a long-lived key). Does Connection need to model this, or is it invisible to the platform?
-4. **Health probe scheduling.** Auth defers `test` cadence to the host. Should Connection record `nextTestAt` to make scheduling first-class?
-5. **State on import.** When connections are migrated from another host, what state do they land in — `connected` (trust the source) or `needs_refresh` (force re-validation)?
-6. **Display metadata schema.** `display` is free-form today. Worth declaring an optional `displaySchema` in the Auth manifest so hosts can validate `afterConnect` output?
+When a Connection is migrated from another host (export from host A, import to host B), the imported record MUST land in state `needs_refresh`. The receiving host runs the Auth `refresh` (or, for credentials without a refresh hook, `test`) before transitioning to `connected`. Trusting the source's `connected` state silently across hosts is not spec-compliant — re-validation is cheap and is the only thing that guarantees the credential is live in the new environment.
+
+## Resolved questions
+
+| Question | Resolution |
+|---|---|
+| Sharing | **Deferred.** `owner` is a single principal in `manifestVersion: "1"`. Multi-owner / team sharing will be a follow-up RFC that introduces a separate access table; the Connection record stays slim. |
+| Multi-account hints | **N Connections, one per account.** Flows that authorize multiple workspaces in one credential (Slack, GitHub orgs) produce one Connection per workspace. Grouping in the UI is a host concern. |
+| Credential rotation outside `refresh` | **Invisible to the platform.** Schemes that derive per-request signatures from a long-lived key (AWS SigV4, etc.) do the derivation inside `sign` and do not mutate the stored credential. Connections that genuinely need rotation use `refresh`. |
+| Health probe scheduling | **Host's choice.** No `nextTestAt` field. Hosts derive scheduling from `expiresAt`, `lastTestedAt`, and their own policy. |
+| State on import | `needs_refresh`. See [Import](#import) above. |
+| Display metadata schema | **Deferred.** `display` remains free-form for `v1`. Optional `displaySchema` in the Auth manifest may be added later without breakage. |

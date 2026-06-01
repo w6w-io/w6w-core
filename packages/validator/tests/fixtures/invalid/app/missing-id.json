@@ -1,0 +1,11 @@
+{
+  "manifestVersion": "1",
+  "name": "hello",
+  "displayName": "Hello",
+  "version": "0.1.0",
+  "description": "An app missing its id.",
+  "categories": ["other"],
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}
