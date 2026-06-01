@@ -1,8 +1,8 @@
 # RFC: Invocation
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-05-18
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-05-18 (revised 2026-06-01)
 
 ## Summary
 
@@ -61,7 +61,7 @@ A single envelope means every caller — interactive, programmatic, scheduled �
 | `manifestVersion` | string | ✅ | Core spec version. |
 | `app` | string (app id) | ✅ | The App declaring the Action. |
 | `action` | string (key) | ✅ | Action `key` within the App. |
-| `connection` | string (connection id) | ⬜ | Connection that supplies credentials. Required for Actions whose App declares any Auth. |
+| `connection` | string (connection id) | ⬜ | Connection that supplies credentials. Required for Actions whose App declares Auth, **unless** the Action sets `requiresAuth: false` (see [Action RFC](./action.md)). |
 | `params` | object | ⬜ | Map of param `key` → value. Conforms to the Action's `params` schema after resolution. |
 | `context` | object | ⬜ | Trace / correlation metadata. Populated by the caller; never required for correctness. |
 | `context.invocationId` | string | ⬜ | Unique per Invocation. Host-issued. |
@@ -100,10 +100,12 @@ The complete error envelope (codes, structured details, retry hints) is specifie
 
 Invocations are not implicitly idempotent. If an Action's manifest declares `idempotent: true` (per the Action RFC's open question on this field), the platform MAY use `context.invocationId` as a dedupe key when re-driving from a Run. Without that declaration, replaying an Invocation with the same `invocationId` is a no-op suppression — the prior result is returned and `execute` is not re-run.
 
-## Open questions
+## Resolved questions
 
-1. **Result envelope.** Does this RFC also define the response shape (success body, error body), or stop at the request side and defer to Run?
-2. **Streaming.** Some Actions (large searches, file downloads) want to stream results. Add a streaming flag here, or solve it in the runtime RFC?
-3. **Connectionless actions.** Some Actions need no auth (public API). `connection` is optional today. Should the Action manifest declare `authRequired: false` so the resolver can fast-fail when a connection is supplied unnecessarily?
-4. **App version pinning.** Should `app` accept a version pin (`com.acme.slack@1.4.2`) for replay determinism, or rely on `context.runId` to fix the version through the Run record?
-5. **Caller identity.** Today the envelope is anonymous beyond `context.trigger`. Should it carry a `principal` for audit, or is that derived from the transport (host concern)?
+| Question | Resolution |
+|---|---|
+| Result envelope | **Stops at the request side.** Success / error response shape is defined in the future Run RFC. This RFC specifies only what enters `execute`. |
+| Streaming | **Deferred** to a future RFC. `manifestVersion: "1"` Actions return a single value. |
+| Connectionless actions | Resolved in the Action RFC: optional `requiresAuth: false` on the Action manifest opts a single Action out of needing a Connection even when the App declares Auth. `connection` here remains optional. |
+| App version pinning | **Rely on `context.runId`.** The Run record pins the App version; the envelope itself does not carry `app@version`. Avoids two sources of truth on replay. |
+| Caller identity | **Derived from transport.** No `principal` in the envelope. Audit is the host's responsibility through its API gateway / RPC layer. |
