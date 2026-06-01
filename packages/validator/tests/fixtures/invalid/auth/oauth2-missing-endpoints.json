@@ -1,0 +1,6 @@
+{
+  "manifestVersion": "1",
+  "key": "oauth",
+  "type": "oauth2",
+  "displayName": "OAuth Without Endpoints"
+}

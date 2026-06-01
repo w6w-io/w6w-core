@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://w6w.io/schemas/v1/action.schema.json",
+  "title": "Action",
+  "description": "A single operation a user can perform through an App (read / search / perform).",
+  "$defs": {
+    "outputField": {
+      "type": "object",
+      "required": ["key", "type", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "key":   { "type": "string", "minLength": 1 },
+        "type":  { "type": "string", "enum": ["string", "number", "boolean", "object", "array"] },
+        "label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "output": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/outputField" }
+        },
+        {
+          "type": "object",
+          "required": ["source"],
+          "additionalProperties": false,
+          "properties": {
+            "source": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "required": ["key", "type", "title"],
+  "properties": {
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "key":             { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "type":            { "type": "string", "enum": ["read", "search", "perform"] },
+    "title":           { "type": "string", "minLength": 1 },
+    "description":     { "type": "string" },
+    "resource":        { "type": "string", "minLength": 1 },
+    "idempotent":      { "type": "boolean" },
+    "requiresAuth":    { "type": "boolean" },
+    "params":          { "type": "array", "items": { "$ref": "param.schema.json" } },
+    "execute":         { "type": ["string", "object"], "minLength": 1 },
+    "output":          { "$ref": "#/$defs/output" },
+    "sample":          true
+  }
+}

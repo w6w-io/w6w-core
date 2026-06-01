@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://w6w.io/schemas/v1/connection.schema.json",
+  "title": "Connection",
+  "description": "The stored, per-user result of a completed Auth flow.",
+  "type": "object",
+  "required": ["manifestVersion", "id", "app", "auth", "owner", "state", "createdAt"],
+  "properties": {
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "id":              { "type": "string", "minLength": 1 },
+    "app":             { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
+    "auth":            { "type": "string", "minLength": 1 },
+    "owner":           { "type": "string", "minLength": 1 },
+    "state":           { "type": "string", "enum": ["pending", "connected", "needs_refresh", "broken", "revoked"] },
+    "credential":      true,
+    "display":         { "type": "object" },
+    "label":           { "type": "string" },
+    "createdAt":       { "type": "string", "format": "date-time" },
+    "lastTestedAt":    { "type": "string", "format": "date-time" },
+    "lastRefreshedAt": { "type": "string", "format": "date-time" },
+    "expiresAt":       { "type": "string", "format": "date-time" }
+  }
+}

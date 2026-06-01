@@ -4,7 +4,8 @@
     "./packages/runtime",
     "./packages/sources",
     "./packages/validator",
-    "./packages/expr"
+    "./packages/expr",
+    "./packages/schema"
   ],
   "imports": {
     "@w6w/types": "./packages/types/mod.ts"
@@ -13,7 +14,8 @@
     "test": "deno test -A --unstable-worker-options packages/",
     "check": "deno check packages/",
     "fmt": "deno fmt packages/",
-    "lint": "deno lint packages/"
+    "lint": "deno lint packages/",
+    "validate": "deno run --allow-read packages/validator/cli.ts"
   },
   "fmt": {
     "lineWidth": 100,

@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "id": "hello",
+  "name": "hello",
+  "displayName": "Hello",
+  "version": "0.1.0",
+  "description": "Reverse-DNS rule violated.",
+  "categories": ["other"],
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://w6w.io/schemas/v1/invocation.schema.json",
+  "title": "Invocation",
+  "description": "The envelope used to call an Action — binds App, Action, Connection, and resolved params.",
+  "type": "object",
+  "required": ["manifestVersion", "app", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "app":             { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
+    "action":          { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "connection":      { "type": "string", "minLength": 1 },
+    "params":          { "type": "object" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invocationId": { "type": "string", "minLength": 1 },
+        "runId":        { "type": "string", "minLength": 1 },
+        "stepId":       { "type": "string", "minLength": 1 },
+        "trigger":      { "type": "string", "enum": ["workflow", "editor", "api", "replay", "test"] }
+      }
+    }
+  }
+}

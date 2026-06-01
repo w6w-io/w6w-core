@@ -31,9 +31,64 @@ const PARAM_TYPES = [
   "file",
   "json",
   "code",
+  "group",
 ];
 const ACTION_TYPES = ["read", "search", "perform"];
 const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
+
+/**
+ * Controlled vocabulary for App `categories`. Mirrors `rfcs/categories.md`.
+ * Adding a slug here is non-breaking; renaming or removing one is breaking and
+ * requires a `manifestVersion` bump.
+ */
+export const CATEGORIES: readonly string[] = [
+  "ai",
+  "analytics",
+  "calendar",
+  "cms",
+  "communication",
+  "commerce",
+  "crm",
+  "databases",
+  "data-warehousing",
+  "developer-tools",
+  "devops",
+  "documents",
+  "email",
+  "finance",
+  "forms",
+  "hr",
+  "iot",
+  "legal",
+  "marketing",
+  "monitoring",
+  "productivity",
+  "project-management",
+  "search",
+  "security",
+  "social-media",
+  "spreadsheets",
+  "storage",
+  "support",
+  "version-control",
+  "video",
+  "other",
+];
+
+const CATEGORY_SET = new Set(CATEGORIES);
+
+/**
+ * Return the entries from `manifest.categories` that aren't in the controlled
+ * vocabulary. Hosts that want to enforce / warn on unknown categories call this
+ * alongside `validateApp` — the validator itself accepts unknown slugs, per the
+ * categories RFC ("hosts MAY accept out-of-vocabulary entries").
+ */
+export function unknownCategories(manifest: unknown): string[] {
+  if (!isObject(manifest) || !Array.isArray(manifest.categories)) return [];
+  return manifest.categories.filter((c): c is string =>
+    typeof c === "string" && !CATEGORY_SET.has(c)
+  );
+}
 
 const RE_ID = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/; // reverse-DNS
 const RE_NAME = /^[a-z0-9-]+$/; // kebab-case

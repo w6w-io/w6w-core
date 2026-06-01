@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "key": "upsert-record",
+  "type": "perform",
+  "title": "Upsert Record",
+  "resource": "record",
+  "idempotent": true,
+  "params": [
+    { "key": "id", "label": "ID", "type": "string", "required": true },
+    { "key": "name", "label": "Name", "type": "string", "required": true }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "id": "com.acme.hello",
+  "name": "hello",
+  "displayName": "Hello",
+  "version": "0.1.0",
+  "description": "A trivial app.",
+  "categories": ["other"],
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}
