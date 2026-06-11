@@ -93,6 +93,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
     log: (level: string, message: string, data?: unknown) =>
       post({ type: "log", level, message, data }),
     connection: msg.connection,
+    invocation: msg.invocation,
   };
   const value = await fn(msg.input, ctx);
   post({ type: "result", value });

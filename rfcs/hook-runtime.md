@@ -99,6 +99,12 @@ interface HookContext {
 
   /** Redacted Connection projection, when one was supplied. Never carries the credential. */
   connection?: RedactedConnection;
+
+  /** Read-only, host-issued metadata about this call. Pure data, never an authority. */
+  invocation?: InvocationContext;
+
+  /** Non-portable, host-provided capabilities. Empty in core; hosts augment it. See [Host extensions](#host-extensions). */
+  host?: HostExtensions;
 }
 ```
 
@@ -121,6 +127,14 @@ Lines are structured: `{ level, message, data? }`. Hosts MUST surface these to t
 
 The redacted Connection projection (Connection RFC §Redacted projection). Present when the Invocation supplied one. The `credential` field is always absent. Hooks that need the credential (`sign`, `refresh`, `revoke`) receive it in their `input` instead.
 
+### `ctx.invocation`
+
+The Invocation's `context` ([Invocation RFC](./invocation.md)) — read-only, host-issued metadata, never an authority. `invocationId` is stable per Invocation: use it as an **idempotency key** for `perform` actions (e.g. an `Idempotency-Key` header) so a retried call doesn't double-write. `runId`/`stepId` correlate the hook's `ctx.log` lines and downstream requests back to the Run that drove them. `trigger` (`workflow | editor | api | replay | test`) lets an action soften real side-effects under `editor`/`test` previews. Present for action `execute` (populated from the Invocation's `context`); absent for standalone auth-phase hooks, which are not driven by an Invocation. It carries **no** credential and grants **no** capability, and being plain data it crosses the worker boundary unchanged.
+
+### `ctx.host`
+
+The extension point for **host-specific** capabilities. It is **empty in the reference runtime** — a host adds capabilities to it for its own apps (see [Host extensions](#host-extensions)). Anything a hook reads from `ctx.host` makes the app **non-portable**: it runs only on hosts that provide the same extension. Host extensions are still bound by [credential isolation](#credential-isolation) — they MUST be host-mediated.
+
 ### What `ctx` does NOT carry
 
 The runtime intentionally exposes no:
@@ -130,7 +144,28 @@ The runtime intentionally exposes no:
 - Cryptographic / random / time primitives beyond what the host language provides natively (`globalThis.crypto`, `Date.now()`).
 - Inter-hook persistence. A hook is a pure function over `(input, ctx)`.
 
-This list is **closed**: any future capability is added by a new RFC, not by host-specific extensions.
+The **core** capabilities (`fetch`, `log`, `connection`, `invocation`) are a **closed list**: a new *portable* capability is added only by amending this RFC. A host that needs a capability of its own does not invent a new top-level `ctx` field — it adds it under [`ctx.host`](#host-extensions), where the non-portability is explicit.
+
+## Host extensions
+
+A host MAY expose capabilities beyond the core set to **its own apps** — e.g. a fetch to internal services with the host's own tokens and headers attached. These live under **`ctx.host`** and are governed by three rules:
+
+1. **Namespaced.** Every host capability is reached as `ctx.host.<name>`. The leading `host.` marks, at the call site, code that has left portable territory. A host MUST NOT add top-level `ctx` fields.
+2. **Non-portable, and typed as such.** `HostExtensions` is empty in `@w6w/types`; the host augments it via TypeScript declaration merging from its own codebase. An app that reads `ctx.host.x` runs only on a host that provides `x`; on any other host the field is absent. Hosts SHOULD grant `ctx.host` capabilities only to apps they trust (e.g. first-party apps), never to untrusted third-party publishers — a privileged internal fetch in untrusted hands is a pivot onto the host's own services.
+3. **Host-mediated — credential isolation still holds.** A host capability that carries a credential MUST perform the privileged work **on the trusted host**, exactly like `ctx.fetch`: the hook calls `ctx.host.cohostFetch(url)`, the call proxies to the host, the host attaches the token and performs it, and the hook receives a plain `Response`. The token MUST NOT be placed into `ctx` (e.g. as a header map) where untrusted sandbox code could read it. A `ctx.host` capability is "`ctx.fetch` with a different egress profile and a host-side signer," not an exception to the [single invariant](#credential-isolation).
+
+Example augmentation (in the host's code, **not** in `@w6w/types`):
+
+```ts
+declare module "@w6w/types" {
+  interface HostExtensions {
+    /** Host-mediated fetch to cohost-internal services; auth injected on the host. */
+    cohostFetch: typeof fetch;
+  }
+}
+```
+
+Hosts MAY require an app to **declare** the host capabilities it uses (a manifest field), so the runtime can refuse to load an app that needs a capability the host does not grant — and refuse to grant privileged ones to untrusted apps. The declaration format is a host/manifest concern, out of scope for this RFC.
 
 ## Hook registry
 

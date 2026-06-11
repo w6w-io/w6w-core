@@ -40,6 +40,8 @@ export type HostMessage =
     selector: Selector;
     input: unknown;
     connection?: unknown;
+    /** Read-only invocation metadata surfaced to the hook as `ctx.invocation`. */
+    invocation?: unknown;
     /** When true, `ctx.fetch` proxies through the host; otherwise it throws. */
     enableFetch: boolean;
   }

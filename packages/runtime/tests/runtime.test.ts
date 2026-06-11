@@ -16,7 +16,7 @@ Deno.test("loadApp + describe returns the manifest and actions", async () => {
   assertEquals(desc.app.id, "com.w6w.hello");
   assertEquals(desc.app.displayName, "Hello");
   const keys = desc.actions.map((a) => a.key).sort();
-  assertEquals(keys, ["escape-attempt", "get-greeting"]);
+  assertEquals(keys, ["echo-context", "escape-attempt", "get-greeting"]);
 });
 
 Deno.test("action config is extracted from the code module; execute does not leak", async () => {
@@ -52,6 +52,24 @@ Deno.test("invoke runs an action in the sandbox", async () => {
   const app = await loadApp(HELLO_DIR);
   const result = await invoke(app, inv("get-greeting", { name: "Ada" }));
   assertEquals(result.value, { greeting: "Hello, Ada." });
+});
+
+Deno.test("invoke injects the host-issued context as ctx.invocation", async () => {
+  const app = await loadApp(HELLO_DIR);
+  const context = {
+    invocationId: "inv_123",
+    runId: "run_abc",
+    stepId: "step_1",
+    trigger: "workflow" as const,
+  };
+  const result = await invoke(app, { ...inv("echo-context"), context });
+  assertEquals(result.value, { invocation: context });
+});
+
+Deno.test("ctx.invocation is undefined when the Invocation carries no context", async () => {
+  const app = await loadApp(HELLO_DIR);
+  const result = await invoke(app, inv("echo-context"));
+  assertEquals(result.value, { invocation: null });
 });
 
 Deno.test("invoke applies param defaults", async () => {
