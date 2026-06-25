@@ -231,6 +231,7 @@ export async function invoke(
     input: resolved,
     readScope: app.dir,
     connection: redacted,
+    invocation: invocation.context,
     timeoutMs: opts.timeoutMs,
     onLog: opts.onLog,
     onFetch,

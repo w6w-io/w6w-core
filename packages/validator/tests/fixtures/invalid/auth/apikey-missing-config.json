@@ -1,0 +1,6 @@
+{
+  "manifestVersion": "1",
+  "key": "api-key",
+  "type": "apiKey",
+  "displayName": "API Key Without Config"
+}

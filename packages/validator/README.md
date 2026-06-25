@@ -25,8 +25,29 @@ const { ok, errors } = validateApp(manifest);
 
 Each returns `{ ok, errors: { path, message }[] }`.
 
-> Hand-rolled reference validator until generated JSON Schema + conformance
-> fixtures land (see the ROADMAP).
+`validateApp` accepts unknown `categories` entries (per the
+[Categories RFC](../../rfcs/categories.md), hosts MAY accept them). To warn
+on out-of-vocabulary slugs, call `unknownCategories(manifest)` alongside the
+validator — it returns the entries that aren't in the `CATEGORIES` constant.
+
+## CLI
+
+```sh
+deno task validate path/to/app.json
+deno task validate --kind=auth path/to/auth.yaml
+deno task validate path/to/action.toml
+```
+
+`core validate <path>` (wired as `deno task validate`) loads JSON / YAML / TOML,
+auto-detects whether the file is an App / Action / Auth (override with
+`--kind=…`), and prints every error at once. Exits non-zero on validation
+failure.
+
+## Conformance fixtures
+
+Drop-in JSON fixtures live in [`tests/fixtures/`](./tests/fixtures/README.md).
+Third-party hosts can run the same `valid/` + `invalid/` walk against their own
+validator to claim `manifestVersion: "1"` compliance.
 
 ## License
 

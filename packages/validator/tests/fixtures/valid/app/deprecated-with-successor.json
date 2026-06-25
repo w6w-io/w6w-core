@@ -1,0 +1,13 @@
+{
+  "manifestVersion": "1",
+  "id": "com.acme.old",
+  "name": "old",
+  "displayName": "Acme Old",
+  "version": "9.9.9",
+  "description": "Legacy app pointing at its successor.",
+  "categories": ["other"],
+  "classification": { "maturity": "deprecated", "successor": "com.acme.new" },
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}

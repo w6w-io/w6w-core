@@ -1,8 +1,8 @@
 # RFC: Action
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-04-15
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
@@ -38,8 +38,8 @@ An Action is **one thing a user can do** with an App. Every action has a `type` 
 | Type | Side effects | Returns | Platform behavior |
 |---|---|---|---|
 | `read` | No | Single object or null | Cacheable. Safe to retry. Fetches a known record (e.g. by ID). |
-| `search` | No | Array of objects | Cacheable. Paginated. Matches criteria. |
-| `perform` | Yes | Result object | Not cacheable. May not be idempotent. Creates, updates, deletes, sends, etc. |
+| `search` | No | `{ items, nextCursor? }` | Cacheable. Cursor-paginated (see [Pagination](#pagination)). Matches criteria. |
+| `perform` | Yes | Result object | Not cacheable by default. Set `idempotent: true` to declare safe to retry. Creates, updates, deletes, sends, etc. |
 
 The type tells the platform how to treat the action — caching, retry safety, UI grouping — without inspecting what it actually does.
 
@@ -79,6 +79,7 @@ Some params depend on others — a Variant param's options are a function of the
   "type": "search",
   "title": "Find Channels",
   "description": "Search for channels matching a query.",
+  "resource": "channel",
   "params": [
     { "key": "query", "label": "Search query", "type": "string", "required": true },
     { "key": "limit", "label": "Max results",  "type": "number", "default": 10 }
@@ -88,7 +89,13 @@ Some params depend on others — a Variant param's options are a function of the
     { "key": "id",    "type": "string", "label": "Channel ID" },
     { "key": "name",  "type": "string", "label": "Channel Name" },
     { "key": "topic", "type": "string", "label": "Topic" }
-  ]
+  ],
+  "sample": {
+    "items": [
+      { "id": "C01", "name": "general", "topic": "Company-wide" }
+    ],
+    "nextCursor": null
+  }
 }
 ```
 
@@ -101,6 +108,8 @@ Some params depend on others — a Variant param's options are a function of the
   "type": "perform",
   "title": "Send Message",
   "description": "Send a message to a Slack channel.",
+  "resource": "message",
+  "idempotent": false,
   "params": [
     {
       "key": "channelId",
@@ -154,6 +163,22 @@ Output declares the shape of what the action returns, so downstream workflow ste
 ```
 
 The `source` hook receives the current param values and returns an `OutputField[]`. This follows the same pattern as [Param](./param.md)'s dynamic `options`.
+
+## Pagination
+
+`search` Actions return `{ items, nextCursor? }`. The cursor is **opaque to the platform** — its shape is the publisher's choice, but it MUST be a JSON-serializable value (string, number, or plain object).
+
+```ts
+type SearchResult<T> = {
+  items: T[];
+  /** Pass back into the next call's `cursor` param. Absent / null = no more results. */
+  nextCursor?: unknown;
+};
+```
+
+Hosts MAY auto-supply a `cursor` param into the action's `params` if one isn't declared; publishers SHOULD declare it explicitly when they want it user-visible (e.g. for manual pagination in the editor).
+
+Offset-based or page-based APIs translate trivially: the publisher's `execute` hook converts `cursor` to/from `?page=N` or `?offset=N`. The platform does not need to model the underlying scheme.
 
 ## Param resolution
 
@@ -231,7 +256,7 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 
 - `options.source` is not a value derivation. It returns the *set* of valid options; picking one requires either user input or a value already supplied. The platform never silently picks one for the caller.
 - Validation reuses the option list as an implicit `enum`. A supplied select value MUST be in the resolved option list.
-- Hooks run during resolution share the runtime contract with all other hooks (Auth `sign`, Param `validation.hook`, Action `execute`).
+- Hooks run during resolution share the runtime contract with all other hooks (Auth `sign`, Param `validation.hook`, Action `execute`) — see [Hook Runtime RFC](./hook-runtime.md).
 
 ## Field reference
 
@@ -244,9 +269,13 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 | `type` | enum | ✅ | `"read"` \| `"search"` \| `"perform"`. |
 | `title` | string | ✅ | Human-facing name (e.g. "Send Message"). |
 | `description` | string | ⬜ | One-line summary of what the action does. |
+| `resource` | string | ⬜ | UI grouping hint. Actions sharing the same `resource` value (e.g. `"channel"`, `"message"`) are grouped together in the editor. Purely presentational — no structural meaning. |
+| `idempotent` | boolean | ⬜ | `perform` Actions only. Declares the operation is safe to re-execute with the same inputs (e.g. `PUT`-shaped). Drives the platform's retry policy and lets [Invocation](./invocation.md) use `invocationId` as a dedupe key. Defaults to `false`. |
+| `requiresAuth` | boolean | ⬜ | When the enclosing App declares Auth methods, set `false` to opt this Action out of requiring a Connection (e.g. a public `health` endpoint). Defaults to `true` when the App has auth, `false` when it doesn't. |
 | `params` | [Param](./param.md)[] | ⬜ | Inputs collected from the user in the workflow editor. |
-| `execute` | string (path) | ✅ | The method that executes this action. |
+| `execute` | string (path) \| function | ✅ | The method that executes this action. Path reference or co-located function — see [Hook Runtime RFC §Module format](./hook-runtime.md#module-format). |
 | `output` | OutputField[] \| `{ source }` | ⬜ | Shape of the return value. Static array or dynamic hook. |
+| `sample` | object | ⬜ | An example value matching `output`. Used by the editor for richer field-mapper previews (Zapier-style). Not used for validation. |
 
 ### OutputField
 
@@ -256,9 +285,12 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 | `type` | string | ✅ | `"string"` \| `"number"` \| `"boolean"` \| `"object"` \| `"array"`. |
 | `label` | string | ✅ | Human-facing name shown in the field mapper. |
 
-## Open questions
+## Resolved questions
 
-1. **Pagination contract for `search`.** Does the spec define how search actions handle pagination (cursor-based, offset-based), or leave that to the handler and the host?
-2. **Idempotency hints.** Should `perform` actions declare whether they're safe to retry (`idempotent: true`)?
-3. **Resource grouping.** n8n groups actions by resource (Channel → Create/Get/Delete, Message → Send/Update). Worth an optional `resource` field for UI grouping, or keep actions flat?
-4. **`sample` data.** Alongside `output`, should actions provide a `sample` JSON object for richer previews in the editor (as Zapier does)?
+| Question | Resolution |
+|---|---|
+| Pagination contract for `search` | **Cursor.** `search` returns `{ items, nextCursor? }`. The cursor is opaque to the platform; publishers translate to offset/page schemes inside `execute`. |
+| Idempotency hints | Added optional `idempotent: boolean` on `perform` Actions. Drives retry policy and Invocation dedupe. |
+| Resource grouping | Added optional `resource: string` for UI grouping. Purely presentational — actions remain a flat list structurally. |
+| Sample data | Added optional `sample` alongside `output`. Cheap to spec, big editor UX win. |
+| Connectionless actions | Added optional `requiresAuth` to opt an Action out of needing a Connection even when the App declares Auth (resolves the corresponding Invocation question). |

@@ -1,0 +1,9 @@
+{
+  "invalid/app/missing-id.json": "id",
+  "invalid/app/bad-id-not-reverse-dns.json": "id",
+  "invalid/app/too-many-categories.json": "categories",
+  "invalid/app/bad-version.json": "version",
+  "invalid/action/bad-type.json": "action.type",
+  "invalid/auth/oauth2-missing-endpoints.json": "auth.oauth2",
+  "invalid/auth/apikey-missing-config.json": "auth.apiKey"
+}

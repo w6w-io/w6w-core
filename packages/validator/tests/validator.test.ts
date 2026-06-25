@@ -1,5 +1,11 @@
 import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
-import { validateAction, validateApp, validateAuth } from "../mod.ts";
+import {
+  CATEGORIES,
+  unknownCategories,
+  validateAction,
+  validateApp,
+  validateAuth,
+} from "../mod.ts";
 import type { AppManifest } from "@w6w/types";
 
 const VALID_APP: AppManifest = {
@@ -63,6 +69,20 @@ Deno.test("validateAuth requires oauth2 endpoints", () => {
     oauth2: { authorizationUrl: "https://x.test/a", tokenUrl: "https://x.test/t" },
   });
   assert(ok.ok, JSON.stringify(ok.errors));
+});
+
+Deno.test("CATEGORIES vocabulary contains expected slugs", () => {
+  for (const c of ["communication", "developer-tools", "ai", "other"]) {
+    assert(CATEGORIES.includes(c), `expected ${c} in CATEGORIES`);
+  }
+});
+
+Deno.test("unknownCategories returns out-of-vocabulary entries (validator stays loose)", () => {
+  const r = validateApp({ ...VALID_APP, categories: ["communication", "made-up-thing"] });
+  assert(r.ok, "validator accepts unknown categories");
+  assertEquals(unknownCategories({ ...VALID_APP, categories: ["communication", "made-up-thing"] }), [
+    "made-up-thing",
+  ]);
 });
 
 Deno.test("validateAuth checks apiKey config", () => {

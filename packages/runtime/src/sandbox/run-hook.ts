@@ -7,7 +7,7 @@
  * the trusted host, via the `onFetch` callback the caller supplies — that is
  * where the egress allowlist is enforced and where `sign` runs.
  */
-import type { RedactedConnection, SignableRequest } from "@w6w/types";
+import type { InvocationContext, RedactedConnection, SignableRequest } from "@w6w/types";
 import { W6WError } from "../errors.ts";
 import type {
   DescribedApp,
@@ -108,6 +108,8 @@ export interface RunHookOptions extends WorkerRunOptions {
   input: unknown;
   /** Redacted connection exposed via `ctx.connection`. Never the credential. */
   connection?: RedactedConnection | unknown;
+  /** Read-only invocation metadata exposed via `ctx.invocation`. */
+  invocation?: InvocationContext;
 }
 
 /** Import the entry module in the sandbox and call a located function. */
@@ -119,6 +121,7 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
     selector: opts.selector,
     input: opts.input,
     connection: opts.connection,
+    invocation: opts.invocation,
     enableFetch: !!opts.onFetch,
   }, opts);
 }

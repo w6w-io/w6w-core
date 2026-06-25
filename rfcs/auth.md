@@ -1,8 +1,8 @@
 # RFC: Auth
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-04-15
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
@@ -229,7 +229,13 @@ Hooks make these first-class instead of workarounds.
 | `name` | string | ✅ | Header / param / body-key name. |
 | `prefix` | string | ⬜ | Prefix prepended to the value (e.g., `"Bearer "`). |
 
-## Open questions
+## Hook runtime
 
-1. **Hook runtime contract.** What runtime executes hooks? Deferred to a runtime RFC, but the Auth spec needs to declare the input/output shapes and timeouts hooks must satisfy.
-2. **Test cadence.** Do we spec how often `test` re-runs to check connection health, or leave that entirely to the host?
+All hooks named here — `preflight`, `exchange`, `test`, `afterConnect`, `sign`, `refresh`, `revoke` — execute under the [Hook Runtime RFC](./hook-runtime.md). Their input/output shapes, the ambient `HookContext`, the credential-isolation invariant that makes `sign` the only network-less hook with the credential, the error shape, the default 30 s timeout, and the sandbox posture are all defined there. The per-hook signatures appear in the [Hook registry](./hook-runtime.md#hook-registry).
+
+## Resolved questions
+
+| Question | Resolution |
+|---|---|
+| Hook runtime contract | Covered by the [Hook Runtime RFC](./hook-runtime.md). |
+| `test` cadence | **Host's choice.** The spec defines `test`'s contract (input, output, semantics). When and how often it runs to validate stored Connections is a host policy — informed by `Connection.expiresAt` and observed failures, not prescribed by this RFC. |

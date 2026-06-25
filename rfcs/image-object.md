@@ -1,8 +1,8 @@
 # RFC: ImageObject
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-04-15
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
@@ -51,7 +51,9 @@ At least one of `svg`, `url`, or `sizes` MUST be present.
     "128x128":  "./assets/icon-128.png",
     "512x512":  "./assets/icon-512.png",
     "1200x630": "https://cdn.example.com/og.png"
-  }
+  },
+  "alt":     "Acme logo",
+  "caption": "The Acme logo, used on marketplace cards."
 }
 ```
 
@@ -62,8 +64,12 @@ At least one of `svg`, `url`, or `sizes` MUST be present.
 | `svg` | string (path \| URL) | ⬜ | Vector source. Preferred by renderers that support SVG. |
 | `url` | string (URL) | ⬜ | Single raster source used when no specific dimension is requested. |
 | `sizes` | object | ⬜ | Map of `{width}x{height}` (pixel integers) → URL. Freeform dimensions: `16x16`, `100x200`, `1200x630` are all valid. |
+| `alt` | string | ⬜ | Accessibility text. Hosts SHOULD render it as `alt`/`aria-label` whenever the image is presented. |
+| `caption` | string | ⬜ | Optional human-readable caption (used by screenshot strips, marketplace detail pages, etc.). |
 
 At least one of `svg`, `url`, or `sizes` MUST be present. Any combination is allowed.
+
+MIME type is inferred from the URL extension (`.svg`, `.png`, `.webp`, …). Publishers do not declare it explicitly.
 
 ## Prior art
 
@@ -72,9 +78,11 @@ At least one of `svg`, `url`, or `sizes` MUST be present. Any combination is all
 - **Apple `AppIcon.appiconset` / Android `mipmap-*`** — size-keyed raster sets.
 - **Open Graph / Twitter Cards** — fixed-dimension marketing images (`1200x630`, etc.).
 
-## Open questions
+## Resolved questions
 
-1. **Alt text / caption.** Accessibility needs `alt`; marketing surfaces need `caption`. Include both as optional fields on `ImageObject`, or leave text annotations to the enclosing field (e.g., a screenshot wrapper)?
-2. **MIME / format hint.** Do we need explicit `type` per source, or is MIME inferred from the URL extension?
-3. **Density / DPR.** `{w}x{h}@2x` naming convention in `sizes`, or a dedicated field?
-4. **Placeholder / blurhash.** Low-quality preview for loading states — worth a field now, or layer on later?
+| Question | Resolution |
+|---|---|
+| Alt text / caption | Both **added** as optional. Accessibility shouldn't be deferred. |
+| MIME / format hint | **Inferred from extension.** No explicit `type` field for `manifestVersion: "1"`; can be added without breakage if a real ambiguity surfaces. |
+| Density / DPR | **Deferred.** Explicit pixel dimensions in `sizes` (`32x32`, `64x64`) are enough for `v1`. `@2x`-style naming may be layered on later. |
+| Placeholder / blurhash | **Deferred.** Add only when host renderers actually need it. |

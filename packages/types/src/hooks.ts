@@ -10,6 +10,7 @@
 import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
 import type { RedactedConnection } from "./connection.ts";
+import type { InvocationContext } from "./invocation.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -19,7 +20,48 @@ export interface HookContext {
   log: (level: "debug" | "info" | "warn" | "error", message: string, data?: unknown) => void;
   /** The redacted Connection, when the invocation supplied one. Never contains the credential. */
   connection?: RedactedConnection;
+  /**
+   * Read-only, host-issued metadata about the call this hook is part of:
+   * `invocationId` (use as an idempotency key for `perform` actions), `runId`
+   * and `stepId` (for log correlation), and `trigger` (e.g. skip real
+   * side-effects when it is `"editor"` or `"test"`). Pure data — never an
+   * authority. Present for action `execute`; absent for standalone auth hooks.
+   */
+  invocation?: InvocationContext;
+  /**
+   * Non-portable, host-provided capabilities (see {@link HostExtensions}).
+   * Empty in the reference runtime — a host fills it via declaration merging.
+   * Anything an app reads from `ctx.host` ties it to that host: it will not run
+   * on a host that does not provide the same extension. Host extensions are
+   * still bound by credential isolation — they MUST be host-mediated (the host
+   * performs the privileged work), never tokens handed into the sandbox.
+   */
+  host?: HostExtensions;
 }
+
+/**
+ * The extension point for host-specific `ctx.host` capabilities. Intentionally
+ * empty in `@w6w/types` so the core model stays vendor-neutral and portable. A
+ * host augments it from its own codebase via TypeScript declaration merging —
+ * which is why this is an `interface`, not a `type`:
+ *
+ * ```ts
+ * // In the host's own code (NOT in @w6w/types):
+ * declare module "@w6w/types" {
+ *   interface HostExtensions {
+ *     // Host-mediated fetch to internal services; auth injected on the host,
+ *     // never in the sandbox. Reads like `ctx.fetch` but for internal egress.
+ *     cohostFetch: typeof fetch;
+ *   }
+ * }
+ * ```
+ *
+ * After merging, `ctx.host?.cohostFetch` is fully typed inside that host and
+ * absent everywhere else. The leading `host.` at every call site marks code
+ * that has left portable territory.
+ */
+// deno-lint-ignore no-empty-interface
+export interface HostExtensions {}
 
 /** Result returned by a validation hook. */
 export type ValidationResult = { ok: true } | { ok: false; message: string };

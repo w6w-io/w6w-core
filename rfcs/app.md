@@ -1,8 +1,8 @@
 # RFC: App
 
-**Status:** Draft
-**Author:** TBD
-**Date:** 2026-04-15
+**Status:** Final
+**Author:** Segev Shmueli
+**Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
@@ -52,11 +52,15 @@ Below is a JSON rendering. The same logical structure maps 1:1 to YAML, XML, or 
   "name": "slack",
   "displayName": "Slack",
   "version": "1.4.2",
+  "appVersion": "2024-10-22",
 
   "classification": {
     "maturity": "beta",
-    "visibility": "public"
+    "visibility": "public",
+    "successor": "com.acme.slack-next"
   },
+
+  "assetsRoot": "./assets",
 
   "description": "Send messages and react to events in Slack workspaces.",
   "longDescription": "./README.md",
@@ -118,13 +122,16 @@ Below is a JSON rendering. The same logical structure maps 1:1 to YAML, XML, or 
 | `id` | string | ✅ | Globally unique identifier in reverse-DNS form (`com.example.app-name`). **Immutable** across versions. |
 | `name` | string | ✅ | Machine-friendly short name. Lowercase, kebab-case, ASCII. Used in URLs and CLIs. |
 | `displayName` | string | ✅ | Human-facing name. Free-form; localizable. |
-| `version` | string | ✅ | Semantic version (`MAJOR.MINOR.PATCH`) of this manifest release. |
+| `version` | string | ✅ | Semantic version (`MAJOR.MINOR.PATCH`) of this **manifest release**. Bumped on any change to the manifest itself. |
+| `appVersion` | string | ⬜ | Free-form version of the **underlying integrated service** this manifest targets (e.g. `"2024-10-22"`, `"v2"`, `"Slack Web API"`). Informational; no SemVer constraint. |
 | `classification` | object | ⬜ | Release-status block. Defaults: `{ maturity: "stable", visibility: "public" }`. |
 | `classification.maturity` | enum | ⬜ | `"alpha"` \| `"beta"` \| `"stable"` \| `"deprecated"`. Self-declared stability signal shown as a badge in the UI. Default: `"stable"`. |
 | `classification.visibility` | enum | ⬜ | `"private"` \| `"unlisted"` \| `"public"`. Publisher's distribution intent. `private` = workspace/team-only, `unlisted` = reachable by direct link but not indexed, `public` = listed in the marketplace. Default: `"public"`. |
+| `classification.successor` | string (app id) | ⬜ | When `maturity = "deprecated"`, the reverse-DNS id of the app that replaces this one. Hosts SHOULD surface a "this app is deprecated; use *successor*" notice. |
+| `assetsRoot` | string (path) | ⬜ | Base directory for resolving relative paths in `appearance.icon`, `screenshots[].url`, `longDescription`, etc. Defaults to the directory of the manifest file. Absolute URLs are unaffected. |
 | `description` | string | ✅ | One-line summary, ≤ 200 chars. Shown in lists. |
 | `longDescription` | string \| path | ⬜ | Markdown prose, inline or referenced file. For marketplace detail pages. |
-| `categories` | string[] | ✅ | 1–3 entries from a controlled vocabulary. Taxonomy is defined by the host registry. |
+| `categories` | string[] | ✅ | 1–3 entries from the [controlled vocabulary](./categories.md). Hosts MAY accept out-of-vocabulary entries but SHOULD warn. |
 | `keywords` | string[] | ⬜ | Free-form tags for search. |
 | `appearance` | object | ✅ | Visual identity block — icon, brand color, and optional dark-mode overrides. |
 | `appearance.icon` | [ImageObject](./image-object.md) | ✅ | Icon asset. |
@@ -156,9 +163,18 @@ The manifest defines a **logical schema**, not a wire format. The same manifest 
 
 A reference serializer/validator lives in `core/` and validates any input against the logical schema regardless of its source format.
 
-## Open questions
+## Reserved fields
 
-1. **Manifest version vs app version.** Is `version` the manifest's version or the underlying integration's version? Consider splitting into `version` and `appVersion`.
-2. **Deprecation lifecycle.** How does an app mark itself deprecated and point to a successor? Do we add a `successor` / `replacedBy` field to the spec?
-3. **Asset resolution.** Paths in `icon`, `screenshots`, `longDescription` — relative to what? The manifest file? A declared `assetsRoot`?
-4. **Signing & provenance.** Specify a signature block in the manifest, or defer to a later RFC?
+These field names are **reserved** by this spec. Hosts MUST NOT repurpose them; a later RFC will define their shape.
+
+- `signature` — manifest-level signature block (provenance / publisher attestation).
+- `attestations` — verifiable claims about the manifest or its assets.
+
+## Resolved questions
+
+| Question | Resolution |
+|---|---|
+| Manifest version vs app version | **Split.** `version` is the manifest release (SemVer); the optional `appVersion` is free-form metadata about the integrated service. |
+| Deprecation lifecycle | `classification.maturity: "deprecated"` plus optional `classification.successor` (reverse-DNS id). |
+| Asset resolution | Paths resolve **relative to the manifest file** by default; the optional top-level `assetsRoot` overrides the base directory. Absolute URLs are passed through. |
+| Signing & provenance | **Deferred** to a follow-up RFC. `signature` and `attestations` are reserved as field names. |

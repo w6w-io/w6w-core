@@ -1,0 +1,12 @@
+{
+  "manifestVersion": "1",
+  "id": "com.acme.bad-version",
+  "name": "bad-version",
+  "displayName": "Bad Version",
+  "version": "v1",
+  "description": "Non-SemVer version.",
+  "categories": ["other"],
+  "appearance": { "icon": { "svg": "./icon.svg" } },
+  "author": { "name": "Acme" },
+  "license": "MIT"
+}

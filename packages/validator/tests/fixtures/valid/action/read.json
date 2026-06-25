@@ -1,0 +1,10 @@
+{
+  "manifestVersion": "1",
+  "key": "get-user",
+  "type": "read",
+  "title": "Get User",
+  "description": "Fetch a user by ID.",
+  "params": [
+    { "key": "userId", "label": "User ID", "type": "string", "required": true }
+  ]
+}

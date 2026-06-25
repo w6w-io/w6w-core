@@ -6,5 +6,11 @@
  * const { ok, errors } = validateApp(manifest);
  * ```
  */
-export { validateAction, validateApp, validateAuth } from "./src/validate.ts";
+export {
+  CATEGORIES,
+  unknownCategories,
+  validateAction,
+  validateApp,
+  validateAuth,
+} from "./src/validate.ts";
 export type { ValidationError, ValidationResult } from "./src/validate.ts";
