@@ -2,7 +2,7 @@
 
 The core monorepo for the workflow platform.
 
-**Status:** Closed source (will be open sourced later)
+**Status:** Source-available under [FSL-1.1-ALv2](./LICENSE) (converts to Apache 2.0).
 **Current spec:** `manifestVersion: "1"` — all primitive RFCs are Final.
 
 ## Purpose
