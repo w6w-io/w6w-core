@@ -66,7 +66,7 @@ digest are the same; the registry deduplicates.
 
 ```
                      ┌──────── Registry ─────────┐
-register("hello") ─► │  apps["com.w6w.hello"]    │
+register("hello") ─► │  apps["io.w6w.hello"]    │
                      │    ├─ versions:            │
                      │    │    ├─ 1.0.0  (digest X)
                      │    │    └─ 1.1.0  (digest Y)  ← latest

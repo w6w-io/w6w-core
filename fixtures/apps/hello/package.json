@@ -7,7 +7,7 @@
   "categories": ["developer-tools"],
   "private": true,
   "w6w": {
-    "id": "com.w6w.hello",
+    "id": "io.w6w.hello",
     "displayName": "Hello",
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },
     "entry": "./index.ts"

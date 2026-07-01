@@ -19,7 +19,7 @@ describe(app); // { app: AppManifest, actions: Action[], auth: Auth[] } — runs
 
 const { value } = await invoke(app, {
   manifestVersion: "1",
-  app: "com.w6w.hello",
+  app: "io.w6w.hello",
   action: "get-greeting",
   params: { name: "Ada" },
 });

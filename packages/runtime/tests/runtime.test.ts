@@ -6,14 +6,14 @@ import type { Invocation } from "@w6w/types";
 const HELLO_DIR = fromFileUrl(new URL("../../../fixtures/apps/hello", import.meta.url));
 
 function inv(action: string, params?: Record<string, unknown>): Invocation {
-  return { manifestVersion: "1", app: "com.w6w.hello", action, params };
+  return { manifestVersion: "1", app: "io.w6w.hello", action, params };
 }
 
 Deno.test("loadApp + describe returns the manifest and actions", async () => {
   const app = await loadApp(HELLO_DIR);
   const desc = describe(app);
 
-  assertEquals(desc.app.id, "com.w6w.hello");
+  assertEquals(desc.app.id, "io.w6w.hello");
   assertEquals(desc.app.displayName, "Hello");
   const keys = desc.actions.map((a) => a.key).sort();
   assertEquals(keys, ["echo-context", "escape-attempt", "get-greeting"]);
@@ -38,7 +38,7 @@ Deno.test("manifest is sourced from package.json (no app.json)", async () => {
   const { app: m } = describe(app);
 
   // From the `w6w` block:
-  assertEquals(m.id, "com.w6w.hello");
+  assertEquals(m.id, "io.w6w.hello");
   assertEquals(m.displayName, "Hello");
   assertEquals(m.categories, ["developer-tools"]);
   // Reused from native package.json fields:
