@@ -70,6 +70,17 @@ Primitives that are reused inside other manifests rather than declared standalon
 | **Hook Runtime** | The contract every publisher-authored hook runs under: module format, ambient API, error shape, timeouts, sandbox posture, credential isolation. | [`rfcs/hook-runtime.md`](./rfcs/hook-runtime.md) — Final |
 | **Categories** | Controlled vocabulary for App `categories`. | [`rfcs/categories.md`](./rfcs/categories.md) — Final |
 
+## Build your own app
+
+Two starter templates cover both authoring flows. The app contract they satisfy is identical — pick the toolchain you're comfortable with.
+
+| Template | Toolchain | Notes |
+|---|---|---|
+| [`w6w-app-template-deno`](https://github.com/w6w-io/w6w-app-template-deno) | Deno + JSR `@w6w/types` + `deno test` | Zero-install, matches the reference runtime directly. |
+| [`w6w-app-template-node`](https://github.com/w6w-io/w6w-app-template-node) | Node 22 + npm `@w6w/types` + `tsx` + `vitest` | Node-idiomatic. `.ts` extensions kept in imports so the same source runs under the runtime unchanged. |
+
+Both ship: bearer-token Auth (`sign` + `test`), read + perform Actions against `httpbin.org`, mocked-`HookContext` unit tests, and a green CI workflow. Click **Use this template** on GitHub to start.
+
 ## Design principles
 
 A few invariants that run through every RFC:
