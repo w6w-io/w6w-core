@@ -18,22 +18,22 @@
   ],
   "properties": {
     "manifestVersion": { "type": "string", "minLength": 1 },
-    "id":              { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
-    "name":            { "type": "string", "pattern": "^[a-z0-9-]+$" },
-    "displayName":     { "type": "string", "minLength": 1 },
-    "version":         { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+].*)?$" },
-    "appVersion":      { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" },
+    "name": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "displayName": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+].*)?$" },
+    "appVersion": { "type": "string", "minLength": 1 },
     "classification": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maturity":   { "type": "string", "enum": ["alpha", "beta", "stable", "deprecated"] },
+        "maturity": { "type": "string", "enum": ["alpha", "beta", "stable", "deprecated"] },
         "visibility": { "type": "string", "enum": ["private", "unlisted", "public"] },
-        "successor":  { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" }
+        "successor": { "type": "string", "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$" }
       }
     },
-    "assetsRoot":      { "type": "string", "minLength": 1 },
-    "description":     { "type": "string", "minLength": 1, "maxLength": 200 },
+    "assetsRoot": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1, "maxLength": 200 },
     "longDescription": { "type": "string", "minLength": 1 },
     "categories": {
       "type": "array",
@@ -47,14 +47,20 @@
       "required": ["icon"],
       "additionalProperties": false,
       "properties": {
-        "icon":       { "$ref": "image-object.schema.json" },
-        "brandColor": { "type": "string", "pattern": "^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+        "icon": { "$ref": "image-object.schema.json" },
+        "brandColor": {
+          "type": "string",
+          "pattern": "^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+        },
         "darkMode": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "icon":       { "$ref": "image-object.schema.json" },
-            "brandColor": { "type": "string", "pattern": "^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" }
+            "icon": { "$ref": "image-object.schema.json" },
+            "brandColor": {
+              "type": "string",
+              "pattern": "^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+            }
           }
         }
       }
@@ -68,21 +74,21 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name":  { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
         "email": { "type": "string", "minLength": 1 },
-        "url":   { "type": "string", "minLength": 1 }
+        "url": { "type": "string", "minLength": 1 }
       }
     },
-    "publisher":      { "type": "string", "minLength": 1 },
-    "homepage":       { "type": "string", "minLength": 1 },
-    "repository":     { "type": "string", "minLength": 1 },
-    "documentation":  { "type": "string", "minLength": 1 },
-    "support":        { "type": "string", "minLength": 1 },
-    "bugs":           { "type": "string", "minLength": 1 },
-    "license":        { "type": "string", "minLength": 1 },
-    "privacyPolicy":  { "type": "string", "minLength": 1 },
+    "publisher": { "type": "string", "minLength": 1 },
+    "homepage": { "type": "string", "minLength": 1 },
+    "repository": { "type": "string", "minLength": 1 },
+    "documentation": { "type": "string", "minLength": 1 },
+    "support": { "type": "string", "minLength": 1 },
+    "bugs": { "type": "string", "minLength": 1 },
+    "license": { "type": "string", "minLength": 1 },
+    "privacyPolicy": { "type": "string", "minLength": 1 },
     "termsOfService": { "type": "string", "minLength": 1 },
-    "defaultLocale":  { "type": "string", "minLength": 1 },
+    "defaultLocale": { "type": "string", "minLength": 1 },
     "localizations": {
       "type": "object",
       "additionalProperties": { "type": "object" }

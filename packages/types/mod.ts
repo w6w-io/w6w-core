@@ -10,6 +10,7 @@ export * from "./src/param.ts";
 export * from "./src/hooks.ts";
 export * from "./src/action.ts";
 export * from "./src/auth.ts";
+export * from "./src/trigger.ts";
 export * from "./src/app.ts";
 export * from "./src/connection.ts";
 export * from "./src/invocation.ts";

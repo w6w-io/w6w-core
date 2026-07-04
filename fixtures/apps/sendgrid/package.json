@@ -6,7 +6,7 @@
   "author": { "name": "w6w" },
   "private": true,
   "w6w": {
-    "id": "com.w6w.sendgrid",
+    "id": "io.w6w.sendgrid",
     "displayName": "SendGrid",
     "categories": ["communication"],
     "appearance": { "icon": { "svg": "./assets/icon.svg" } },

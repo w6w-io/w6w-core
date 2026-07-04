@@ -133,3 +133,34 @@ export type AfterConnectHook = (
   input: { credential: unknown },
   ctx: HookContext,
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+/**
+ * Trigger `onSubscribe` — called when a subscription is created. Sets up the
+ * third-party (register a webhook, seed a poll cursor) and returns opaque state
+ * the host persists on the subscription.
+ */
+export type OnSubscribeHook<P = Record<string, unknown>, S = unknown> = (
+  input: { params: P; subscriptionId: string; callbackUrl: string; hostUrl: string },
+  ctx: HookContext,
+) => S | Promise<S>;
+
+/**
+ * Trigger `onUnsubscribe` — called on subscription delete. Tears down any
+ * third-party resources allocated by `onSubscribe`.
+ */
+export type OnUnsubscribeHook<P = Record<string, unknown>, S = unknown> = (
+  input: { params: P; state: S; subscriptionId: string },
+  ctx: HookContext,
+) => void | Promise<void>;
+
+/**
+ * Trigger `handleIngest` — the transport-agnostic ingest hook. Converts a raw
+ * inbound payload (HTTPS body, Kafka value, poll result) into zero or more
+ * normalized events the host persists and dispatches to subscribed workflows.
+ * Returning `[]` acknowledges the delivery but produces nothing to dispatch —
+ * the right choice for pings and duplicates.
+ */
+export type HandleIngestHook<P = Record<string, unknown>, S = unknown, E = unknown> = (
+  input: { raw: unknown; params: P; state: S; subscriptionId: string },
+  ctx: HookContext,
+) => E[] | Promise<E[]>;

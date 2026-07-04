@@ -80,9 +80,12 @@ Deno.test("CATEGORIES vocabulary contains expected slugs", () => {
 Deno.test("unknownCategories returns out-of-vocabulary entries (validator stays loose)", () => {
   const r = validateApp({ ...VALID_APP, categories: ["communication", "made-up-thing"] });
   assert(r.ok, "validator accepts unknown categories");
-  assertEquals(unknownCategories({ ...VALID_APP, categories: ["communication", "made-up-thing"] }), [
-    "made-up-thing",
-  ]);
+  assertEquals(
+    unknownCategories({ ...VALID_APP, categories: ["communication", "made-up-thing"] }),
+    [
+      "made-up-thing",
+    ],
+  );
 });
 
 Deno.test("validateAuth checks apiKey config", () => {

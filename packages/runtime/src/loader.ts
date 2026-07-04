@@ -11,6 +11,8 @@ import type {
   Auth,
   AuthHookKind,
   Author,
+  Trigger,
+  TriggerHookKind,
   W6WPackageMetadata,
 } from "@w6w/types";
 import { LoadError } from "./errors.ts";
@@ -28,6 +30,13 @@ export interface LoadedAuth {
   hooks: Set<AuthHookKind>;
 }
 
+export interface LoadedTrigger {
+  /** Serializable config (no hook functions). */
+  trigger: Trigger;
+  /** Which lifecycle hooks the trigger module actually defines. */
+  hooks: Set<TriggerHookKind>;
+}
+
 export interface LoadedApp {
   /** Absolute app root directory. */
   dir: string;
@@ -36,6 +45,7 @@ export interface LoadedApp {
   manifest: AppManifest;
   actions: Map<string, LoadedAction>;
   auths: LoadedAuth[];
+  triggers: Map<string, LoadedTrigger>;
   /** Hostnames hooks may reach, host-enforced: `manifest.network.allow` plus OAuth endpoint hosts. */
   netAllowlist: string[];
 }
@@ -194,12 +204,21 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     hooks: new Set(hooks),
   }));
 
+  const triggers = new Map<string, LoadedTrigger>();
+  for (const { trigger, hooks } of described.triggers) {
+    if (!trigger?.key) {
+      throw new LoadError("invalid_trigger", `A trigger in ${entryPath} is missing a \`key\`.`);
+    }
+    triggers.set(trigger.key, { trigger, hooks: new Set(hooks) });
+  }
+
   return {
     dir: root,
     entryPath,
     manifest,
     actions,
     auths,
+    triggers,
     netAllowlist: computeAllowlist(manifest, auths),
   };
 }
