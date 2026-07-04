@@ -2,7 +2,7 @@
  * Wire protocol between the host (run-hook.ts) and the sandbox worker
  * (worker.ts). All messages are structured-cloneable plain data.
  */
-import type { Action, AuthHookKind, SignableRequest } from "@w6w/types";
+import type { Action, AuthHookKind, SignableRequest, Trigger, TriggerHookKind } from "@w6w/types";
 
 /** A response carried back across the boundary after the host performs a fetch. */
 export interface WireResponse {
@@ -19,16 +19,24 @@ export interface DescribedAuth {
   hooks: AuthHookKind[];
 }
 
+/** One trigger's extracted config plus the names of the hooks it actually defines. */
+export interface DescribedTrigger {
+  trigger: Trigger;
+  hooks: TriggerHookKind[];
+}
+
 /** The app's behavior, extracted from the entry module as serializable data. */
 export interface DescribedApp {
   actions: Action[];
   auth: DescribedAuth[];
+  triggers: DescribedTrigger[];
 }
 
 /** Addresses a callable inside the app object exported by the entry module. */
 export type Selector =
   | { kind: "action"; key: string }
-  | { kind: "auth"; key: string; hook: AuthHookKind };
+  | { kind: "auth"; key: string; hook: AuthHookKind }
+  | { kind: "trigger"; key: string; hook: TriggerHookKind };
 
 /** Host -> worker. */
 export type HostMessage =

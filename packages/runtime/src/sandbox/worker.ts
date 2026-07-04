@@ -9,7 +9,7 @@
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import { AUTH_HOOK_KINDS } from "@w6w/types";
+import { AUTH_HOOK_KINDS, TRIGGER_HOOK_KINDS } from "@w6w/types";
 import type { AppDefinition } from "@w6w/types";
 import type {
   DescribedApp,
@@ -75,6 +75,13 @@ function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) =>
       ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action)
       : null;
   }
+  if (sel.kind === "trigger") {
+    const trigger = app.triggers?.find((t) => t.key === sel.key);
+    const fn = trigger?.[sel.hook];
+    return typeof fn === "function"
+      ? (fn as (i: unknown, c: unknown) => unknown).bind(trigger)
+      : null;
+  }
   const auth = app.auth?.find((a) => a.key === sel.key);
   const fn = auth?.[sel.hook];
   return typeof fn === "function" ? (fn as (i: unknown, c: unknown) => unknown).bind(auth) : null;
@@ -85,7 +92,11 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
   const fn = locate(app, msg.selector);
   if (!fn) {
     const s = msg.selector;
-    const what = s.kind === "action" ? `action "${s.key}".execute` : `auth "${s.key}".${s.hook}`;
+    const what = s.kind === "action"
+      ? `action "${s.key}".execute`
+      : s.kind === "trigger"
+      ? `trigger "${s.key}".${s.hook}`
+      : `auth "${s.key}".${s.hook}`;
     throw new Error(`Entry module has no callable ${what}.`);
   }
   const ctx = {
@@ -112,8 +123,14 @@ async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" 
     for (const k of AUTH_HOOK_KINDS) delete config[k];
     return { auth: JSON.parse(JSON.stringify(config)), hooks: present };
   });
+  const triggers = (app.triggers ?? []).map((t) => {
+    const present = TRIGGER_HOOK_KINDS.filter((k) => typeof t[k] === "function");
+    const config = { ...t } as Record<string, unknown>;
+    for (const k of TRIGGER_HOOK_KINDS) delete config[k];
+    return { trigger: JSON.parse(JSON.stringify(config)), hooks: present };
+  });
 
-  const described: DescribedApp = { actions, auth };
+  const described: DescribedApp = { actions, auth, triggers };
   post({ type: "result", value: described });
 }
 

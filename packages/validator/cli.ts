@@ -47,7 +47,9 @@ function detectKind(value: unknown): Kind {
   const v = value as Record<string, unknown>;
   const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
   const ACTION_TYPES = ["read", "search", "perform"];
-  if (typeof v.type === "string" && AUTH_TYPES.includes(v.type) && typeof v.displayName === "string") {
+  if (
+    typeof v.type === "string" && AUTH_TYPES.includes(v.type) && typeof v.displayName === "string"
+  ) {
     return "auth";
   }
   if (typeof v.type === "string" && ACTION_TYPES.includes(v.type) && typeof v.key === "string") {
