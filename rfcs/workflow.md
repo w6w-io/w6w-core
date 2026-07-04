@@ -1,0 +1,334 @@
+# RFC: Workflow
+
+**Status:** Draft
+**Author:** Segev Shmueli
+**Date:** 2026-07-03
+
+## Summary
+
+A **Workflow** is a directed acyclic graph of steps that runs as a single unit to accomplish a business outcome. Each step is an [Invocation](./invocation.md) — a call into a cataloged App's [Action](./action.md) — wired to other steps by expressions that resolve at execution time. This RFC defines the workflow logical model (the definition), the run model (the checkpointed execution state), and the `WorkflowContext` host contract the engine executes against. Workflows target `manifestVersion: "2"`.
+
+## Motivation
+
+Actions are individual operations; Workflows are how users compose them into automations. Standardizing the workflow shape means:
+
+- Publishers of authoring tools (studios, IDE extensions, partner UIs) render, edit, and validate workflows uniformly.
+- Hosts implement one engine that runs every workflow — no per-workflow custom code.
+- Runs are portable: a run started on host A can, in principle, be resumed on host B because its state is fully described by the model.
+- Third-party tooling (analyzers, linters, static importers from n8n / Zapier) targets a single spec.
+
+Absent this RFC, the definition and run shapes live only in the `@w6w/workflow-types` package. That package is the source of code truth; this RFC is the source of contract truth.
+
+## Goals
+
+- Declare a workflow as a **graph of steps** with explicit or implicit edges.
+- Each step is a single [Invocation](./invocation.md) — no bespoke step contract.
+- Wire data between steps with expressions over a shared **run scope** (`vars`, `steps`, `trigger`).
+- Define **retry** and **on-error** behavior per step.
+- Specify a **checkpointed run state** so failed runs can resume and completed runs can be replayed.
+- Define the **host contract** (`WorkflowContext`) an engine executes against — invocation, logging, state, scheduling, queuing.
+
+## Non-Goals
+
+- **How** the engine executes the graph. Deferred to the workflow engine's implementation (`@w6w/workflow-engine`). Concurrent scheduling of independent branches, suspend/resume machinery, and back-pressure are engine concerns.
+- **How workflows are triggered.** The `trigger` field on a workflow is a *reference*; the trigger surface itself is specified in the [Trigger RFC](./trigger.md).
+- **Scheduling.** A cron reference is one flavor of trigger; the scheduling primitive lives in the [Trigger RFC](./trigger.md).
+- **The expression language.** The `{ "$": ... }` and `{ "$expr": ... }` markers used in `with` refer to `@w6w/expr`, which has its own spec (JSONLogic-based). This RFC only pins the marker convention.
+- **Workflow-level auth or visibility.** Individual [Connections](./connection.md) live on steps; workflow-level access control is a host concern.
+
+## Concept
+
+A workflow is a **directed acyclic graph** of steps. Every step names an App and Action; when the step runs, the host packages `{ app, action, connection, params }` into an [Invocation](./invocation.md) and calls the core runtime. Whatever the action returns becomes the step's `output`, which downstream steps can reference through expressions in their own `params`.
+
+Control flow — branching, looping, waiting, running steps in parallel — is expressed the same way: as an Invocation of a **control-type action** (`type: "control"` in the [Action RFC](./action.md#control)). Control actions are declared like any action so the editor renders them uniformly, but they are **interpreted by the engine** rather than called via the runtime. The [Engine RFC](./engine.md#canonical-controls) pins the four canonical control identities (`if`, `foreach`, `parallel`, `wait`, all under the first-party `@w6w/control` app) that every conforming engine natively supports — a workflow using only actions + canonical controls is portable across every engine.
+
+The graph is either **explicit** (via `edges`) or **implicit** (when no edges are declared, the engine runs steps in the declared order as a linear chain). Explicit graphs are validated at load time: cycles, dangling edge endpoints, and duplicate step ids are rejected.
+
+Execution is **checkpointed**. After every step, the engine persists a `StepExecution` (input, output, status, timings) plus the run's updated status. If the engine crashes mid-run, the host reads the `RunState` back and resumes from the first non-terminal step. Replays reuse recorded step outputs verbatim — no re-invocation of `execute` — so historical runs remain deterministic even if upstream apps change behavior.
+
+Steps have **retry** and **on-error** policies. Retries apply to a single step's Invocation; when retries are exhausted, `onError` decides whether the run fails (`fail`, the default) or continues to the next step (`continue`). Retry policy honors the Invocation's `retryable` classification: `phase: "auth"` errors are never retried (credentials aren't going to change mid-run), `phase: "execute"` errors are retried only when the action declares `idempotent: true` or the error object marks itself `retryable: true`.
+
+The engine never touches the outside world directly. Every operational effect — calling an app, writing a log, checkpointing state, scheduling a delay, enqueueing a fan-out job — flows through `WorkflowContext`. This is the same shape [HookContext](./hook-runtime.md#context) has for action `execute`: a thin abstraction hostable in-process, over HTTP, or against a test double, without engine changes.
+
+## Shape
+
+```json
+{
+  "manifestVersion": "2",
+  "id": "wf_daily_report",
+  "name": "daily-report",
+  "displayName": "Daily Report",
+  "description": "Fetch yesterday's issues and post a summary to #ops.",
+  "trigger": { "subscriptionId": "sub_9f4c…" },
+  "variables": [
+    { "key": "channel", "type": "string", "required": true, "default": "#ops" }
+  ],
+  "steps": [
+    {
+      "id": "fetch",
+      "uses": { "app": "linear",   "action": "search-issues", "connection": "conn_ab12" },
+      "with": {
+        "query":   { "$expr": { "cat": ["updated:>", { "$": "trigger.event.since" }] } },
+        "limit":   50
+      },
+      "retry":   { "maxAttempts": 3, "backoff": "exponential", "delayMs": 1000 },
+      "onError": "fail"
+    },
+    {
+      "id": "post",
+      "uses": { "app": "slack", "action": "send-message", "connection": "conn_cd34" },
+      "with": {
+        "channelId": { "$": "vars.channel" },
+        "text":      { "$expr": { "join": ["\n", { "$": "steps.fetch.output.items" }] } }
+      }
+    }
+  ],
+  "edges": [
+    { "from": "fetch", "to": "post" }
+  ]
+}
+```
+
+### Field reference
+
+#### Workflow
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `manifestVersion` | string | ✅ | Core spec version. `"2"` for the workflow model. |
+| `id` | string | ✅ | Host-issued opaque id. Stable across renames. |
+| `name` | string | ✅ | Machine name. Unique within the host. Lowercase, kebab-case. |
+| `displayName` | string | ⬜ | Human-facing name. Falls back to `name`. |
+| `description` | string | ⬜ | One-line summary. |
+| `trigger` | [WorkflowTrigger](./trigger.md#workflowtrigger) | ⬜ | How this workflow starts. Absent means manual-only. See [Trigger RFC](./trigger.md). |
+| `variables` | [WorkflowVariable](#workflowvariable)[] | ⬜ | Inputs collected from the caller / trigger event and made available as `vars.*`. |
+| `steps` | [Step](#step)[] | ✅ | The graph nodes. At least one. |
+| `edges` | [Edge](#edge)[] | ⬜ | Directed dependencies. When absent, the engine treats `steps` as a linear chain in declared order. |
+
+#### Step
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✅ | Machine name. Unique within the workflow. Downstream expressions reference outputs as `steps.<id>.output`. |
+| `uses` | object | ✅ | `{ app, action, connection? }`. Fully names the [Invocation](./invocation.md) target. |
+| `uses.app` | string | ✅ | App id (registry-resolved). |
+| `uses.action` | string | ✅ | Action key within the app. |
+| `uses.connection` | string \| null | ⬜ | Connection id. Required when the action's app declares auth and the action doesn't opt out with `requiresAuth: false`. |
+| `with` | object | ⬜ | Param values. Each value is a literal, an object, an array, or an expression marker. See [Expression markers](#expression-markers). |
+| `retry` | [RetryPolicy](#retrypolicy) | ⬜ | How to retry on failure. Defaults to no retry. |
+| `onError` | enum | ⬜ | `"fail"` (default) or `"continue"`. When retries are exhausted, `continue` records the failure and proceeds; `fail` aborts the run. |
+
+#### Edge
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `from` | string | ✅ | Step id. |
+| `to` | string | ✅ | Step id. |
+
+#### WorkflowVariable
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `key` | string | ✅ | Machine name. Referenced as `vars.<key>`. |
+| `type` | enum | ⬜ | `"string"` \| `"number"` \| `"boolean"` \| `"object"` \| `"array"`. Advisory; hosts SHOULD validate at trigger/run boundary. |
+| `required` | boolean | ⬜ | If true and no value provided at run start, the run is rejected. |
+| `default` | any | ⬜ | Used when the caller doesn't supply a value. |
+
+> Note: `WorkflowVariable` is a thin shape today. It's intended to converge on the [Param RFC](./param.md) at a future revision so workflow inputs validate and resolve identically to Action params.
+
+#### RetryPolicy
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `maxAttempts` | number | ✅ | Total attempts including the first. `1` = no retry. |
+| `backoff` | enum | ⬜ | `"fixed"` (default) or `"exponential"`. |
+| `delayMs` | number | ⬜ | Base delay in ms before the first retry. Defaults to `0`. Exponential doubles each attempt. |
+
+Retries are attempted only for errors the runtime classifies as **retryable**. `phase: "auth"` errors are never retried. `phase: "execute"` errors are retried only when the action declared `idempotent: true` or the error itself sets `retryable: true`.
+
+## Execution model
+
+### Planning
+
+Before any step runs, the engine plans the graph:
+
+1. Reject duplicate step ids.
+2. If `edges` is empty or absent → the plan is `steps` in declared order (implicit linear chain).
+3. Otherwise:
+   - Reject edges referencing unknown step ids (`from` or `to`).
+   - Build the in-degree map and adjacency list.
+   - Topologically sort. Ties broken by declared step order for determinism.
+   - Reject cycles (topological sort fails to consume all nodes).
+
+The plan is a deterministic list of step ids. v0 executes them sequentially; parallel scheduling of independent branches is an engine-level enhancement that consumes the same plan.
+
+### Run state
+
+Every run is fully described by a `RunState`:
+
+```json
+{
+  "runId": "run_5f...",
+  "workflowId": "wf_daily_report",
+  "status": "running",
+  "variables": { "channel": "#ops" },
+  "steps": {
+    "fetch": {
+      "stepId": "fetch",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": { "items": [...] },
+      "startedAt": "2026-07-03T09:00:00Z",
+      "finishedAt": "2026-07-03T09:00:03Z"
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `runId` | string | Host-issued. Stable across resumes and replays. |
+| `workflowId` | string | The workflow this run instantiates. |
+| `status` | enum | `"queued"` \| `"running"` \| `"succeeded"` \| `"failed"` \| `"canceled"`. |
+| `variables` | object | The resolved input scope for this run. |
+| `steps` | object | Map of step id → `StepExecution`. Only completed / running / failed steps appear. |
+| `output` | any | Final output when `status === "succeeded"`. Optional. |
+| `error` | [StepError](#steperror) | Terminal error when `status === "failed"`. |
+
+The engine writes a **checkpoint** through `WorkflowContext.state.checkpoint()` after every observable transition (status change, step start, step end, retry attempt). The host implementation of `checkpoint` MUST be durable — a run that survives a crash is one whose last checkpoint reached durable storage.
+
+#### StepExecution
+
+| Field | Type | Description |
+|---|---|---|
+| `stepId` | string | The step this record is for. |
+| `status` | enum | `"pending"` \| `"running"` \| `"succeeded"` \| `"failed"` \| `"skipped"`. |
+| `attempt` | number | 1-based attempt count. Incremented per retry. |
+| `input` | object | Resolved params passed to the Invocation. Recorded for replay + debugging. |
+| `output` | any | Action's return value. Present on `succeeded`. |
+| `error` | [StepError](#steperror) | Present on `failed`. |
+| `startedAt`, `finishedAt` | ISO-8601 | When the last attempt started / finished. |
+
+#### StepError
+
+| Field | Type | Description |
+|---|---|---|
+| `code` | string | Machine code (e.g. `unknown_action`, `network_error`, `param_invalid`). |
+| `message` | string | Human-facing message. |
+| `phase` | string | Invocation phase the error came from: `"resolution"` \| `"auth"` \| `"execute"` \| `"output"`. |
+| `retryable` | boolean | Engine's classification of retry safety. |
+
+### Replay
+
+Replay re-executes a completed or failed run **without re-invoking actions**. The engine walks the plan; for each step that succeeded in the original run, it uses the recorded `StepExecution.output` verbatim. Steps that were pending or failed run fresh. This makes replays cheap and reproducible even when upstream apps have changed.
+
+## Expression markers
+
+Values in a step's `with` block, and by extension anywhere the model accepts expressions, use a two-marker convention:
+
+| Marker | Meaning |
+|---|---|
+| `{ "$": "steps.fetch.output.items.0.title" }` | Path lookup sugar over the run scope. |
+| `{ "$expr": <JSONLogic> }` | Full JSONLogic evaluation over the run scope. |
+| plain object / array | Resolved recursively — nested markers evaluated in place. |
+| anything else | Literal passthrough. |
+
+The two-marker form keeps a literal object unambiguous from an expression — the engine never has to guess whether `{ "==": [...] }` is data or logic.
+
+The **run scope** is:
+
+```ts
+interface RunScope {
+  vars:    Record<string, unknown>;                    // workflow-level variables
+  steps:   Record<string, { output: unknown }>;        // completed step outputs so far
+  trigger: { type: string; event?: unknown };          // trigger context (see Trigger RFC)
+}
+```
+
+Expression semantics — operators, coercion, error handling — are specified by `@w6w/expr` (JSONLogic-based). This RFC only pins the marker convention and the scope shape.
+
+## Host contract — `WorkflowContext`
+
+The engine is transport-free and host-free. Every operational effect goes through `WorkflowContext`, which the host implements.
+
+```ts
+interface WorkflowContext {
+  run: {
+    id: string;
+    workflowId: string;
+    trigger: "manual" | "schedule" | "webhook" | "replay";
+    attempt: number;
+  };
+
+  /** Package as an Invocation and call the core runtime. Returns the action's output. */
+  invoke(req: { app: string; action: string; connection?: string | null;
+                params: Record<string, unknown>; stepId: string }): Promise<unknown>;
+
+  log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void;
+
+  /** Durable state persistence. `checkpoint` MUST reach durable storage before returning. */
+  state: {
+    checkpoint(patch: RunStatePatch): Promise<void>;
+    load(runId: string): Promise<RunState | null>;
+  };
+
+  /** Durable scheduling for `wait` / `delay` steps. Optional in v0. */
+  schedule?(directive: { at: string; resumeToken: string }
+                     | { afterMs: number; resumeToken: string }): Promise<void>;
+
+  /** Durable queueing for fan-out. Optional in v0. */
+  queue?: { enqueue(job: { kind: string; payload: unknown }): Promise<{ jobId: string }> };
+
+  /** Cooperative cancellation, checked between steps. */
+  signal?: AbortSignal;
+}
+```
+
+| Member | Required | Notes |
+|---|---|---|
+| `run` | ✅ | Correlation ids for logs and Invocations. `trigger` is the `RunTrigger` tag; the app-declared trigger (if any) is looked up via `workflow.trigger.subscriptionId`. |
+| `invoke` | ✅ | The single bridge to the core runtime. The engine NEVER sees credentials, source refs, or the sandbox. |
+| `log` | ✅ | Routed to the host's observability sink. |
+| `state.checkpoint` | ✅ | Durable. A pre-crash checkpoint MUST be readable post-crash. |
+| `state.load` | ✅ | Idempotent read for resume / replay. |
+| `schedule` | ⬜ | Required only for hosts that support `wait` / `delay` steps. |
+| `queue` | ⬜ | Required only for hosts that support fan-out / parallel branches. |
+| `signal` | ⬜ | When provided, the engine polls between steps and aborts cleanly on signal. |
+
+## Conformance
+
+A host conforms to this RFC when:
+
+- **Planning** rejects duplicate step ids, dangling edges, and cycles at load time.
+- **Implicit chain** — a workflow with no `edges` executes `steps` in declared order.
+- **Checkpoint durability** — a `RunState` read via `state.load()` after a process crash reflects the last successful `state.checkpoint()`.
+- **Retry classification** — `phase: "auth"` errors are never retried; `phase: "execute"` errors are retried only when idempotent or `retryable: true`.
+- **Replay determinism** — replaying a run yields the same terminal `status` and, for succeeded steps, the same `output`, without calling `execute` again.
+- **Expression scope** — the engine populates `vars`, `steps`, and `trigger` in every expression evaluation as specified.
+
+The `@w6w/workflow` reference engine + its test fixtures constitute the executable version of this contract.
+
+## Resolved questions
+
+| Question | Resolution |
+|---|---|
+| Step contract | A step **is** an Invocation. No bespoke step shape — `uses` fully names an `(app, action, connection)` triple. |
+| Graph shape | DAG with explicit `edges`; implicit linear chain when omitted. Cycles and dangling edges rejected at plan time. |
+| Expression language | `{ "$": ... }` for path lookup, `{ "$expr": ... }` for JSONLogic. Two-marker form keeps literal objects unambiguous. |
+| Replay semantics | Replays reuse recorded step outputs verbatim. Do not re-invoke actions. |
+| Retry classification | Runtime-declared. Auth errors never retried. Execute errors retried only when idempotent or explicitly `retryable`. |
+| Control-flow step types | Modeled as pseudo-actions with `type: "control"` (see [Action RFC §Control](./action.md#control)). The canonical set (`if`, `foreach`, `parallel`, `wait`) lives in the first-party `@w6w/control` app; every conforming engine natively interprets them (see [Engine RFC](./engine.md)). Extension controls beyond the canonical four are a future RFC. |
+
+## Open questions
+
+1. **Fan-out / parallel branches — default concurrency.** The `parallel` canonical control expresses opt-in concurrency at the step level. Do we also allow a workflow-level `concurrency` field that lets independent branches of the base DAG run concurrently without a `parallel` wrapper? Adds ergonomics; adds engine responsibility.
+2. **Variables convergence with Param.** `WorkflowVariable` today is a shallow shape. Migrate to the full [Param RFC](./param.md) so variables get validation, dynamic options, and `dependsOn` — at the cost of a manifest-version bump.
+3. **Sub-workflows.** Should a step be able to invoke another workflow (`uses.workflow`) as an alternative to `uses.action`? If so, how do sub-workflow retries and state nest into the parent run?
+4. **Per-run TTL and cleanup.** How long do completed `RunState` records live? Host-configurable; RFC-level default?
+
+## Status ladder
+
+- `Draft` — under active design; fields and shape may change without notice.
+- `Review` — proposal is feature-complete; soliciting feedback before freeze.
+- `Final` — frozen for `manifestVersion: "2"`. Breaking changes require a new RFC and a `manifestVersion` bump.
+- `Superseded` — replaced by another RFC; carry a pointer to its successor.
