@@ -40,8 +40,9 @@ An Action is **one thing a user can do** with an App. Every action has a `type` 
 | `read` | No | Single object or null | Cacheable. Safe to retry. Fetches a known record (e.g. by ID). |
 | `search` | No | `{ items, nextCursor? }` | Cacheable. Cursor-paginated (see [Pagination](#pagination)). Matches criteria. |
 | `perform` | Yes | Result object | Not cacheable by default. Set `idempotent: true` to declare safe to retry. Creates, updates, deletes, sends, etc. |
+| `control` | Depends on semantics | Depends on semantics | Interpreted by the workflow engine, not invoked via the runtime. See [Control actions](#control-actions) and the [Engine RFC](./engine.md) for canonical semantics. |
 
-The type tells the platform how to treat the action — caching, retry safety, UI grouping — without inspecting what it actually does.
+The type tells the platform how to treat the action — caching, retry safety, UI grouping, engine interpretation — without inspecting what it actually does.
 
 Actions use the App's Auth to sign outbound requests. The action never sees raw credentials; `sign` injects auth transparently (see [Auth RFC](./auth.md)). The stored, per-user instance of that auth is a [Connection](./connection.md); Action calls reference it through an [Invocation](./invocation.md).
 
@@ -140,6 +141,32 @@ Some params depend on others — a Variant param's options are a function of the
   ]
 }
 ```
+
+### Control
+
+A **control action** governs the shape of a workflow's execution — branching, looping, waiting, running steps in parallel — rather than talking to an external system. It is declared as a normal action so authoring tools render it uniformly (same param widgets, same output field mapper, same manifest layout), but its `execute` is **not** called by the core runtime. Instead, the [workflow engine](./engine.md) interprets the action by matching its identity to a semantic in its **canonical control set**.
+
+```json
+{
+  "manifestVersion": "1",
+  "key": "if",
+  "type": "control",
+  "title": "If",
+  "description": "Runs the downstream branch only when `condition` is true.",
+  "params": [
+    { "key": "condition", "label": "Condition", "type": "boolean", "required": true }
+  ],
+  "output": [
+    { "key": "matched", "type": "boolean", "label": "Condition Result" }
+  ]
+}
+```
+
+- `params` and `output` are declared exactly like any other action so the editor's field mapper works uniformly.
+- The action's identity — its `(appId, key)` pair — is what the engine matches to a semantic. The [Engine RFC](./engine.md#canonical-controls) pins the identities of the four semantics every conforming engine MUST natively interpret: `if`, `foreach`, `parallel`, `wait`. These live in the first-party `@w6w/control` app.
+- Additional control actions (partner-supplied `human-approval`, `map-reduce`, etc.) are a future extension: any conforming engine can support them by convention, but this RFC pins only the canonical four for portability.
+- Control actions omit `execute` — publisher-supplied code never runs for them. Runtime tooling MUST accept the omission for `type: "control"`.
+- Control actions MAY declare `requiresAuth: false` explicitly, but the runtime treats every control action as auth-less regardless — no Connection is looked up.
 
 ## Output
 
@@ -266,14 +293,14 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 |---|---|---|---|
 | `manifestVersion` | string | ✅ | Core spec version. |
 | `key` | string | ✅ | Machine name. Unique within the App. Lowercase, kebab-case. |
-| `type` | enum | ✅ | `"read"` \| `"search"` \| `"perform"`. |
+| `type` | enum | ✅ | `"read"` \| `"search"` \| `"perform"` \| `"control"`. See [Control actions](#control-actions) for the engine-interpreted variant. |
 | `title` | string | ✅ | Human-facing name (e.g. "Send Message"). |
 | `description` | string | ⬜ | One-line summary of what the action does. |
 | `resource` | string | ⬜ | UI grouping hint. Actions sharing the same `resource` value (e.g. `"channel"`, `"message"`) are grouped together in the editor. Purely presentational — no structural meaning. |
 | `idempotent` | boolean | ⬜ | `perform` Actions only. Declares the operation is safe to re-execute with the same inputs (e.g. `PUT`-shaped). Drives the platform's retry policy and lets [Invocation](./invocation.md) use `invocationId` as a dedupe key. Defaults to `false`. |
 | `requiresAuth` | boolean | ⬜ | When the enclosing App declares Auth methods, set `false` to opt this Action out of requiring a Connection (e.g. a public `health` endpoint). Defaults to `true` when the App has auth, `false` when it doesn't. |
 | `params` | [Param](./param.md)[] | ⬜ | Inputs collected from the user in the workflow editor. |
-| `execute` | string (path) \| function | ✅ | The method that executes this action. Path reference or co-located function — see [Hook Runtime RFC §Module format](./hook-runtime.md#module-format). |
+| `execute` | string (path) \| function | ✅ (⬜ for `control`) | The method that executes this action. Path reference or co-located function — see [Hook Runtime RFC §Module format](./hook-runtime.md#module-format). Omitted for `type: "control"` — the engine interprets those instead. |
 | `output` | OutputField[] \| `{ source }` | ⬜ | Shape of the return value. Static array or dynamic hook. |
 | `sample` | object | ⬜ | An example value matching `output`. Used by the editor for richer field-mapper previews (Zapier-style). Not used for validation. |
 
@@ -294,3 +321,4 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 | Resource grouping | Added optional `resource: string` for UI grouping. Purely presentational — actions remain a flat list structurally. |
 | Sample data | Added optional `sample` alongside `output`. Cheap to spec, big editor UX win. |
 | Connectionless actions | Added optional `requiresAuth` to opt an Action out of needing a Connection even when the App declares Auth (resolves the corresponding Invocation question). |
+| Control-flow step types | Introduced `type: "control"` — control actions declare params/output like any action but are interpreted by the workflow engine (not called via the runtime). The canonical set (`if`, `foreach`, `parallel`, `wait`) lives in the first-party `@w6w/control` app; see the [Engine RFC](./engine.md) for interpretation semantics. |
