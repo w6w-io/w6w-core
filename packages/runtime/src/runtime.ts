@@ -19,6 +19,8 @@ import type {
   Invocation,
   RedactedConnection,
   SignableRequest,
+  Trigger,
+  TriggerHookKind,
 } from "@w6w/types";
 import { redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
@@ -31,6 +33,7 @@ export interface AppDescription {
   app: AppManifest;
   actions: Action[];
   auth: Auth[];
+  triggers: Trigger[];
 }
 
 export interface InvokeOptions {
@@ -50,6 +53,7 @@ export function describe(app: LoadedApp): AppDescription {
     app: app.manifest,
     actions: [...app.actions.values()].map((a) => a.definition),
     auth: app.auths.map((a) => a.auth),
+    triggers: [...app.triggers.values()].map((t) => t.trigger),
   };
 }
 
@@ -238,4 +242,76 @@ export async function invoke(
   });
 
   return { value };
+}
+
+// ── Trigger hook invocation ────────────────────────────────────────────────
+
+/**
+ * Run one of a trigger's lifecycle hooks in the sandbox. Auth is handled the
+ * same way as for actions: the trigger sees a redacted connection; outbound
+ * fetches route through the auth `sign` hook when the app declares one.
+ *
+ * Callers:
+ *   - server's TriggerManager.subscribe   → invokeTriggerHook(kind="onSubscribe")
+ *   - server's HTTPS webhook adapter      → invokeTriggerHook(kind="handleIngest")
+ *   - server's TriggerManager.unsubscribe → invokeTriggerHook(kind="onUnsubscribe")
+ */
+export interface InvokeTriggerHookOptions extends InvokeOptions {
+  triggerKey: string;
+  hook: TriggerHookKind;
+  input: unknown;
+}
+
+export async function invokeTriggerHook(
+  app: LoadedApp,
+  opts: InvokeTriggerHookOptions,
+): Promise<unknown> {
+  const trigger = app.triggers.get(opts.triggerKey);
+  if (!trigger) {
+    throw new W6WError(
+      "unknown_trigger",
+      "resolution",
+      `Unknown trigger "${opts.triggerKey}" on app "${app.manifest.id}".`,
+    );
+  }
+  if (!trigger.hooks.has(opts.hook)) {
+    throw new W6WError(
+      "hook_not_declared",
+      "resolution",
+      `Trigger "${opts.triggerKey}" does not declare hook "${opts.hook}".`,
+    );
+  }
+
+  const auth = opts.connection ? authFor(app, opts.connection) : undefined;
+  let credential: unknown;
+  let redacted: RedactedConnection | undefined;
+  if (opts.connection) {
+    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  }
+  const canSign = !!auth?.hooks.has("sign");
+
+  const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
+    let signed = request;
+    if (canSign && auth) {
+      signed = await runHook<SignableRequest>({
+        entryPath: app.entryPath,
+        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
+        input: { request, credential },
+        readScope: app.dir,
+        timeoutMs: opts.timeoutMs,
+      });
+    }
+    return hostFetch(app.netAllowlist, signed);
+  };
+
+  return await runHook({
+    entryPath: app.entryPath,
+    selector: { kind: "trigger", key: opts.triggerKey, hook: opts.hook },
+    input: opts.input,
+    readScope: app.dir,
+    connection: redacted,
+    timeoutMs: opts.timeoutMs,
+    onLog: opts.onLog,
+    onFetch,
+  });
 }

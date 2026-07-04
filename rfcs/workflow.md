@@ -40,6 +40,8 @@ Absent this RFC, the definition and run shapes live only in the `@w6w/workflow-t
 
 A workflow is a **directed acyclic graph** of steps. Every step names an App and Action; when the step runs, the host packages `{ app, action, connection, params }` into an [Invocation](./invocation.md) and calls the core runtime. Whatever the action returns becomes the step's `output`, which downstream steps can reference through expressions in their own `params`.
 
+Control flow — branching, looping, waiting, running steps in parallel — is expressed the same way: as an Invocation of a **control-type action** (`type: "control"` in the [Action RFC](./action.md#control)). Control actions are declared like any action so the editor renders them uniformly, but they are **interpreted by the engine** rather than called via the runtime. The [Engine RFC](./engine.md#canonical-controls) pins the four canonical control identities (`if`, `foreach`, `parallel`, `wait`, all under the first-party `@w6w/control` app) that every conforming engine natively supports — a workflow using only actions + canonical controls is portable across every engine.
+
 The graph is either **explicit** (via `edges`) or **implicit** (when no edges are declared, the engine runs steps in the declared order as a linear chain). Explicit graphs are validated at load time: cycles, dangling edge endpoints, and duplicate step ids are rejected.
 
 Execution is **checkpointed**. After every step, the engine persists a `StepExecution` (input, output, status, timings) plus the run's updated status. If the engine crashes mid-run, the host reads the `RunState` back and resumes from the first non-terminal step. Replays reuse recorded step outputs verbatim — no re-invocation of `execute` — so historical runs remain deterministic even if upstream apps change behavior.
@@ -315,14 +317,14 @@ The `@w6w/workflow` reference engine + its test fixtures constitute the executab
 | Expression language | `{ "$": ... }` for path lookup, `{ "$expr": ... }` for JSONLogic. Two-marker form keeps literal objects unambiguous. |
 | Replay semantics | Replays reuse recorded step outputs verbatim. Do not re-invoke actions. |
 | Retry classification | Runtime-declared. Auth errors never retried. Execute errors retried only when idempotent or explicitly `retryable`. |
+| Control-flow step types | Modeled as pseudo-actions with `type: "control"` (see [Action RFC §Control](./action.md#control)). The canonical set (`if`, `foreach`, `parallel`, `wait`) lives in the first-party `@w6w/control` app; every conforming engine natively interprets them (see [Engine RFC](./engine.md)). Extension controls beyond the canonical four are a future RFC. |
 
 ## Open questions
 
-1. **Control-flow step types.** Today a step is always an action Invocation. Do we introduce non-invocation step types — `if` / `switch` / `foreach` / `wait` / `parallel` — as first-class members of `Step`, or model them as pseudo-actions provided by a `@w6w/control` internal app?
-2. **Fan-out / parallel branches.** Once the DAG can express independent branches, does the engine schedule them concurrently by default, or opt-in per workflow via a `concurrency` field?
-3. **Variables convergence with Param.** `WorkflowVariable` today is a shallow shape. Migrate to the full [Param RFC](./param.md) so variables get validation, dynamic options, and `dependsOn` — at the cost of a manifest-version bump.
-4. **Sub-workflows.** Should a step be able to invoke another workflow (`uses.workflow`) as an alternative to `uses.action`? If so, how do sub-workflow retries and state nest into the parent run?
-5. **Per-run TTL and cleanup.** How long do completed `RunState` records live? Host-configurable; RFC-level default?
+1. **Fan-out / parallel branches — default concurrency.** The `parallel` canonical control expresses opt-in concurrency at the step level. Do we also allow a workflow-level `concurrency` field that lets independent branches of the base DAG run concurrently without a `parallel` wrapper? Adds ergonomics; adds engine responsibility.
+2. **Variables convergence with Param.** `WorkflowVariable` today is a shallow shape. Migrate to the full [Param RFC](./param.md) so variables get validation, dynamic options, and `dependsOn` — at the cost of a manifest-version bump.
+3. **Sub-workflows.** Should a step be able to invoke another workflow (`uses.workflow`) as an alternative to `uses.action`? If so, how do sub-workflow retries and state nest into the parent run?
+4. **Per-run TTL and cleanup.** How long do completed `RunState` records live? Host-configurable; RFC-level default?
 
 ## Status ladder
 

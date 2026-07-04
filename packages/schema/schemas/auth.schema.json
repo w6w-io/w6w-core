@@ -6,27 +6,27 @@
   "type": "object",
   "required": ["type", "displayName"],
   "properties": {
-    "manifestVersion":   { "type": "string", "minLength": 1 },
-    "key":               { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
-    "type":              { "type": "string", "enum": ["oauth2", "apiKey", "basic", "bearer", "custom"] },
-    "displayName":       { "type": "string", "minLength": 1 },
-    "description":       { "type": "string" },
-    "connectionLabel":   { "type": "string" },
-    "fields":            { "type": "array", "items": { "$ref": "param.schema.json" } },
-    "hooks":             { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "key": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "type": { "type": "string", "enum": ["oauth2", "apiKey", "basic", "bearer", "custom"] },
+    "displayName": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "connectionLabel": { "type": "string" },
+    "fields": { "type": "array", "items": { "$ref": "param.schema.json" } },
+    "hooks": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
     "oauth2": {
       "type": "object",
       "required": ["authorizationUrl", "tokenUrl"],
       "additionalProperties": false,
       "properties": {
         "authorizationUrl": { "type": "string", "minLength": 1 },
-        "tokenUrl":         { "type": "string", "minLength": 1 },
-        "refreshUrl":       { "type": "string", "minLength": 1 },
-        "revokeUrl":        { "type": "string", "minLength": 1 },
-        "scopes":           { "type": "array", "items": { "type": "string" } },
-        "scopeSeparator":   { "type": "string" },
-        "pkce":             { "type": "boolean" },
-        "extraAuthParams":  { "type": "object" }
+        "tokenUrl": { "type": "string", "minLength": 1 },
+        "refreshUrl": { "type": "string", "minLength": 1 },
+        "revokeUrl": { "type": "string", "minLength": 1 },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "scopeSeparator": { "type": "string" },
+        "pkce": { "type": "boolean" },
+        "extraAuthParams": { "type": "object" }
       }
     },
     "apiKey": {
@@ -34,8 +34,8 @@
       "required": ["in", "name"],
       "additionalProperties": false,
       "properties": {
-        "in":     { "type": "string", "enum": ["header", "query", "body"] },
-        "name":   { "type": "string", "minLength": 1 },
+        "in": { "type": "string", "enum": ["header", "query", "body"] },
+        "name": { "type": "string", "minLength": 1 },
         "prefix": { "type": "string" }
       }
     }

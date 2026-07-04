@@ -5,6 +5,7 @@
 import type { ImageObject } from "./image.ts";
 import type { ActionDefinition } from "./action.ts";
 import type { AuthDefinition } from "./auth.ts";
+import type { TriggerDefinition } from "./trigger.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -93,19 +94,30 @@ export interface AppManifest {
 // deno-lint-ignore no-explicit-any
 export type AnyActionDefinition = ActionDefinition<any, any>;
 
+/** Same rationale as `AnyActionDefinition` — hook-generic contravariance. */
+// deno-lint-ignore no-explicit-any
+export type AnyTriggerDefinition = TriggerDefinition<any, any, any>;
+
 /**
  * An app's behavior, exported as the default from its entry module (`index.ts`).
  * Identity/presentation stays in package.json; this is the code half.
  *
  * ```ts
  * import sendEmail from "./actions/send-email.ts";
+ * import newMessage from "./triggers/new-message.ts";
  * import apiKey from "./auth/api-key.ts";
- * export default { actions: [sendEmail], auth: [apiKey] } satisfies AppDefinition;
+ * export default {
+ *   actions: [sendEmail],
+ *   triggers: [newMessage],
+ *   auth: [apiKey],
+ * } satisfies AppDefinition;
  * ```
  */
 export interface AppDefinition {
   actions: AnyActionDefinition[];
   auth?: AuthDefinition[];
+  /** Optional. See the Trigger RFC. */
+  triggers?: AnyTriggerDefinition[];
 }
 
 /**
