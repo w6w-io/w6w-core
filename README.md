@@ -81,6 +81,8 @@ Two starter templates cover both authoring flows. The app contract they satisfy 
 
 Both ship: bearer-token Auth (`sign` + `test`), read + perform Actions against `httpbin.org`, mocked-`HookContext` unit tests, and a green CI workflow. Click **Use this template** on GitHub to start.
 
+Building with an LLM / coding agent? [`docs/build-a-w6w-app.md`](./docs/build-a-w6w-app.md) is a self-contained, prompt-ready instruction set covering the app contract, the hard sandbox rules, and a definition-of-done checklist.
+
 ## Design principles
 
 A few invariants that run through every RFC:
