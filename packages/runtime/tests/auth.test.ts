@@ -8,7 +8,7 @@ const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", impo
 const CONNECTION: Connection = {
   manifestVersion: "1",
   id: "conn_test",
-  app: "com.w6w.sendgrid",
+  app: "io.w6w.sendgrid",
   auth: "api-key",
   owner: "user_1",
   state: "connected",
@@ -43,7 +43,7 @@ function sendInvocation(
 ): Invocation {
   return {
     manifestVersion: "1",
-    app: "com.w6w.sendgrid",
+    app: "io.w6w.sendgrid",
     action: "send-email",
     connection,
     params: { to: "a@b.c", from: "x@y.z", subject: "s", body: "b", apiBase },
@@ -68,7 +68,7 @@ Deno.test("sign injects the credential at the wire; the action never sees it", a
   try {
     const invocation: Invocation = {
       manifestVersion: "1",
-      app: "com.w6w.sendgrid",
+      app: "io.w6w.sendgrid",
       action: "send-email",
       connection: CONNECTION.id,
       params: {
@@ -101,7 +101,7 @@ Deno.test("requests to hosts off the allowlist are denied by the host", async ()
   const app = await loadApp(SENDGRID_DIR);
   const invocation: Invocation = {
     manifestVersion: "1",
-    app: "com.w6w.sendgrid",
+    app: "io.w6w.sendgrid",
     action: "send-email",
     connection: CONNECTION.id,
     params: {
@@ -162,7 +162,7 @@ Deno.test("gate: an auth app requires a connection", async () => {
   const app = await loadApp(SENDGRID_DIR);
   const invocation: Invocation = {
     manifestVersion: "1",
-    app: "com.w6w.sendgrid",
+    app: "io.w6w.sendgrid",
     action: "send-email",
     // no `connection` at all
     params: {

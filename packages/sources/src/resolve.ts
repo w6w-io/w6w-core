@@ -5,9 +5,16 @@
 import { type ResolveOptions, type Resolver, SourceError, splitRef } from "./types.ts";
 import { localResolver } from "./local.ts";
 import { githubResolver } from "./github.ts";
+import { gitlabResolver } from "./gitlab.ts";
+import { bitbucketResolver } from "./bitbucket.ts";
 
-/** Built-in resolvers, in priority order. */
-export const defaultResolvers: Resolver[] = [githubResolver, localResolver];
+/** Built-in resolvers, in priority order (scheme-dispatched, so order is cosmetic). */
+export const defaultResolvers: Resolver[] = [
+  githubResolver,
+  gitlabResolver,
+  bitbucketResolver,
+  localResolver,
+];
 
 export class SourceRegistry {
   private resolvers: Resolver[];

@@ -12,6 +12,29 @@
  */
 export { defaultResolvers, resolve, SourceRegistry } from "./src/resolve.ts";
 export { localResolver } from "./src/local.ts";
-export { githubResolver, githubTarballUrl, parseGithubRef } from "./src/github.ts";
+export {
+  githubApiTarballUrl,
+  githubAuthHeaders,
+  githubResolver,
+  githubTarballUrl,
+  githubToken,
+  parseGithubRef,
+} from "./src/github.ts";
 export type { GithubRef } from "./src/github.ts";
+export {
+  gitlabArchiveUrl,
+  gitlabAuthHeaders,
+  gitlabHost,
+  gitlabResolver,
+  parseGitlabRef,
+} from "./src/gitlab.ts";
+export type { GitlabRef } from "./src/gitlab.ts";
+export {
+  bitbucketAuthHeaders,
+  bitbucketResolver,
+  bitbucketTarballUrl,
+  parseBitbucketRef,
+} from "./src/bitbucket.ts";
+export type { BitbucketRef } from "./src/bitbucket.ts";
+export { defaultCacheDir, extractStripped, resolveViaTarball } from "./src/tarball.ts";
 export { type ResolveOptions, type Resolver, SourceError, splitRef } from "./src/types.ts";

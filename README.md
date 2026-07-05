@@ -53,6 +53,7 @@ The platform is built from a small set of primitives. Each one has (or will have
 | **Auth** | How a user connects their account to an App (`oauth2` / `apiKey` / `basic` / `bearer` / `custom`) plus lifecycle hooks. | [`rfcs/auth.md`](./rfcs/auth.md) — Final |
 | **Connection** | The stored, per-user result of a completed Auth flow. Holds the opaque credential, display metadata, and lifecycle state. | [`rfcs/connection.md`](./rfcs/connection.md) — Final |
 | **Invocation** | The envelope used to call an Action — binds App, Action, Connection, and resolved params. | [`rfcs/invocation.md`](./rfcs/invocation.md) — Final |
+| **Registry** | Host-side service: the collection of registered Apps, versioned and lifecycle-managed. Datastore-pluggable; reference impl lives in [`w6w-registry`](../registry/). | [`rfcs/registry.md`](./rfcs/registry.md) — Draft |
 | **Webhook** | Inbound event delivery from an App. | TBD |
 | **Trigger** | What starts a workflow. | TBD |
 | **Workflow** | The graph of steps the platform executes. | TBD |
@@ -68,6 +69,19 @@ Primitives that are reused inside other manifests rather than declared standalon
 | **ImageObject** | Reusable image reference (icons, screenshots, badges). One container with vector and sized-raster sources. | [`rfcs/image-object.md`](./rfcs/image-object.md) — Final |
 | **Hook Runtime** | The contract every publisher-authored hook runs under: module format, ambient API, error shape, timeouts, sandbox posture, credential isolation. | [`rfcs/hook-runtime.md`](./rfcs/hook-runtime.md) — Final |
 | **Categories** | Controlled vocabulary for App `categories`. | [`rfcs/categories.md`](./rfcs/categories.md) — Final |
+
+## Build your own app
+
+Two starter templates cover both authoring flows. The app contract they satisfy is identical — pick the toolchain you're comfortable with.
+
+| Template | Toolchain | Notes |
+|---|---|---|
+| [`w6w-app-template-deno`](https://github.com/w6w-io/w6w-app-template-deno) | Deno + JSR `@w6w/types` + `deno test` | Zero-install, matches the reference runtime directly. |
+| [`w6w-app-template-node`](https://github.com/w6w-io/w6w-app-template-node) | Node 22 + npm `@w6w/types` + `tsx` + `vitest` | Node-idiomatic. `.ts` extensions kept in imports so the same source runs under the runtime unchanged. |
+
+Both ship: bearer-token Auth (`sign` + `test`), read + perform Actions against `httpbin.org`, mocked-`HookContext` unit tests, and a green CI workflow. Click **Use this template** on GitHub to start.
+
+Building with an LLM / coding agent? [`docs/build-a-w6w-app.md`](./docs/build-a-w6w-app.md) is a self-contained, prompt-ready instruction set covering the app contract, the hard sandbox rules, and a definition-of-done checklist.
 
 ## Design principles
 
