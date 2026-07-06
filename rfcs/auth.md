@@ -40,7 +40,7 @@ Authentication is the single most divergent piece across integration platforms. 
 
 An `Auth` describes **one** authentication method. Each Auth manifest has:
 
-1. A **`type` discriminant** (`oauth2` / `apiKey` / `basic` / `bearer` / `custom`).
+1. A **`type` discriminant** (`oauth2` / `apiKey` / `basic` / `bearer` / `custom` / `tenantAuth`).
 2. A **type-specific configuration block** keyed by the type name.
 3. A **`fields`** array of [Param](./param.md) entries — inputs collected from the user at connect time.
 4. A **`hooks`** block — lifecycle callbacks (preflight, exchange, test, sign, refresh, revoke, afterConnect).
@@ -141,6 +141,30 @@ Every Auth manifest, regardless of `type`, starts with:
 }
 ```
 
+### Tenant Auth
+
+```json
+{
+  "manifestVersion": "1",
+  "type": "tenantAuth",
+  "displayName": "Acme",
+  "tenantAuth": { "link": "io.w6w.acme", "resourcePrefix": "urn:acme:" }
+}
+```
+
+`tenantAuth` is defined by **provenance, not shape**: the credential is sourced
+from the **tenant**, not entered by the user. There is no connect flow and no
+user-collected `fields`. The host mints a live, per-subject credential from a
+per-tenant "app link" (keyed by the acting principal's subject) and hands it to
+this method's `sign` hook exactly like a `bearer` credential.
+
+This is a platform-agnostic primitive: any partner that embeds w6w as a tenant
+can expose its own API to its users' workflows with **zero per-user setup**. The
+App only *declares* it uses tenant auth; the link config and secrets live host-
+side and never ship in the app package. `tenantAuth.link` names the app link
+(defaults to the App id); `tenantAuth.resourcePrefix` is an optional convention
+the App uses to recognize/round-trip the partner's resource identifiers.
+
 ### Custom
 
 ```json
@@ -201,7 +225,7 @@ Hooks make these first-class instead of workarounds.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `manifestVersion` | string | ✅ | Core spec version this file targets. |
-| `type` | enum | ✅ | `"oauth2"` \| `"apiKey"` \| `"basic"` \| `"bearer"` \| `"custom"`. |
+| `type` | enum | ✅ | `"oauth2"` \| `"apiKey"` \| `"basic"` \| `"bearer"` \| `"custom"` \| `"tenantAuth"`. |
 | `displayName` | string | ✅ | Human-facing name shown on the connect button. |
 | `description` | string | ⬜ | Short explanation for the connect screen. |
 | `connectionLabel` | string (template) | ⬜ | Template rendered with variables set by `afterConnect` to label saved connections. |
