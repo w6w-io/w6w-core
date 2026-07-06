@@ -9,7 +9,7 @@ export { loadApp } from "./src/loader.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
 
 export { describe, invoke } from "./src/runtime.ts";
-export type { AppDescription, InvokeOptions, InvokeResult } from "./src/runtime.ts";
+export type { AppDescription, EgressInfo, InvokeOptions, InvokeResult } from "./src/runtime.ts";
 
 export { resolveParams } from "./src/resolve.ts";
 export { runHook } from "./src/sandbox/run-hook.ts";

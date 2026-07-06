@@ -36,11 +36,22 @@ export interface AppDescription {
   triggers: Trigger[];
 }
 
+/** One outbound (egress) request the runtime made on the app's behalf. */
+export interface EgressInfo {
+  host: string;
+  method: string;
+  status: number;
+  responseBytes: number;
+  durationMs: number;
+}
+
 export interface InvokeOptions {
   /** The full Connection, including its opaque credential. Held by the host; never exposed to the action. */
   connection?: Connection;
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
+  /** Observability hook: called once per outbound request the action/trigger makes. */
+  onEgress?: (info: EgressInfo) => void;
 }
 
 export interface InvokeResult {
@@ -225,7 +236,22 @@ export async function invoke(
         // no onFetch -> the sign worker cannot make network calls.
       });
     }
-    return hostFetch(app.netAllowlist, signed);
+    const egressStart = Date.now();
+    const res = await hostFetch(app.netAllowlist, signed);
+    if (opts.onEgress) {
+      let host = "";
+      try {
+        host = new URL(signed.url).hostname;
+      } catch { /* non-URL requests are already rejected by hostFetch */ }
+      opts.onEgress({
+        host,
+        method: signed.method,
+        status: res.status,
+        responseBytes: res.body?.length ?? 0,
+        durationMs: Date.now() - egressStart,
+      });
+    }
+    return res;
   };
 
   // 5. Invoke the action's `execute` in the sandbox.
@@ -301,7 +327,22 @@ export async function invokeTriggerHook(
         timeoutMs: opts.timeoutMs,
       });
     }
-    return hostFetch(app.netAllowlist, signed);
+    const egressStart = Date.now();
+    const res = await hostFetch(app.netAllowlist, signed);
+    if (opts.onEgress) {
+      let host = "";
+      try {
+        host = new URL(signed.url).hostname;
+      } catch { /* non-URL requests are already rejected by hostFetch */ }
+      opts.onEgress({
+        host,
+        method: signed.method,
+        status: res.status,
+        responseBytes: res.body?.length ?? 0,
+        durationMs: Date.now() - egressStart,
+      });
+    }
+    return res;
   };
 
   return await runHook({
