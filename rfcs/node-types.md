@@ -57,41 +57,44 @@ Every node in a workflow has exactly one kind, **derived from `uses.app`**:
 | Kind       | `uses.app`                 | Executed by                              | Examples                               |
 | ---------- | -------------------------- | ---------------------------------------- | -------------------------------------- |
 | `app`      | a registered app id        | app runtime (`registry.load` → `invoke`) | `io.w6w.sendgrid` · `send-email`       |
-| `control`  | `@w6w/control`             | the **engine**, in-process               | `if` · `foreach` · `parallel` · `wait` |
+| `control`  | `@w6w/control`             | **host** (decision) + engine (traversal) | `if` · `foreach` · `parallel` · `wait` |
 | `internal` | `@w6w/script`, `@w6w/data` | the **host's internal API**              | run JS · set typed vars                |
 | `trigger`  | `@w6w/trigger`             | the host (entry node)                    | `manual`                               |
 
 `control` and `internal` are both **internal pseudo-apps** — reserved ids in the `@w6w/*` namespace
-with no registry entry. They differ only in _who_ runs them: `control` alters the graph and so must
-be interpreted by the engine; `internal` and `trigger` are leaf computations the host runs behind
-the invocation seam, exactly like an app action.
+with no registry entry. **Every node — apps and controls alike — routes through the one invoke
+seam.** A control node is an app too: its _decision_ (did the `if` match? what are the `foreach`
+items?) is computed by the host via `invokeAction`, exactly like an app action; the engine keeps
+only the resulting _traversal_ (running the `then`/`else`/`body`/`branches` sub-blocks, skipping
+downstream edges, suspending on `wait`). `internal` and `trigger` are leaf computations the host
+runs with no traversal at all.
 
 ### Routing
 
-Routing is a pure function of `uses.app`:
+Routing is a pure function of `uses.app`, applied uniformly to every node:
 
 ```
-route(node):
-  if node.uses.app == "@w6w/control"      -> engine control interpreter
-  else if isInternalApp(node.uses.app)    -> host internal processor
-  else                                    -> app runtime (registry.load → invoke)
+route(node):                                  // in the host's invokeAction
+  if isInternalApp(node.uses.app)  -> host internal processor   (@w6w/control decision,
+                                                                  @w6w/script, @w6w/data, @w6w/trigger)
+  else                             -> app runtime (registry.load → invoke)
 
 isInternalApp(app) = app starts with "@w6w/"    // reserved namespace
 ```
 
-Because internal (non-control) nodes route through the ordinary invocation seam (`ctx.invoke` → host
-`invokeAction`), the engine needs **no** special case for them: to the engine they are invoke steps
-like any app. The host's `invokeAction` inspects the app id first and dispatches to an internal
-handler instead of the registry when the id is reserved. This is the single routing choke point.
+Every node's action reaches the host the same way: the engine (or the per-node endpoint) calls
+`ctx.invoke` / `invokeAction`, which inspects the app id and dispatches to an internal handler when
+it is reserved, else to the registry. This is the single routing choke point — there is no parallel
+code path for controls.
 
 ### Reserved internal pseudo-apps
 
-| Id             | Action(s)                           | Input (`with`)        | Output                     | Processor    |
-| -------------- | ----------------------------------- | --------------------- | -------------------------- | ------------ |
-| `@w6w/control` | `if`, `foreach`, `parallel`, `wait` | control-specific      | control result             | engine       |
-| `@w6w/script`  | `run`                               | `{ code, input? }`    | script return value        | host sandbox |
-| `@w6w/data`    | `set`                               | `{ vars: DataVar[] }` | `{ <key>: <typed value> }` | host         |
-| `@w6w/trigger` | `manual`                            | `{}`                  | the start payload          | host (entry) |
+| Id             | Action(s)                           | Input (`with`)        | Output (decision/value)    | Processor                    |
+| -------------- | ----------------------------------- | --------------------- | -------------------------- | ---------------------------- |
+| `@w6w/control` | `if`, `foreach`, `parallel`, `wait` | control-specific      | `{matched}`/`{items}`/…    | host (engine does traversal) |
+| `@w6w/script`  | `run`                               | `{ code, input? }`    | script return value        | host sandbox                 |
+| `@w6w/data`    | `set`                               | `{ vars: DataVar[] }` | `{ <key>: <typed value> }` | host                         |
+| `@w6w/trigger` | `manual`                            | `{}`                  | the start payload          | host (entry)                 |
 
 `DataVar = { key: string; type: "string"|"number"|"boolean"|"json"; value: unknown }`.
 
@@ -201,20 +204,27 @@ sequence of node-runs.
 A host claiming this RFC MUST:
 
 - Reject registration of an app whose id begins with `@w6w/`.
-- Route a node by `uses.app` per **Routing**; internal (non-control) and trigger nodes dispatch
-  through the same invocation seam as apps.
+- Route **every** node by `uses.app` per **Routing** through one invoke seam — controls included: a
+  `@w6w/control` node's decision is computed by the host, not a separate engine path.
 - Default a trigger to `{ type: "manual" }` when a registered workflow declares none.
 - Execute `@w6w/script`·`run` with no ambient authority (no network, filesystem, or environment
   access).
 - Record a NodeRun for each per-node execution with start/end state and `next`.
 
+## Resolved questions
+
+| Question                                                                             | Decision                                                                                                                                |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Should `@w6w/control` route through the host seam rather than staying engine-native? | **Yes.** A control node's _decision_ is computed by the host via `invokeAction` (uniform routing); the engine keeps only the traversal. |
+
 ## Open questions
 
-1. Should `@w6w/control` also be routable through the host seam (uniform routing) rather than
-   staying engine-native, once the orchestrator drives node-runs?
-2. Does `@w6w/script` need a declared output schema for downstream `{ "$": … }` binding, or is it
+1. Does `@w6w/script` need a declared output schema for downstream `{ "$": … }` binding, or is it
    always dynamic?
-3. Should `next` carry edge labels (e.g. `then`/`else`) rather than bare ids?
+2. Should `next` carry edge labels (e.g. `then`/`else`) rather than bare ids?
+3. Should the orchestrator drive a run _as_ a sequence of per-node HTTP executions (start/stop,
+   independent scaling) rather than one in-process loop calling `invokeAction`? The routing is
+   already uniform; this is a deployment-topology change.
 
 ## Status ladder
 
