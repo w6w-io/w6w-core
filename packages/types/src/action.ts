@@ -5,7 +5,11 @@
 import type { Param } from "./param.ts";
 import type { ActionExecuteHook } from "./hooks.ts";
 
-export type ActionType = "read" | "search" | "perform";
+/**
+ * What an action does. `control` marks an internal flow-control / pseudo-app
+ * action (e.g. the `@w6w/control` if/foreach nodes) — see rfcs/node-types.md.
+ */
+export type ActionType = "read" | "search" | "perform" | "control";
 
 export interface OutputField {
   /** Machine name. Dot notation for nested paths (`message.id`). */
