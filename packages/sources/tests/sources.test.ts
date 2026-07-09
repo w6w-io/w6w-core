@@ -1,12 +1,14 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@^1.0.0";
-import { fromFileUrl } from "jsr:@std/path@^1.0.0";
+import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
 import {
+  applySubpath,
   bitbucketAuthHeaders,
   bitbucketResolver,
   bitbucketTarballUrl,
   defaultResolvers,
   githubApiTarballUrl,
   githubAuthHeaders,
+  githubResolver,
   githubTarballUrl,
   gitlabArchiveUrl,
   gitlabAuthHeaders,
@@ -16,6 +18,7 @@ import {
   parseGitlabRef,
   resolve,
   SourceError,
+  splitFragment,
   splitRef,
 } from "../mod.ts";
 
@@ -39,12 +42,29 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void): void
 
 const header = (h: HeadersInit, name: string): string | null => new Headers(h).get(name);
 
-const HELLO_DIR = fromFileUrl(new URL("../../../fixtures/apps/hello", import.meta.url));
+const APPS_DIR = fromFileUrl(new URL("../../../fixtures/apps", import.meta.url));
+const HELLO_DIR = join(APPS_DIR, "hello");
 
 Deno.test("splitRef separates scheme from bare paths", () => {
   assertEquals(splitRef("github:w6w-io/x@v1"), { scheme: "github", rest: "w6w-io/x@v1" });
   assertEquals(splitRef("file:./x"), { scheme: "file", rest: "./x" });
   assertEquals(splitRef("./x"), { rest: "./x" });
+});
+
+Deno.test("splitFragment separates the #subpath fragment from the base ref", () => {
+  assertEquals(splitFragment("github:w6w-io/w6w-apps"), { base: "github:w6w-io/w6w-apps" });
+  assertEquals(splitFragment("github:w6w-io/w6w-apps#./apps/sendgrid"), {
+    base: "github:w6w-io/w6w-apps",
+    subpath: "./apps/sendgrid",
+  });
+  assertEquals(splitFragment("github:w6w-io/w6w-apps@main#./apps/sendgrid"), {
+    base: "github:w6w-io/w6w-apps@main",
+    subpath: "./apps/sendgrid",
+  });
+  assertEquals(splitFragment("file:/abs/pack#./hello"), {
+    base: "file:/abs/pack",
+    subpath: "./hello",
+  });
 });
 
 Deno.test("local resolver resolves a bare path to an absolute dir", async () => {
@@ -62,6 +82,49 @@ Deno.test("local resolver rejects a missing path", async () => {
   assertEquals(err.code, "not_found");
 });
 
+Deno.test("local resolver applies a #subpath fragment (file: and bare)", async () => {
+  assertEquals(await resolve(`file:${APPS_DIR}#./hello`), HELLO_DIR);
+  assertEquals(await resolve(`${APPS_DIR}#hello`), HELLO_DIR);
+});
+
+Deno.test("local resolver rejects a #subpath that escapes the source dir", async () => {
+  const err = await assertRejects(
+    () => resolve(`file:${APPS_DIR}#../../../../etc`),
+    SourceError,
+  );
+  assertEquals(err.code, "unsafe_subpath");
+});
+
+Deno.test("local resolver reports not_found for a missing #subpath", async () => {
+  const err = await assertRejects(() => resolve(`file:${APPS_DIR}#./nope`), SourceError);
+  assertEquals(err.code, "not_found");
+});
+
+// --- applySubpath (generic #subpath application) ---
+
+Deno.test("applySubpath returns the base dir for empty / '.' subpaths", async () => {
+  assertEquals(await applySubpath(APPS_DIR), APPS_DIR);
+  assertEquals(await applySubpath(APPS_DIR, ""), APPS_DIR);
+  assertEquals(await applySubpath(APPS_DIR, "."), APPS_DIR);
+  assertEquals(await applySubpath(APPS_DIR, "./"), APPS_DIR);
+});
+
+Deno.test("applySubpath joins a contained subpath", async () => {
+  assertEquals(await applySubpath(APPS_DIR, "./hello"), HELLO_DIR);
+  assertEquals(await applySubpath(APPS_DIR, "hello"), HELLO_DIR);
+});
+
+Deno.test("applySubpath rejects a `..` escape", async () => {
+  const err = await assertRejects(() => applySubpath(APPS_DIR, "../../../etc"), SourceError);
+  assertEquals(err.code, "unsafe_subpath");
+});
+
+Deno.test("applySubpath rejects a subpath that is a file, not a dir", async () => {
+  // `hello/index.ts` exists as a file in the fixture.
+  const err = await assertRejects(() => applySubpath(HELLO_DIR, "./index.ts"), SourceError);
+  assertEquals(err.code, "not_a_directory");
+});
+
 Deno.test("parseGithubRef parses owner/repo@ref and defaults to HEAD", () => {
   assertEquals(parseGithubRef("github:w6w-io/slack@v1.2.0"), {
     owner: "w6w-io",
@@ -69,6 +132,27 @@ Deno.test("parseGithubRef parses owner/repo@ref and defaults to HEAD", () => {
     ref: "v1.2.0",
   });
   assertEquals(parseGithubRef("github:w6w-io/slack").ref, "HEAD");
+});
+
+Deno.test("parseGithubRef ignores a #subpath fragment and parses the base repo", () => {
+  // The exact string that used to detonate with a `bad_ref` SourceError.
+  assertEquals(parseGithubRef("github:w6w-io/w6w-apps#./apps/sendgrid"), {
+    owner: "w6w-io",
+    repo: "w6w-apps",
+    ref: "HEAD",
+  });
+  // `@ref` before `#subpath` still parses the git ref.
+  assertEquals(parseGithubRef("github:w6w-io/w6w-apps@main#./apps/sendgrid"), {
+    owner: "w6w-io",
+    repo: "w6w-apps",
+    ref: "main",
+  });
+});
+
+Deno.test("github resolver claims a ref carrying a #subpath fragment", () => {
+  assert(githubResolver.canResolve("github:w6w-io/w6w-apps#./apps/sendgrid"));
+  // splitFragment keeps the fragment out of the parsed git ref.
+  assertEquals(splitFragment("github:w6w-io/w6w-apps#./apps/sendgrid").subpath, "./apps/sendgrid");
 });
 
 Deno.test("githubTarballUrl builds the codeload URL", () => {

@@ -8,7 +8,13 @@
  *
  * Runs host-side (full Deno perms) — never sandboxed.
  */
-import { type ResolveOptions, type Resolver, SourceError, splitRef } from "./types.ts";
+import {
+  type ResolveOptions,
+  type Resolver,
+  SourceError,
+  splitFragment,
+  splitRef,
+} from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
 
 export interface BitbucketRef {
@@ -18,15 +24,22 @@ export interface BitbucketRef {
   ref: string;
 }
 
-/** Parse `bitbucket:owner/repo@ref` (the `@ref` is optional → `HEAD`). */
+/**
+ * Parse `bitbucket:owner/repo@ref` (the `@ref` is optional → `HEAD`). A trailing
+ * `#subpath` fragment is stripped here; the resolver applies it post-extraction.
+ */
 export function parseBitbucketRef(ref: string): BitbucketRef {
-  const { scheme, rest } = splitRef(ref);
+  const { base } = splitFragment(ref);
+  const { scheme, rest } = splitRef(base);
   if (scheme !== "bitbucket") {
     throw new SourceError("bad_scheme", `Not a bitbucket ref: ${ref}`);
   }
   const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.+))?$/);
   if (!m) {
-    throw new SourceError("bad_ref", `Expected "bitbucket:owner/repo[@ref]", got: ${ref}`);
+    throw new SourceError(
+      "bad_ref",
+      `Expected "bitbucket:owner/repo[@ref][#subpath]", got: ${ref}`,
+    );
   }
   return { owner: m[1], repo: m[2], ref: m[3] ?? "HEAD" };
 }
@@ -53,6 +66,7 @@ export const bitbucketResolver: Resolver = {
   },
 
   resolve(ref: string, opts: ResolveOptions = {}): Promise<string> {
+    const { subpath } = splitFragment(ref);
     const bb = parseBitbucketRef(ref);
     return resolveViaTarball(
       {
@@ -60,6 +74,7 @@ export const bitbucketResolver: Resolver = {
         url: bitbucketTarballUrl(bb),
         headers: bitbucketAuthHeaders(),
         label: "Bitbucket",
+        subpath,
       },
       opts,
     );

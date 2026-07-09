@@ -32,3 +32,14 @@ export function splitRef(ref: string): { scheme?: string; rest: string } {
   const m = ref.match(/^([a-z][a-z0-9+.-]*):(.*)$/);
   return m ? { scheme: m[1], rest: m[2] } : { rest: ref };
 }
+
+/**
+ * Split a ref's optional `#subpath` fragment off the base ref. The fragment
+ * pins a directory *within* the resolved source, e.g.
+ * `github:owner/repo@main#./apps/sendgrid` selects `apps/sendgrid` inside the
+ * extracted repo. Splits on the first `#` only (a subpath never contains one).
+ */
+export function splitFragment(ref: string): { base: string; subpath?: string } {
+  const i = ref.indexOf("#");
+  return i < 0 ? { base: ref } : { base: ref.slice(0, i), subpath: ref.slice(i + 1) };
+}
