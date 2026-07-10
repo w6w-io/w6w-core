@@ -8,7 +8,13 @@
  *
  * Runs host-side (full Deno perms) — this is a wrapper concern, never sandboxed.
  */
-import { type ResolveOptions, type Resolver, SourceError, splitRef } from "./types.ts";
+import {
+  type ResolveOptions,
+  type Resolver,
+  SourceError,
+  splitFragment,
+  splitRef,
+} from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
 
 export interface GithubRef {
@@ -18,15 +24,20 @@ export interface GithubRef {
   ref: string;
 }
 
-/** Parse `github:owner/repo@ref` (the `@ref` is optional → `HEAD`). */
+/**
+ * Parse `github:owner/repo@ref` (the `@ref` is optional → `HEAD`). An optional
+ * trailing `#subpath` fragment is stripped here — it pins a dir within the repo
+ * and is applied post-extraction by the resolver, not part of the repo identity.
+ */
 export function parseGithubRef(ref: string): GithubRef {
-  const { scheme, rest } = splitRef(ref);
+  const { base } = splitFragment(ref);
+  const { scheme, rest } = splitRef(base);
   if (scheme !== "github") {
     throw new SourceError("bad_scheme", `Not a github ref: ${ref}`);
   }
   const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.+))?$/);
   if (!m) {
-    throw new SourceError("bad_ref", `Expected "github:owner/repo[@ref]", got: ${ref}`);
+    throw new SourceError("bad_ref", `Expected "github:owner/repo[@ref][#subpath]", got: ${ref}`);
   }
   return { owner: m[1], repo: m[2], ref: m[3] ?? "HEAD" };
 }
@@ -65,12 +76,19 @@ export const githubResolver: Resolver = {
   },
 
   resolve(ref: string, opts: ResolveOptions = {}): Promise<string> {
+    const { subpath } = splitFragment(ref);
     const gh = parseGithubRef(ref);
     const token = githubToken();
     // Authenticated → API endpoint (private-capable); anonymous → codeload.
     const url = token ? githubApiTarballUrl(gh) : githubTarballUrl(gh);
     return resolveViaTarball(
-      { cacheKey: ["github", gh.owner, gh.repo, gh.ref], url, headers: githubAuthHeaders(), label: "GitHub" },
+      {
+        cacheKey: ["github", gh.owner, gh.repo, gh.ref],
+        url,
+        headers: githubAuthHeaders(),
+        label: "GitHub",
+        subpath,
+      },
       opts,
     );
   },

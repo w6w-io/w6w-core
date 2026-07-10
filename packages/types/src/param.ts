@@ -19,6 +19,12 @@ export type ParamType =
   | "code"
   | "group";
 
+/** Type-specific render/behavior options for a param. */
+export interface ParamConfig {
+  /** Render as a multi-line textarea. Implied by `type: "text"`. */
+  multiline?: boolean;
+}
+
 /** A single choice in a static option list. */
 export interface Option {
   value: string | number;
@@ -68,6 +74,8 @@ export interface Param {
   repeat?: boolean;
   /** Render hint, e.g. `"textarea"`, `"radio"`, `"code:sql"`. */
   ui?: string;
+  /** Type-specific render/behavior options. */
+  config?: ParamConfig;
   /** Keys of other params that must be filled first; changes invalidate this one. */
   dependsOn?: string[];
   /** Conditional visibility. JSONLogic expression (per ROADMAP resolution of the open question). */

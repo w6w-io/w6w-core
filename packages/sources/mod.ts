@@ -37,4 +37,11 @@ export {
 } from "./src/bitbucket.ts";
 export type { BitbucketRef } from "./src/bitbucket.ts";
 export { defaultCacheDir, extractStripped, resolveViaTarball } from "./src/tarball.ts";
-export { type ResolveOptions, type Resolver, SourceError, splitRef } from "./src/types.ts";
+export { applySubpath } from "./src/subpath.ts";
+export {
+  type ResolveOptions,
+  type Resolver,
+  SourceError,
+  splitFragment,
+  splitRef,
+} from "./src/types.ts";

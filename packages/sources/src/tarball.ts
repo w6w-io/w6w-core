@@ -10,6 +10,7 @@
 import { dirname, join, normalize, resolve as resolvePath } from "jsr:@std/path@^1.0.0";
 import { UntarStream } from "jsr:@std/tar@^0.1";
 import { type ResolveOptions, SourceError } from "./types.ts";
+import { applySubpath } from "./subpath.ts";
 
 /** Default cache root: `$W6W_CACHE`, else `${TMPDIR}/w6w-sources`, else /tmp. */
 export function defaultCacheDir(): string {
@@ -58,6 +59,8 @@ export interface TarballSource {
   headers?: HeadersInit;
   /** Host label for error messages (e.g. "GitHub"). */
   label?: string;
+  /** Optional `#subpath` fragment: a repo-relative dir to select post-extract. */
+  subpath?: string;
 }
 
 /**
@@ -73,7 +76,7 @@ export async function resolveViaTarball(
 
   if (!opts.force) {
     try {
-      if ((await Deno.stat(dest)).isDirectory) return dest;
+      if ((await Deno.stat(dest)).isDirectory) return applySubpath(dest, src.subpath);
     } catch { /* not cached yet */ }
   } else {
     await Deno.remove(dest, { recursive: true }).catch(() => {});
@@ -91,5 +94,5 @@ export async function resolveViaTarball(
     await Deno.remove(dest, { recursive: true }).catch(() => {});
     throw e;
   }
-  return dest;
+  return applySubpath(dest, src.subpath);
 }

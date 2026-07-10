@@ -1,30 +1,27 @@
 /**
  * Local resolver. Zero dependencies: `file:./path` or a bare path → an absolute
- * directory. This is effectively what lib core already consumes.
+ * directory. An optional `#subpath` fragment selects a sub-directory within it
+ * (e.g. `file:/abs/pack#./hello`). This is effectively what lib core already
+ * consumes.
  */
 import { resolve as resolvePath } from "jsr:@std/path@^1.0.0";
-import { type Resolver, SourceError, splitRef } from "./types.ts";
+import { type Resolver, splitFragment, splitRef } from "./types.ts";
+import { applySubpath } from "./subpath.ts";
 
 export const localResolver: Resolver = {
   scheme: "file",
 
   canResolve(ref: string): boolean {
-    const { scheme } = splitRef(ref);
+    const { scheme } = splitRef(splitFragment(ref).base);
     // `file:` explicitly, or a bare path (no scheme).
     return scheme === "file" || scheme === undefined;
   },
 
   resolve(ref: string): Promise<string> {
-    const { scheme, rest } = splitRef(ref);
-    const path = resolvePath(scheme === "file" ? rest : ref);
-    return Deno.stat(path).then((info) => {
-      if (!info.isDirectory) {
-        throw new SourceError("not_a_directory", `Source path is not a directory: ${path}`);
-      }
-      return path;
-    }).catch((e) => {
-      if (e instanceof SourceError) throw e;
-      throw new SourceError("not_found", `Source path not found: ${path}`);
-    });
+    const { base, subpath } = splitFragment(ref);
+    const { scheme, rest } = splitRef(base);
+    const basePath = resolvePath(scheme === "file" ? rest : base);
+    // `applySubpath` stats/validates the target (or `basePath` when no subpath).
+    return applySubpath(basePath, subpath);
   },
 };

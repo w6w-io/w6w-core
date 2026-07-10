@@ -8,7 +8,13 @@
  *
  * Runs host-side (full Deno perms) — never sandboxed.
  */
-import { type ResolveOptions, type Resolver, SourceError, splitRef } from "./types.ts";
+import {
+  type ResolveOptions,
+  type Resolver,
+  SourceError,
+  splitFragment,
+  splitRef,
+} from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
 
 export interface GitlabRef {
@@ -18,9 +24,14 @@ export interface GitlabRef {
   ref: string;
 }
 
-/** Parse `gitlab:group[/subgroup…]/repo@ref` (`@ref` optional → default branch). */
+/**
+ * Parse `gitlab:group[/subgroup…]/repo@ref` (`@ref` optional → default branch).
+ * A trailing `#subpath` fragment is stripped here; the resolver applies it after
+ * extraction.
+ */
 export function parseGitlabRef(ref: string): GitlabRef {
-  const { scheme, rest } = splitRef(ref);
+  const { base } = splitFragment(ref);
+  const { scheme, rest } = splitRef(base);
   if (scheme !== "gitlab") {
     throw new SourceError("bad_scheme", `Not a gitlab ref: ${ref}`);
   }
@@ -29,7 +40,10 @@ export function parseGitlabRef(ref: string): GitlabRef {
   const gitRef = at >= 0 ? rest.slice(at + 1) : "HEAD";
   // Require at least namespace/project.
   if (!/^[^/]+\/[^/@]+(?:\/[^/@]+)*$/.test(path)) {
-    throw new SourceError("bad_ref", `Expected "gitlab:namespace/project[@ref]", got: ${ref}`);
+    throw new SourceError(
+      "bad_ref",
+      `Expected "gitlab:namespace/project[@ref][#subpath]", got: ${ref}`,
+    );
   }
   return { path, ref: gitRef };
 }
@@ -62,6 +76,7 @@ export const gitlabResolver: Resolver = {
   },
 
   resolve(ref: string, opts: ResolveOptions = {}): Promise<string> {
+    const { subpath } = splitFragment(ref);
     const gl = parseGitlabRef(ref);
     const host = gitlabHost();
     return resolveViaTarball(
@@ -70,6 +85,7 @@ export const gitlabResolver: Resolver = {
         url: gitlabArchiveUrl(gl, host),
         headers: gitlabAuthHeaders(),
         label: "GitLab",
+        subpath,
       },
       opts,
     );

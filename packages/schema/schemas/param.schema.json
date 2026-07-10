@@ -43,6 +43,13 @@
         "enum": { "type": "array", "minItems": 1 },
         "hook": { "type": "string", "minLength": 1 }
       }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "multiline": { "type": "boolean" }
+      }
     }
   },
   "type": "object",
@@ -84,6 +91,7 @@
     "showIf": true,
     "options": { "$ref": "#/$defs/options" },
     "validation": { "$ref": "#/$defs/validation" },
+    "config": { "$ref": "#/$defs/config" },
     "children": {
       "type": "array",
       "items": { "$ref": "#" }
