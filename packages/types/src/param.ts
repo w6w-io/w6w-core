@@ -18,6 +18,7 @@ export type ParamType =
   | "json"
   | "code"
   | "group"
+  | "section"
   | "array";
 
 /** Type-specific render/behavior options for a param. */
@@ -109,13 +110,50 @@ export interface Param {
   options?: Options;
   validation?: Validation;
   /**
-   * Nested params, used when `type: "group"`. Combined with `repeat: true`
-   * expresses a list of structured items (e.g. an array of header rows).
+   * Nested params. Used when `type: "group"` (a nested object whose value nests
+   * under this param's `key`) OR when `type: "section"` (a layout-only container
+   * whose children's values live at the ENCLOSING form level — see below).
+   * Combined with `repeat: true` on a `group` expresses a list of structured
+   * items (e.g. an array of header rows).
    */
   children?: Param[];
+  /**
+   * Present only when `type: "section"` — selects the container behavior. A
+   * section is a **layout-only** wrapper: unlike `group`, its `children`'s values
+   * live at the ENCLOSING form level (they are NOT nested under the section's
+   * `key`), so a section only groups fields visually. `"collapsible"` renders a
+   * titled, collapsed-by-default disclosure; `"group"` a `layout` row/stack.
+   */
+  section?: "collapsible" | "group";
+  /** `section: "collapsible"` only, REQUIRED there — the `<summary>` heading. */
+  title?: string;
+  /** `section: "collapsible"` only — optional secondary summary line. */
+  subtitle?: string;
+  /**
+   * `section: "group"` only — `"row"` lays children side by side, `"stack"`
+   * stacks them vertically. Defaults to `"stack"`.
+   */
+  layout?: "row" | "stack";
+  /** `section: "collapsible"` only — start collapsed. Defaults to `true`. */
+  collapsed?: boolean;
 }
 
 /** Narrow `Options` to the dynamic (hook-driven) form. */
 export function isDynamicOptions(o: Options | undefined): o is DynamicOptions {
   return !!o && !Array.isArray(o) && typeof (o as DynamicOptions).source === "string";
+}
+
+/** The two container behaviors a `type: "section"` param can take. */
+export type ParamSectionKind = "collapsible" | "group";
+
+/** A `type: "section"` param — a layout-only container of `children`. */
+export interface ParamSection extends Param {
+  type: "section";
+  section: ParamSectionKind;
+  children: Param[];
+}
+
+/** Narrow a `Param` to a `section` (layout-only container). */
+export function isSection(p: Param): p is ParamSection {
+  return p.type === "section";
 }

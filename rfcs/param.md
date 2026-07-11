@@ -164,6 +164,12 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `showIf` | [JSONLogic](https://jsonlogic.com) rule | ⬜ | Conditional visibility based on other field values. Evaluated against the current form state; truthy → visible. The platform ships a JSONLogic engine in [`@w6w/expr`](../packages/expr/README.md). |
 | `options` | Options | ⬜ | For choice types. Static list or dynamic hook source. |
 | `validation` | Validation | ⬜ | Declarative rules and/or a custom hook. |
+| `children` | Param[] | ⬜ | Nested params for `type: "group"` (nested object) or `type: "section"` (flat, layout-only). |
+| `section` | `"collapsible"` \| `"group"` | ⬜ | Required when `type: "section"`. Container behavior. |
+| `title` | string | ⬜ | `section: "collapsible"` only, required there — the disclosure heading. |
+| `subtitle` | string | ⬜ | `section: "collapsible"` only — optional secondary summary line. |
+| `layout` | `"row"` \| `"stack"` | ⬜ | `section: "group"` only — children side by side or stacked. Defaults to `"stack"`. |
+| `collapsed` | boolean | ⬜ | `section: "collapsible"` only — start collapsed. Defaults to `true`. |
 
 ### Types
 
@@ -182,6 +188,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `json` | any | Structured JSON; host renders a JSON editor. |
 | `code` | string | Code with language via `ui` (e.g. `"code:sql"`). |
 | `group` | object | Nested form. Value is a `Record<string, unknown>` whose keys are the `key`s of the params in `children`. See [Groups](#groups). |
+| `section` | — (layout only) | Layout-only container of `children`. `section: "collapsible"` renders a titled, collapsed-by-default disclosure; `section: "group"` a `layout` row/stack. Children's values live in the **enclosing** form (not nested under the section's `key`). See [Sections](#sections). |
 
 ### UI hints
 
@@ -248,6 +255,56 @@ The `group` type holds a nested `Param[]` under the `children` field. Combined w
 
 The submitted value is `Array<{ name: string; value: string }>`. `dependsOn` inside `children` may reference sibling keys within the same group; references to params outside the group are resolved against the enclosing form.
 
+## Sections
+
+A `section` is a **layout-only** container of `children`. Unlike a `group`, a section does **not** nest its children's values under its own `key` — the children's values live flat in the **enclosing** form, exactly as if they'd been declared at the top level. A section only groups fields visually.
+
+Two shapes, selected by `section`:
+
+- `section: "collapsible"` — a titled, collapsed-by-default disclosure. Requires `title`; `subtitle` and `collapsed` (default `true`) are optional. Good for tucking advanced fields away behind an author-named heading (distinct from the host's single global "Additional parameters" disclosure).
+- `section: "group"` — a `layout` cluster: `"row"` lays the children side by side, `"stack"` (the default) stacks them. The visibility-aware, multi-field sibling of the flat `row` flag.
+
+**Collapsible example** (advanced fields behind a disclosure):
+
+```json
+{
+  "key": "advancedContent",
+  "label": "Advanced",
+  "type": "section",
+  "section": "collapsible",
+  "title": "Advanced",
+  "subtitle": "MIME type & template",
+  "collapsed": true,
+  "children": [
+    { "key": "contentType", "label": "MIME Type", "type": "select", "options": [
+      { "value": "text/plain", "label": "Plain Text" },
+      { "value": "text/html",  "label": "HTML" }
+    ] },
+    { "key": "templateId", "label": "Template", "type": "select" }
+  ]
+}
+```
+
+**Group / row example** (two fields side by side):
+
+```json
+{
+  "key": "sender",
+  "label": "Sender",
+  "type": "section",
+  "section": "group",
+  "layout": "row",
+  "children": [
+    { "key": "fromEmail", "label": "Sender Email", "type": "string", "required": true },
+    { "key": "fromName",  "label": "Sender Name",  "type": "string" }
+  ]
+}
+```
+
+Here the submitted values are flat — `{ "fromEmail": "…", "fromName": "…" }` — **not** `{ "sender": { … } }`. This is the key difference from `group`, which nests under its `key`.
+
+A section **coexists** with the other layout features: children may carry `row`, `showIf`, and even nested sections, all of which keep working inside the container. A child's `advanced` flag is **not** honored inside a section — the section is itself the disclosure, so its children render inline within it; use a `collapsible` section (or the enclosing form's global "Additional parameters") to hide fields, not a per-child `advanced`. `section: "group"` with `layout: "row"` is the visibility-aware sibling of the flat `row` flag; a collapsible section is an author-named, per-cluster disclosure distinct from the single global "Additional parameters" disclosure.
+
 ## Hooks
 
 | Hook | Receives | Returns | Purpose |
@@ -272,6 +329,6 @@ Circular dependencies are rejected at manifest load time.
 | Question | Resolution |
 |---|---|
 | `showIf` expression language | **JSONLogic.** The reference engine ships as [`@w6w/expr`](../packages/expr/README.md). No bespoke mini-language. |
-| Grouping / sections / tabs | **Deferred.** Flat list works for `manifestVersion: "1"`. Will be revisited when a real form needs it. |
+| Grouping / sections / tabs | **Resolved.** Added `type: "section"` (`section: "collapsible"` disclosure / `section: "group"` row/stack layout) as a layout-only container — its children's values stay flat in the enclosing form. See [Sections](#sections). Tabs still deferred. |
 | i18n on Param | **Deferred to the enclosing manifest's `localizations` block.** No per-Param locale object — avoids double-sourcing translations. |
 | `repeat` vs nested schema | Added a `group` type that takes a nested `Param[]` via `children`. Lists of structured items use `type: "group", repeat: true`. |

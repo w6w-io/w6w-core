@@ -74,6 +74,7 @@
         "json",
         "code",
         "group",
+        "section",
         "array"
       ]
     },
@@ -108,12 +109,31 @@
     "children": {
       "type": "array",
       "items": { "$ref": "#" }
-    }
+    },
+    "section": { "type": "string", "enum": ["collapsible", "group"] },
+    "title": { "type": "string" },
+    "subtitle": { "type": "string" },
+    "layout": { "type": "string", "enum": ["row", "stack"] },
+    "collapsed": { "type": "boolean" }
   },
   "allOf": [
     {
       "if": { "properties": { "type": { "const": "group" } }, "required": ["type"] },
       "then": { "required": ["children"] }
+    },
+    {
+      "if": { "properties": { "type": { "const": "section" } }, "required": ["type"] },
+      "then": { "required": ["section", "children"] }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": { "const": "section" },
+          "section": { "const": "collapsible" }
+        },
+        "required": ["type", "section"]
+      },
+      "then": { "required": ["title"] }
     }
   ]
 }

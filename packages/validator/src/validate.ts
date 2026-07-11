@@ -32,6 +32,7 @@ const PARAM_TYPES = [
   "json",
   "code",
   "group",
+  "section",
   "array",
 ];
 const ACTION_TYPES = ["read", "search", "perform"];
@@ -144,6 +145,18 @@ function checkParam(ctx: Ctx, p: unknown, path: string): void {
   );
   ctx.reqString(p.label, `${path}.label`);
   ctx.enum(p.type, PARAM_TYPES, `${path}.type`);
+
+  // A `section` is a layout-only container: it requires `section` + `children`,
+  // and a `collapsible` section also requires a `title` (its <summary> heading).
+  if (p.type === "section") {
+    ctx.enum(p.section, ["collapsible", "group"], `${path}.section`);
+    if (!Array.isArray(p.children)) ctx.err(`${path}.children`, "is required for a section");
+    if (p.section === "collapsible") ctx.reqString(p.title, `${path}.title`);
+  }
+
+  // Recurse into nested params (section / group children) so their key/label/type
+  // are validated too.
+  if (Array.isArray(p.children)) checkParams(ctx, p.children, `${path}.children`);
 }
 
 function checkParams(ctx: Ctx, params: unknown, path: string): void {
