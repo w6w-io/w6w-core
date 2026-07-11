@@ -32,6 +32,7 @@ const PARAM_TYPES = [
   "json",
   "code",
   "group",
+  "array",
 ];
 const ACTION_TYPES = ["read", "search", "perform"];
 const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];

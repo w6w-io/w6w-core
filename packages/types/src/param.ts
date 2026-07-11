@@ -17,12 +17,26 @@ export type ParamType =
   | "file"
   | "json"
   | "code"
-  | "group";
+  | "group"
+  | "array";
 
 /** Type-specific render/behavior options for a param. */
 export interface ParamConfig {
   /** Render as a multi-line textarea. Implied by `type: "text"`. */
   multiline?: boolean;
+}
+
+/**
+ * The element schema for a `type: "array"` param — a scalar list
+ * (`type: "string" | "number"`) or a list of objects (`type: "object"` with
+ * `fields`, each element a record whose fields render side by side).
+ */
+export interface ParamItem {
+  type: "string" | "number" | "object";
+  /** For object items — the fields of each element. */
+  fields?: Param[];
+  /** Placeholder for a scalar item's input. */
+  placeholder?: string;
 }
 
 /** A single choice in a static option list. */
@@ -74,6 +88,18 @@ export interface Param {
   repeat?: boolean;
   /** Render hint, e.g. `"textarea"`, `"radio"`, `"code:sql"`. */
   ui?: string;
+  /**
+   * Collapse this (optional) param under the "Additional parameters" section.
+   * Required + non-advanced params show up front; ignored for required params.
+   */
+  advanced?: boolean;
+  /**
+   * Lay this param out on a shared row with adjacent params carrying the same
+   * `row` id (e.g. a username/password pair side by side).
+   */
+  row?: string;
+  /** Element schema when `type: "array"` (a scalar list or a list of objects). */
+  item?: ParamItem;
   /** Type-specific render/behavior options. */
   config?: ParamConfig;
   /** Keys of other params that must be filled first; changes invalidate this one. */

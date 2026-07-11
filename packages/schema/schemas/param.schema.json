@@ -73,7 +73,8 @@
         "file",
         "json",
         "code",
-        "group"
+        "group",
+        "array"
       ]
     },
     "placeholder": { "type": "string" },
@@ -83,7 +84,19 @@
     "secret": { "type": "boolean" },
     "readOnly": { "type": "boolean" },
     "repeat": { "type": "boolean" },
+    "advanced": { "type": "boolean" },
+    "row": { "type": "string" },
     "ui": { "type": "string" },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["string", "number", "object"] },
+        "placeholder": { "type": "string" },
+        "fields": { "type": "array", "items": { "$ref": "#" } }
+      }
+    },
     "dependsOn": {
       "type": "array",
       "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
