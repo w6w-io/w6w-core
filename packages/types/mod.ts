@@ -14,4 +14,5 @@ export * from "./src/trigger.ts";
 export * from "./src/app.ts";
 export * from "./src/connection.ts";
 export * from "./src/invocation.ts";
+export * from "./src/value.ts";
 export * from "./src/pack.ts";

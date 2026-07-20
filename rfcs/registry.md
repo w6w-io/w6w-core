@@ -316,3 +316,69 @@ V1 implementations:
 | `load()` ownership | In the registry — it owns the `sourceRef → LoadedApp` pipeline because it owns the `sourceRef`.                               |
 | Federation         | Reserved (`origin`, future overlay fields). v1 is local-only.                                                                 |
 | Provenance         | `signature` / `attestations` are reserved at the version level; manifest's reservations carry through.                        |
+
+---
+
+## Amendment: owner-scoped registration (2026-07-14)
+
+> Adds per-**tenant** and per-**user** private apps alongside the global catalog. Motivated by
+> embedded-tenant onboarding (a partner installs its own apps tenant-wide; its users bring their own).
+> Companion design + rollout: [`.claude/docs/app-install-scoping.md`](../../.claude/docs/app-install-scoping.md).
+
+### Owner scope
+
+A registered app gains an **owner scope** — the principal that installed it:
+
+```ts
+interface OwnerScope {
+  tenant?: string;   // absent / "" → not tenant-owned
+  subject?: string;  // absent / "" → not user-owned
+}
+```
+
+Three tiers, by which fields are set:
+
+- **Global** — neither set. Operator-published; the existing behavior. Available to every tenant
+  (subject to the host's tenant allowlist / entitlement policy, which is out of scope for this RFC).
+- **Tenant** — `tenant` set, `subject` unset. Installed by a tenant admin; available to every subject
+  in that tenant.
+- **User** — both set. Installed by one user; available only to that `(tenant, subject)`.
+
+### Identity
+
+The reverse-DNS `id` stays **globally unique** — version identity remains `(id, version)`, and `owner`
+is a **visibility/ownership attribute**, not part of the key. An `id` therefore belongs to exactly one
+owner scope. `register(sourceRef, { owner })` MUST be rejected (`id_taken`) if that `id` already exists
+under a **different** owner scope. This keeps a workflow's app reference unambiguous and makes
+shadowing structurally impossible — a private app can never reuse (and so never silently substitute) a
+global one.
+
+> This global-uniqueness choice is deliberate: it avoids per-scope key surgery in datastores and their
+> inbound foreign keys. A host MAY later relax `id` to be unique only *within* an owner scope, at the
+> cost of composite keys; that is out of scope here.
+
+### Registration & resolution
+
+- `register(sourceRef, opts?: { owner?: OwnerScope })` — installs into `opts.owner` (default global).
+  Idempotency (digest over `{ manifest, actions, auth }`) is evaluated **within the owner scope**.
+- `list(query, opts?: { caller?: OwnerScope })` — returns the **union** for the caller: global ∪
+  tenant-owned (`caller.tenant`) ∪ user-owned (`caller.tenant, caller.subject`). Most-specific tier
+  wins on `id`; absent `caller` → global only (back-compat).
+- `get(id, opts?: { caller?: OwnerScope })` — resolves `id` **most-specific-first** (user → tenant →
+  global) within the caller's scope.
+
+Hosts MUST resolve an executing step's app against the **caller's** owner scope, and MUST treat an app
+owned by the caller's scope as implicitly authorized (a host's tenant entitlement/allowlist governs
+**global** apps only — an owner can always run what it installed).
+
+### Trust
+
+Privileged host capabilities (`ctx.host.*`, see the Hook-Runtime RFC) MUST NOT be granted to any
+non-global (tenant/user-owned) app. Owner-scoped apps run in the same least-privilege sandbox as any
+third-party app; ownership conveys *availability*, never elevated trust.
+
+### Back-compat
+
+The owner scope is additive and defaults to global. A datastore that stores every app with an empty
+owner scope, and a caller that passes none, reproduce the pre-amendment single-global-catalog behavior
+exactly. `origin`/federation reservations are unchanged and orthogonal to ownership.

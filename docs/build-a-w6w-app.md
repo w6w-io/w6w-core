@@ -199,14 +199,19 @@ Injected into every hook. **This is the entire surface a hook may use for I/O.**
 
 Every form surface (Action `params`, Auth `fields`) is an ordered `Param[]`. Types:
 `string`, `text`, `number`, `boolean`, `select`, `multiselect`, `date`, `datetime`,
-`secret`, `file`, `json`, `code`, `group`.
+`secret`, `file`, `json`, `code`, `group`, `section`.
 
 Common fields: `key`, `label`, `type`, `required`, `default`, `hint`, `placeholder`,
 `secret` (masked + encrypted; implicit for `type: "secret"`), `options` (for
 `select`/`multiselect`), `validation` (`pattern`, `min`/`max`, `minLength`/`maxLength`,
-`integer`, `enum`), `dependsOn`, `showIf` (JSONLogic), `children` (for `type: "group"`).
+`integer`, `enum`), `dependsOn`, `showIf` (JSONLogic), `children` (for `type: "group"`
+and `type: "section"`).
 Dynamic dropdowns use `options: { source: "./path/to/hook.ts" }` returning `Option[]`.
-See [`rfcs/param.md`](../rfcs/param.md).
+`section` is a layout-only container of `children` — `section: "collapsible"` for a
+titled, collapsed-by-default group (e.g. advanced fields), `section: "group"` with
+`layout: "row" | "stack"` for side-by-side clusters (e.g. sender email + name). Unlike
+`group` (which nests its value under its `key`), a section's children keep their own
+top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
 
 ## Hard rules (the sandbox will enforce these)
 
