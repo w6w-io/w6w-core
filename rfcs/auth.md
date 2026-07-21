@@ -1,22 +1,27 @@
 # RFC: Auth
 
-**Status:** Final
-**Author:** Segev Shmueli
-**Date:** 2026-04-15 (revised 2026-06-01)
+**Status:** Final **Author:** Segev Shmueli **Date:** 2026-04-15 (revised 2026-06-01)
 
 ## Summary
 
-An `Auth` manifest declares **how a user connects their account** to an App. It covers the common types (OAuth 2.0, API key, Basic, Bearer) plus a `custom` escape hatch for exotic flows, and exposes **lifecycle hooks** so a publisher can run code before, during, and after the connection is made — including per-request signing.
+An `Auth` manifest declares **how a user connects their account** to an App. It covers the common
+types (OAuth 2.0, API key, Basic, Bearer) plus a `custom` escape hatch for exotic flows, and exposes
+**lifecycle hooks** so a publisher can run code before, during, and after the connection is made —
+including per-request signing.
 
-Auth manifests are **separate files** referenced from the App manifest. An App may reference multiple Auth files when it supports more than one connection method (e.g., OAuth 2.0 and API key).
+Auth manifests are **separate files** referenced from the App manifest. An App may reference
+multiple Auth files when it supports more than one connection method (e.g., OAuth 2.0 and API key).
 
 ## Motivation
 
-Authentication is the single most divergent piece across integration platforms. Zapier, n8n, Make, Shopify — each invents its own shape for what should be a small, well-understood problem. A unified auth spec means:
+Authentication is the single most divergent piece across integration platforms. Zapier, n8n, Make,
+Shopify — each invents its own shape for what should be a small, well-understood problem. A unified
+auth spec means:
 
 - A publisher describes "how to log in to my service" once.
 - Any compliant host can run the flow, store the resulting credential, and sign outgoing requests.
-- Custom / bespoke auth doesn't require platform-specific escape hatches — it's the `custom` type with hooks.
+- Custom / bespoke auth doesn't require platform-specific escape hatches — it's the `custom` type
+  with hooks.
 
 ## Goals
 
@@ -40,12 +45,16 @@ Authentication is the single most divergent piece across integration platforms. 
 
 An `Auth` describes **one** authentication method. Each Auth manifest has:
 
-1. A **`type` discriminant** (`oauth2` / `apiKey` / `basic` / `bearer` / `custom` / `tenantAuth`).
+1. A **`type` discriminant** (`oauth2` / `apiKey` / `basic` / `bearer` / `custom` / `tenantAuth` /
+   `jit`).
 2. A **type-specific configuration block** keyed by the type name.
-3. A **`fields`** array of [Param](./param.md) entries — inputs collected from the user at connect time.
-4. A **`hooks`** block — lifecycle callbacks (preflight, exchange, test, sign, refresh, revoke, afterConnect).
+3. A **`fields`** array of [Param](./param.md) entries — inputs collected from the user at connect
+   time.
+4. A **`hooks`** block — lifecycle callbacks (preflight, exchange, test, sign, refresh, revoke,
+   afterConnect).
 
-Only `hooks.test` is required. Everything else is optional and only declared when the auth type needs it.
+Only `hooks.test` is required. Everything else is optional and only declared when the auth type
+needs it.
 
 ### Credentials are opaque
 
@@ -55,7 +64,9 @@ The publisher's hooks own the full credential lifecycle:
 - **`sign`** uses the stored credential to inject auth into every outbound request.
 - **`refresh`** updates the credential when it expires.
 
-From the platform's view, the credential is an **opaque blob**. The spec does not declare its shape, and actions never access credential fields directly. An action emits a request; the request passes through `sign`; `sign` handles auth. This keeps tokens server-side and the action surface narrow.
+From the platform's view, the credential is an **opaque blob**. The spec does not declare its shape,
+and actions never access credential fields directly. An action emits a request; the request passes
+through `sign`; `sign` handles auth. This keeps tokens server-side and the action surface narrow.
 
 ## Shape
 
@@ -73,7 +84,9 @@ Every Auth manifest, regardless of `type`, starts with:
 }
 ```
 
-`manifestVersion` declares which version of the Core spec this file targets — needed because Auth manifests are standalone files. There is no `id`; the App references Auth files by path, and `(app.id + filename)` is sufficient cross-reference.
+`manifestVersion` declares which version of the Core spec this file targets — needed because Auth
+manifests are standalone files. There is no `id`; the App references Auth files by path, and
+`(app.id + filename)` is sufficient cross-reference.
 
 ### OAuth 2.0
 
@@ -84,13 +97,13 @@ Every Auth manifest, regardless of `type`, starts with:
   "displayName": "Sign in with Slack",
   "oauth2": {
     "authorizationUrl": "https://slack.com/oauth/v2/authorize",
-    "tokenUrl":         "https://slack.com/api/oauth.v2.access",
-    "refreshUrl":       "https://slack.com/api/oauth.v2.access",
-    "revokeUrl":        "https://slack.com/api/auth.revoke",
-    "scopes":           ["chat:write", "channels:read"],
-    "scopeSeparator":   " ",
-    "pkce":             true,
-    "extraAuthParams":  { "user_scope": "identity.basic" }
+    "tokenUrl": "https://slack.com/api/oauth.v2.access",
+    "refreshUrl": "https://slack.com/api/oauth.v2.access",
+    "revokeUrl": "https://slack.com/api/auth.revoke",
+    "scopes": ["chat:write", "channels:read"],
+    "scopeSeparator": " ",
+    "pkce": true,
+    "extraAuthParams": { "user_scope": "identity.basic" }
   },
   "hooks": {
     "test": "./hooks/test.ts",
@@ -107,8 +120,8 @@ Every Auth manifest, regardless of `type`, starts with:
   "type": "apiKey",
   "displayName": "API Key",
   "apiKey": {
-    "in":     "header",
-    "name":   "Authorization",
+    "in": "header",
+    "name": "Authorization",
     "prefix": "Bearer "
   },
   "fields": [
@@ -152,18 +165,41 @@ Every Auth manifest, regardless of `type`, starts with:
 }
 ```
 
-`tenantAuth` is defined by **provenance, not shape**: the credential is sourced
-from the **tenant**, not entered by the user. There is no connect flow and no
-user-collected `fields`. The host mints a live, per-subject credential from a
-per-tenant "app link" (keyed by the acting principal's subject) and hands it to
-this method's `sign` hook exactly like a `bearer` credential.
+`tenantAuth` is defined by **provenance, not shape**: the credential is sourced from the **tenant**,
+not entered by the user. There is no connect flow and no user-collected `fields`. The host mints a
+live, per-subject credential from a per-tenant "app link" (keyed by the acting principal's subject)
+and hands it to this method's `sign` hook exactly like a `bearer` credential.
 
-This is a platform-agnostic primitive: any partner that embeds w6w as a tenant
-can expose its own API to its users' workflows with **zero per-user setup**. The
-App only *declares* it uses tenant auth; the link config and secrets live host-
-side and never ship in the app package. `tenantAuth.link` names the app link
-(defaults to the App id); `tenantAuth.resourcePrefix` is an optional convention
-the App uses to recognize/round-trip the partner's resource identifiers.
+This is a platform-agnostic primitive: any partner that embeds w6w as a tenant can expose its own
+API to its users' workflows with **zero per-user setup**. The App only _declares_ it uses tenant
+auth; the link config and secrets live host- side and never ship in the app package.
+`tenantAuth.link` names the app link (defaults to the App id); `tenantAuth.resourcePrefix` is an
+optional convention the App uses to recognize/round-trip the partner's resource identifiers.
+
+### JIT (session token)
+
+```json
+{
+  "manifestVersion": "1",
+  "type": "jit",
+  "displayName": "Session (JIT)",
+  "jit": { "resourcePrefix": "urn:acme:" }
+}
+```
+
+`jit` is the **zero-config sibling of `tenantAuth`**, also defined by provenance: no connect flow,
+no user `fields`. The difference is _where the credential comes from_ — instead of the host minting
+a token from a per-tenant app link, the credential **is the caller's own inbound token** (the JWT
+the tenant minted to authenticate the request), forwarded to this method's `sign` hook exactly like
+a `bearer` credential. A `jit` Connection stores only a `{ via: "jit" }` reference; the token is
+supplied fresh per request and never persisted.
+
+Use it when the App's API accepts the **same token the caller already presents** (the audiences
+overlap) — no app link, no token endpoint, nothing per-tenant to configure. Because it forwards the
+inbound request token, it is **unavailable to background/scheduled runs** (which carry none) and the
+host fails the call closed. When the App's API needs a _different_ audience, use `tenantAuth` with a
+token-exchange link (RFC 8693) instead. `jit.resourcePrefix` is the same editor-only convention as
+`tenantAuth.resourcePrefix`.
 
 ### Custom
 
@@ -173,7 +209,7 @@ the App uses to recognize/round-trip the partner's resource identifiers.
   "type": "custom",
   "displayName": "HMAC Authentication",
   "fields": [
-    { "key": "accountId",  "label": "Account ID",  "type": "string", "required": true },
+    { "key": "accountId", "label": "Account ID", "type": "string", "required": true },
     { "key": "privateKey", "label": "Private Key", "type": "secret", "required": true },
     {
       "key": "region",
@@ -183,38 +219,42 @@ the App uses to recognize/round-trip the partner's resource identifiers.
     }
   ],
   "hooks": {
-    "preflight":    "./hooks/preflight.ts",
-    "exchange":     "./hooks/exchange.ts",
-    "test":         "./hooks/test.ts",
+    "preflight": "./hooks/preflight.ts",
+    "exchange": "./hooks/exchange.ts",
+    "test": "./hooks/test.ts",
     "afterConnect": "./hooks/after-connect.ts",
-    "sign":         "./hooks/sign-request.ts",
-    "refresh":      "./hooks/refresh.ts",
-    "revoke":       "./hooks/revoke.ts"
+    "sign": "./hooks/sign-request.ts",
+    "refresh": "./hooks/refresh.ts",
+    "revoke": "./hooks/revoke.ts"
   }
 }
 ```
 
 ## Lifecycle
 
-Every auth flow passes through the same phases. Each phase has an optional hook (except `test`, which is required).
+Every auth flow passes through the same phases. Each phase has an optional hook (except `test`,
+which is required).
 
-| Hook | Phase | Runs | Purpose |
-|---|---|---|---|
-| `preflight` | connect | Before the user is prompted | Any setup needed before the flow starts (e.g. fetch a one-time request token). |
-| `exchange` | connect | After the user completes the flow | Exchange an auth code or raw form input for a stored credential. Returns the opaque credential blob. |
-| `test` | connect + periodic | After `exchange`, and on schedule | **Required.** Validates the credential is live. Failure surfaces as a broken connection. |
-| `afterConnect` | connect | After `test` | Fetch display data (user name, team, region) for `connectionLabel` variables. |
-| `sign` | runtime | On every outbound request | Inject auth headers, sign the request, add query params. Receives the opaque credential; actions never see it. |
-| `refresh` | runtime | When the credential expires or is rejected | Refresh OAuth token (or equivalent) and retry. Returns updated credential blob. |
-| `revoke` | disconnect | When the user disconnects | Revoke the credential server-side, clean up any remote state. |
+| Hook           | Phase              | Runs                                       | Purpose                                                                                                        |
+| -------------- | ------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `preflight`    | connect            | Before the user is prompted                | Any setup needed before the flow starts (e.g. fetch a one-time request token).                                 |
+| `exchange`     | connect            | After the user completes the flow          | Exchange an auth code or raw form input for a stored credential. Returns the opaque credential blob.           |
+| `test`         | connect + periodic | After `exchange`, and on schedule          | **Required.** Validates the credential is live. Failure surfaces as a broken connection.                       |
+| `afterConnect` | connect            | After `test`                               | Fetch display data (user name, team, region) for `connectionLabel` variables.                                  |
+| `sign`         | runtime            | On every outbound request                  | Inject auth headers, sign the request, add query params. Receives the opaque credential; actions never see it. |
+| `refresh`      | runtime            | When the credential expires or is rejected | Refresh OAuth token (or equivalent) and retry. Returns updated credential blob.                                |
+| `revoke`       | disconnect         | When the user disconnects                  | Revoke the credential server-side, clean up any remote state.                                                  |
 
 ### Why hooks at every phase
 
 Real-world auth rarely fits the textbook flow:
 
-- **Before** — some APIs require fetching a request token, CSRF token, or tenant discovery URL before authorization.
-- **During** — signing (HMAC, AWS SigV4, JWT assertion) happens per request, not once at connect time.
-- **After** — a lot of providers need a "who am I?" call to derive the connection label or discover the account's region/tenant.
+- **Before** — some APIs require fetching a request token, CSRF token, or tenant discovery URL
+  before authorization.
+- **During** — signing (HMAC, AWS SigV4, JWT assertion) happens per request, not once at connect
+  time.
+- **After** — a lot of providers need a "who am I?" call to derive the connection label or discover
+  the account's region/tenant.
 
 Hooks make these first-class instead of workarounds.
 
@@ -222,44 +262,48 @@ Hooks make these first-class instead of workarounds.
 
 ### Top-level
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `manifestVersion` | string | ✅ | Core spec version this file targets. |
-| `type` | enum | ✅ | `"oauth2"` \| `"apiKey"` \| `"basic"` \| `"bearer"` \| `"custom"` \| `"tenantAuth"`. |
-| `displayName` | string | ✅ | Human-facing name shown on the connect button. |
-| `description` | string | ⬜ | Short explanation for the connect screen. |
-| `connectionLabel` | string (template) | ⬜ | Template rendered with variables set by `afterConnect` to label saved connections. |
-| `fields` | [Param](./param.md)[] | ⬜ | Inputs collected from the user at connect time. |
-| `hooks` | object | ⬜ | Lifecycle hooks (see Lifecycle table). `test` is required within this block. |
+| Field             | Type                  | Required | Description                                                                                     |
+| ----------------- | --------------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `manifestVersion` | string                | ✅       | Core spec version this file targets.                                                            |
+| `type`            | enum                  | ✅       | `"oauth2"` \| `"apiKey"` \| `"basic"` \| `"bearer"` \| `"custom"` \| `"tenantAuth"` \| `"jit"`. |
+| `displayName`     | string                | ✅       | Human-facing name shown on the connect button.                                                  |
+| `description`     | string                | ⬜       | Short explanation for the connect screen.                                                       |
+| `connectionLabel` | string (template)     | ⬜       | Template rendered with variables set by `afterConnect` to label saved connections.              |
+| `fields`          | [Param](./param.md)[] | ⬜       | Inputs collected from the user at connect time.                                                 |
+| `hooks`           | object                | ⬜       | Lifecycle hooks (see Lifecycle table). `test` is required within this block.                    |
 
 ### `oauth2`
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `authorizationUrl` | URL | ✅ | Authorization endpoint. |
-| `tokenUrl` | URL | ✅ | Token exchange endpoint. |
-| `refreshUrl` | URL | ⬜ | Refresh endpoint (defaults to `tokenUrl` if omitted). |
-| `revokeUrl` | URL | ⬜ | Revocation endpoint used on disconnect. |
-| `scopes` | string[] | ⬜ | Default scopes requested. |
-| `scopeSeparator` | string | ⬜ | Separator used when joining scopes. Defaults to `" "`. |
-| `pkce` | boolean | ⬜ | Enable PKCE. Defaults to `true`. |
-| `extraAuthParams` | object | ⬜ | Extra query params appended to the authorization URL. |
+| Field              | Type     | Required | Description                                            |
+| ------------------ | -------- | -------- | ------------------------------------------------------ |
+| `authorizationUrl` | URL      | ✅       | Authorization endpoint.                                |
+| `tokenUrl`         | URL      | ✅       | Token exchange endpoint.                               |
+| `refreshUrl`       | URL      | ⬜       | Refresh endpoint (defaults to `tokenUrl` if omitted).  |
+| `revokeUrl`        | URL      | ⬜       | Revocation endpoint used on disconnect.                |
+| `scopes`           | string[] | ⬜       | Default scopes requested.                              |
+| `scopeSeparator`   | string   | ⬜       | Separator used when joining scopes. Defaults to `" "`. |
+| `pkce`             | boolean  | ⬜       | Enable PKCE. Defaults to `true`.                       |
+| `extraAuthParams`  | object   | ⬜       | Extra query params appended to the authorization URL.  |
 
 ### `apiKey`
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `in` | enum | ✅ | `"header"` \| `"query"` \| `"body"`. |
-| `name` | string | ✅ | Header / param / body-key name. |
-| `prefix` | string | ⬜ | Prefix prepended to the value (e.g., `"Bearer "`). |
+| Field    | Type   | Required | Description                                        |
+| -------- | ------ | -------- | -------------------------------------------------- |
+| `in`     | enum   | ✅       | `"header"` \| `"query"` \| `"body"`.               |
+| `name`   | string | ✅       | Header / param / body-key name.                    |
+| `prefix` | string | ⬜       | Prefix prepended to the value (e.g., `"Bearer "`). |
 
 ## Hook runtime
 
-All hooks named here — `preflight`, `exchange`, `test`, `afterConnect`, `sign`, `refresh`, `revoke` — execute under the [Hook Runtime RFC](./hook-runtime.md). Their input/output shapes, the ambient `HookContext`, the credential-isolation invariant that makes `sign` the only network-less hook with the credential, the error shape, the default 30 s timeout, and the sandbox posture are all defined there. The per-hook signatures appear in the [Hook registry](./hook-runtime.md#hook-registry).
+All hooks named here — `preflight`, `exchange`, `test`, `afterConnect`, `sign`, `refresh`, `revoke`
+— execute under the [Hook Runtime RFC](./hook-runtime.md). Their input/output shapes, the ambient
+`HookContext`, the credential-isolation invariant that makes `sign` the only network-less hook with
+the credential, the error shape, the default 30 s timeout, and the sandbox posture are all defined
+there. The per-hook signatures appear in the [Hook registry](./hook-runtime.md#hook-registry).
 
 ## Resolved questions
 
-| Question | Resolution |
-|---|---|
-| Hook runtime contract | Covered by the [Hook Runtime RFC](./hook-runtime.md). |
-| `test` cadence | **Host's choice.** The spec defines `test`'s contract (input, output, semantics). When and how often it runs to validate stored Connections is a host policy — informed by `Connection.expiresAt` and observed failures, not prescribed by this RFC. |
+| Question              | Resolution                                                                                                                                                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hook runtime contract | Covered by the [Hook Runtime RFC](./hook-runtime.md).                                                                                                                                                                                                |
+| `test` cadence        | **Host's choice.** The spec defines `test`'s contract (input, output, semantics). When and how often it runs to validate stored Connections is a host policy — informed by `Connection.expiresAt` and observed failures, not prescribed by this RFC. |

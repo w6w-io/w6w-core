@@ -5,7 +5,14 @@
 import type { Param } from "./param.ts";
 import type { AfterConnectHook, ExchangeHook, Hook, RefreshHook, SignHook } from "./hooks.ts";
 
-export type AuthType = "oauth2" | "apiKey" | "basic" | "bearer" | "custom" | "tenantAuth";
+export type AuthType =
+  | "oauth2"
+  | "apiKey"
+  | "basic"
+  | "bearer"
+  | "custom"
+  | "tenantAuth"
+  | "jit";
 
 export interface OAuth2Config {
   authorizationUrl: string;
@@ -54,6 +61,31 @@ export interface TenantAuthConfig {
 }
 
 /**
+ * `jit` (just-in-time) — like {@link TenantAuthConfig | tenantAuth}, a
+ * host-sourced credential with no connect flow and no user `fields`. The
+ * difference is provenance: instead of the host minting a token from a
+ * per-tenant app-link, the credential **is the caller's own inbound token**
+ * (the JWT the tenant minted to authenticate the request), forwarded to this
+ * method's `sign` hook exactly like a `bearer` credential.
+ *
+ * Use it when the App's API accepts the same token the caller already presents
+ * — the zero-config path: no `tenant_app_link`, no token endpoint. The token is
+ * supplied fresh per request and never stored (a `jit` Connection holds only a
+ * `{ via: "jit" }` reference). It is unavailable to background/scheduled runs,
+ * which carry no inbound token.
+ *
+ * When the App's API needs a *different* audience than the caller's token, use
+ * `tenantAuth` with `subject_mode = token_exchange` (RFC 8693) instead.
+ */
+export interface JitConfig {
+  /**
+   * Optional resource-naming prefix (e.g. `"urn:partner:"`), the same
+   * editor-only convention as {@link TenantAuthConfig.resourcePrefix}.
+   */
+  resourcePrefix?: string;
+}
+
+/**
  * An Auth method's serializable configuration — its metadata minus the hook
  * functions. This is what `describe()` returns. It is the `AuthDefinition` with
  * its hooks stripped.
@@ -75,6 +107,7 @@ export interface Auth {
   oauth2?: OAuth2Config;
   apiKey?: ApiKeyConfig;
   tenantAuth?: TenantAuthConfig;
+  jit?: JitConfig;
 }
 
 /**
