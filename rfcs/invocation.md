@@ -109,3 +109,53 @@ Invocations are not implicitly idempotent. If an Action's manifest declares `ide
 | Connectionless actions | Resolved in the Action RFC: optional `requiresAuth: false` on the Action manifest opts a single Action out of needing a Connection even when the App declares Auth. `connection` here remains optional. |
 | App version pinning | **Rely on `context.runId`.** The Run record pins the App version; the envelope itself does not carry `app@version`. Avoids two sources of truth on replay. |
 | Caller identity | **Derived from transport.** No `principal` in the envelope. Audit is the host's responsibility through its API gateway / RPC layer. |
+
+## Amendment — 2026-07-23: the `ctx.invokeCallable` seam (F-3)
+
+> This section is **additive** and does **not** change the frozen Invocation envelope, resolution
+> sequence, or error phases above — an Invocation still calls exactly one Action. It records a new,
+> sibling **host capability** used by the [`@w6w/call`](./node-types.md#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+> node, alongside `ctx.invoke` (call an Action) and `ctx.invokeFunction` (call a Function).
+
+`ctx.invokeCallable` is the host seam for invoking a **`Callable`** — a reference to either a
+[Function](./function.md) or a [Workflow](./workflow.md) (the
+[Endpoint RFC · Callable](./endpoint.md#callable) union). It lives on
+[`WorkflowContext`](./workflow.md#host-contract--workflowcontext) next to `invoke` / `invokeFunction`,
+so the engine asks the host to run a sub-run rather than loading a Function or Workflow itself.
+
+```ts
+ctx.invokeCallable(req: {
+  target: Callable;              // { kind:"function"; function } | { kind:"workflow"; workflow }
+  input?: Record<string, unknown>;
+  wait: boolean;                 // per-node (HITL-5), independent of target.kind
+  stepId: string;
+}): Promise<
+  | { kind: "output"; output: unknown }   // wait: true  — the sub-run's completed output
+  | { kind: "handle"; runId: string }      // wait: false — a run handle to poll
+>;
+```
+
+- **Target resolution — same project only (HITL-D).** The host resolves `target` to a Function or a
+  Workflow **within the same project** as the calling workflow. A cross-project target is rejected in
+  resolution (a `resolution`-phase error, per the table above); there is no cross-project sub-run in
+  v0.
+- **Return.** With `wait: true` the host awaits the sub-run — a Function invoke (via
+  `invokeFunction`) **or** a Workflow run (via `enqueueRun`) — to completion and returns its `output`,
+  which the `@w6w/call` node exposes as its step output. With `wait: false` the host returns a run
+  handle `{ runId }` immediately and does not await. The `wait` choice is **per node** and
+  independent of whether `target` is a Function or a Workflow (see the
+  [Endpoint RFC — per-node wait/no-wait](./endpoint.md#amendment--2026-07-23-per-node-waitno-wait-f-3)).
+- **Reuses existing choke points.** `invokeCallable` funnels into the same `invokeFunction` /
+  `enqueueRun` paths that back the Endpoint dispatch table — no parallel credential, source, or
+  sandbox path. The engine never sees credentials, source refs, or the sandbox, exactly as with
+  `ctx.invoke`.
+
+### Open/closed seam
+
+`ctx.invokeCallable` sits on the same open/closed boundary as `ctx.invoke` (STRATEGY §5.1). The
+**contract** — the `@w6w/call` node kind and the `ctx.invokeCallable` capability signature — is
+declared in the open `@w6w/workflow-types` and surfaced by `@w6w/ui`; the **implementation** (project
+scoping, entitlement, sub-run scheduling, awaiting, metering) is provided by the **closed server
+host**. No capability implementation crosses the seam: the engine holds only the interface and asks
+`ctx`, so the OSS engine stays host-free while the private host owns how a Callable actually runs —
+the identical split already used for `ctx.invoke` and `ctx.invokeFunction`.
