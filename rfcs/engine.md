@@ -188,6 +188,41 @@ Exactly one of `duration` / `until` MUST be provided.
 
 **Semantics:** the engine calls `context.schedule({ afterMs, resumeToken })` (or `{ at, resumeToken }` for `until`), then returns a `RunResult` with `status: "queued"` and a `suspendedAt` marker. The host later invokes `engine.resume({ runId, resumeToken, context })` when the schedule fires. **`wait` requires the host to implement `context.schedule`**; engines running under a host without it MUST fail at plan time with `unsupported_wait`.
 
+### `@w6w/control` · `aggregate`
+
+> **Additive (2026-07-23).** A fan-in join that pairs with node input cardinality
+> (`Step.ports.in > 1`, see [Node Types RFC](./node-types.md#ports--cardinality)). It extends the
+> canonical set with a **join** semantic; it introduces no new host primitive — the "wait for all"
+> is the engine's existing topological ordering, not a new suspension point.
+
+Waits for **all** inbound edges to arrive, then combines their source outputs into one value.
+
+**Params:**
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `mode` | enum | ✅ | `"array"` (ordered collection of inbound outputs) or `"object"` (shallow-merge, later edges win). |
+
+**Semantics:** an `aggregate` node sits on a node that declares `ports.in > 1`, so several upstream
+branches point at it. The engine's planning already topologically orders the graph: a node does not
+run until **every** node with an edge into it has reached a terminal status. `aggregate` relies on
+that existing **join** — it needs no `context.schedule` / suspension. When the engine reaches the
+node, all of its inbound edges' source steps have already run, so their outputs are present in the
+run scope at `steps.<sourceId>.output`. The engine reads those source outputs, in the workflow's
+declared inbound-edge order, and produces:
+
+- `mode: "array"` → `{ result: [<source output>, …] }` — an ordered array, one entry per inbound edge.
+- `mode: "object"` → `{ result: { …shallow-merged } }` — the inbound source outputs shallow-merged
+  into one object; on key collision the **later** edge (in declared order) wins.
+
+Inbound edges whose source was **skipped** (e.g. the unmatched branch of an `if`) contribute no entry.
+
+**Output:** `{ result: unknown[] | Record<string, unknown> }` — recorded on the step's
+`StepExecution.output` and referenceable downstream as `steps.<aggregateStepId>.output.result`.
+
+**Failure modes:** none intrinsic. `first` / `last` / custom-expression modes are out of scope for
+v1; an unknown `mode` raises `param_invalid`.
+
 ## Conformance
 
 A host + engine pair conform to this RFC when the following invariants hold:
