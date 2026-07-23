@@ -312,6 +312,65 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 | `type` | string | ✅ | `"string"` \| `"number"` \| `"boolean"` \| `"object"` \| `"array"`. |
 | `label` | string | ✅ | Human-facing name shown in the field mapper. |
 
+## Amendment — 2026-07-23: node cardinality + the `aggregate` control
+
+> This section is **additive** to the Final action shape above; it introduces no breaking change to
+> existing actions. It records the flow-control aggregator's semantics and its interaction with node
+> input/output cardinality.
+
+### Node cardinality (note)
+
+Actions are unaffected by how many edges reach the node that uses them. **Node input/output
+cardinality** is a property of the workflow **`Step`**, not of the action — an optional
+`Step.ports?: { in?: number; out?: number }` (omitted ⇒ `{ in: 1, out: 1 }`). See the
+[Node Types RFC — Ports & cardinality](./node-types.md#ports--cardinality). A `perform`/`read`/`search`
+action still receives exactly one resolved `with` input; the aggregator below is the one control that
+reads across **multiple** inbound edges.
+
+### `@w6w/control` · `aggregate`
+
+A **fan-in** control action that waits for every inbound edge to arrive, then combines each inbound
+edge's source-node output into a single value. It is declared like any other control action — engine
+interprets it, `execute` is omitted — and is used on a node that declares `ports.in > 1` (multiple
+incoming edges).
+
+```json
+{
+  "manifestVersion": "1",
+  "key": "aggregate",
+  "type": "control",
+  "title": "Aggregate",
+  "description": "Wait for all inbound edges, then collect their outputs as an array or a merged object.",
+  "params": [
+    {
+      "key": "mode",
+      "label": "Combine as",
+      "type": "select",
+      "required": true,
+      "default": "array",
+      "options": [
+        { "label": "Array (ordered collection)", "value": "array" },
+        { "label": "Object (shallow merge)", "value": "object" }
+      ]
+    }
+  ],
+  "output": [
+    { "key": "result", "type": "array", "label": "Aggregated result" }
+  ]
+}
+```
+
+- `mode: "array"` — the output is an **ordered collection** of each inbound edge's source output,
+  ordered by the workflow's declared edge order into this node.
+- `mode: "object"` — the output is a **shallow merge** of the inbound source outputs into one object;
+  on key collision, **later edges win** (in declared edge order).
+- The set of values combined is exactly the outputs of the nodes on the other end of this node's
+  inbound edges — read from the run scope (`steps.<sourceId>.output`), not re-invoked.
+- `first` / `last` / custom-expression modes are **out of scope** for v1 (HITL-4).
+
+The engine's "wait for all inbound edges, then aggregate" traversal is pinned in the
+[Engine RFC — `@w6w/control` · `aggregate`](./engine.md#w6wcontrol--aggregate).
+
 ## Resolved questions
 
 | Question | Resolution |

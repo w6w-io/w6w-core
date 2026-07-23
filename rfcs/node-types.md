@@ -143,6 +143,46 @@ added to the wire model — the kind is _computed_, keeping `manifestVersion: "2
 | ------ | ----------------------------------------- | ------------ | ------------------------------------------------ |
 | `kind` | `"app"｜"control"｜"internal"｜"trigger"` | ✅ (derived) | Computed from `uses.app`; selects the processor. |
 
+## Ports & cardinality
+
+By default a node has **one** input port and **one** output port: it accepts a single incoming edge
+and exposes a single outgoing port. A node MAY declare a different **cardinality** through an
+**optional** `ports` object on its `Step`:
+
+```json
+{
+  "id": "join",
+  "uses": { "app": "@w6w/control", "action": "aggregate" },
+  "ports": { "in": 3, "out": 1 },
+  "with": { "mode": "array" }
+}
+```
+
+### Field reference (stored)
+
+| Field       | Type     | Required | Description                                                            |
+| ----------- | -------- | -------- | --------------------------------------------------------------------- |
+| `ports`     | object   | ⬜       | Declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`.             |
+| `ports.in`  | number   | ⬜       | Max incoming edges this node accepts. Defaults to `1`. `> 1` opts the node into accepting **multiple** inbound edges. |
+| `ports.out` | number   | ⬜       | Number of outgoing ports this node exposes. Defaults to `1`.          |
+
+Semantics:
+
+- **Omitted ⇒ `{ in: 1, out: 1 }`.** The default reproduces today's single-in / single-out step
+  exactly, so `ports` is purely opt-in.
+- `in > 1` declares a **fan-in** node — one that accepts more than one incoming edge (e.g. a
+  flow-control aggregator that joins several upstream branches; see [`@w6w/control` · `aggregate`](./action.md#w6wcontrol--aggregate)).
+- `out` defaults to `1`; a node exposes one outgoing port unless it declares otherwise. (Branching
+  controls like `if`/`foreach`/`parallel` route through their sub-block semantics rather than raw
+  out-ports; `out` describes the node's static port count, not its dynamic fan-out.)
+- Authoring tools render the declared number of ports on the node — one input handle when `in: 1`, a
+  multi-input handle when `in > 1`, and likewise for outputs.
+
+**Additive & backward-compatible.** `ports` is a new **optional** field; workflow definitions are
+JSON, so existing `manifestVersion: "2"` workflows — every one of which is implicitly single-in /
+single-out — remain valid and unchanged with **no migration**. A host that does not understand
+`ports` reads a step as `{ in: 1, out: 1 }`, which is exactly the pre-existing behavior.
+
 ## Triggers as nodes
 
 Every workflow **must** have a trigger. A workflow with no declared `trigger` is treated as
