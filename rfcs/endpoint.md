@@ -281,12 +281,52 @@ A host that implements Endpoints MUST:
    baked here.
 2. **Uniform envelope.** Should Function invokes be optionally async (returning a `runId`), and/or
    Workflows optionally awaited to completion (returning an inline `output`), to give Endpoints one
-   uniform result contract? v0 keeps the honest sync/async split keyed on `target.kind`.
+   uniform result contract? The **top-level Endpoint invoke** (`POST /endpoints/:id/invoke`) keeps
+   the honest sync/async split keyed on `target.kind`. The **await-a-Workflow-to-completion** half of
+   this question is now **resolved for the in-graph caller**: a `@w6w/call` node can await a Workflow
+   (or a Function) sub-run and inject its `output` synchronously via the per-node `wait` flag — see
+   [Amendment — per-node wait/no-wait](#amendment--2026-07-23-per-node-waitno-wait-f-3). Making the
+   top-level Endpoint envelope itself uniform remains deferred.
 3. **Callable nesting.** Should a Callable ever target another Endpoint (chained indirection) rather
    than only a Function or a Workflow? v0 says no — one hop, to a Function or a Workflow.
 4. **Endpoint observability.** Rely on the underlying Action metering (function target) and
    [Run](./workflow.md#run-state) record (workflow target), or add a dedicated `endpoint_runs` record
    for Endpoint-level history? v0 relies on the existing records.
+
+## Amendment — 2026-07-23: per-node wait/no-wait (F-3)
+
+> This section is **additive**. It does **not** change the top-level `POST /endpoints/:id/invoke`
+> dispatch table above (which keeps its honest sync/async split). It defines a second, in-graph way to
+> reach a Callable — the [`@w6w/call`](./node-types.md#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+> host node — and resolves the **await-a-Workflow-to-completion** half of [Open-Q#2](#open-questions).
+
+A Callable (a Function **or** a Workflow) can be invoked two ways:
+
+1. **As a top-level Endpoint** — `POST /endpoints/:id/invoke`, dispatched on `target.kind`: a Function
+   answers synchronously with `{ kind:"function", output }`, a Workflow answers with a run handle
+   `{ kind:"workflow", runId }`. **Unchanged by this amendment.**
+2. **As a step inside a parent workflow** — a `@w6w/call` node routed to the host capability
+   [`ctx.invokeCallable`](./invocation.md#amendment--2026-07-23-the-ctxinvokecallable-seam-f-3). Here
+   the caller chooses the model **per node** with a `wait: boolean` flag, **independent** of whether
+   the target is a Function or a Workflow (HITL-5):
+
+| `wait` | Behavior | Result injected into the parent graph |
+|---|---|---|
+| `true` | **Block** until the sub-run (Function **or** Workflow) completes. | The sub-run's `output`, merged under `steps.<nodeId>.output` — the **synchronous-await-subrun** semantic. |
+| `false` | **Do not block** — return a run handle immediately and continue. | A run handle `{ runId }`; the caller polls `GET /runs/:id` for the terminal result. |
+
+**Resolution of Open-Q#2 (partial).** Open-Q#2 asked whether a Workflow could be *awaited to
+completion so it returns an inline `output`*. For the **in-graph caller** this RFC now **resolves it:
+yes** — `wait: true` on a `@w6w/call` node awaits the sub-run (Function or Workflow alike) and injects
+its `output` into the parent graph synchronously, so a parent step can read
+`{ "$": "steps.<callNodeId>.output.…" }`. `wait: false` preserves the fire-and-continue run-handle
+model. This makes `wait`/`no-wait` a per-node choice orthogonal to `target.kind`. The **top-level
+Endpoint invoke envelope** is *not* changed — making it uniform stays deferred (see
+[Open-Q#2](#open-questions)).
+
+Because the in-graph caller reuses the same `invokeFunction` / `enqueueRun` paths as the Endpoint
+dispatch table, no new engine, credential, source, or sandbox path is introduced — the wait vs
+no-wait choice is a host concern owned by `ctx.invokeCallable`, not the engine.
 
 ## Status ladder
 

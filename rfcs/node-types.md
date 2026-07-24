@@ -143,6 +143,46 @@ added to the wire model — the kind is _computed_, keeping `manifestVersion: "2
 | ------ | ----------------------------------------- | ------------ | ------------------------------------------------ |
 | `kind` | `"app"｜"control"｜"internal"｜"trigger"` | ✅ (derived) | Computed from `uses.app`; selects the processor. |
 
+## Ports & cardinality
+
+By default a node has **one** input port and **one** output port: it accepts a single incoming edge
+and exposes a single outgoing port. A node MAY declare a different **cardinality** through an
+**optional** `ports` object on its `Step`:
+
+```json
+{
+  "id": "join",
+  "uses": { "app": "@w6w/control", "action": "aggregate" },
+  "ports": { "in": 3, "out": 1 },
+  "with": { "mode": "array" }
+}
+```
+
+### Field reference (stored)
+
+| Field       | Type     | Required | Description                                                            |
+| ----------- | -------- | -------- | --------------------------------------------------------------------- |
+| `ports`     | object   | ⬜       | Declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`.             |
+| `ports.in`  | number   | ⬜       | Max incoming edges this node accepts. Defaults to `1`. `> 1` opts the node into accepting **multiple** inbound edges. |
+| `ports.out` | number   | ⬜       | Number of outgoing ports this node exposes. Defaults to `1`.          |
+
+Semantics:
+
+- **Omitted ⇒ `{ in: 1, out: 1 }`.** The default reproduces today's single-in / single-out step
+  exactly, so `ports` is purely opt-in.
+- `in > 1` declares a **fan-in** node — one that accepts more than one incoming edge (e.g. a
+  flow-control aggregator that joins several upstream branches; see [`@w6w/control` · `aggregate`](./action.md#w6wcontrol--aggregate)).
+- `out` defaults to `1`; a node exposes one outgoing port unless it declares otherwise. (Branching
+  controls like `if`/`foreach`/`parallel` route through their sub-block semantics rather than raw
+  out-ports; `out` describes the node's static port count, not its dynamic fan-out.)
+- Authoring tools render the declared number of ports on the node — one input handle when `in: 1`, a
+  multi-input handle when `in > 1`, and likewise for outputs.
+
+**Additive & backward-compatible.** `ports` is a new **optional** field; workflow definitions are
+JSON, so existing `manifestVersion: "2"` workflows — every one of which is implicitly single-in /
+single-out — remain valid and unchanged with **no migration**. A host that does not understand
+`ports` reads a step as `{ in: 1, out: 1 }`, which is exactly the pre-existing behavior.
+
 ## Triggers as nodes
 
 Every workflow **must** have a trigger. A workflow with no declared `trigger` is treated as
@@ -232,3 +272,68 @@ A host claiming this RFC MUST:
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for the current `manifestVersion`.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-07-23: the `@w6w/call` host node (F-3)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change. It reserves one more id in the `@w6w/*` namespace and routes it
+> through the existing single invoke seam. It is a self-contained addition alongside
+> [Ports & cardinality](#ports--cardinality) — the two amend independent parts of this RFC.
+
+`@w6w/call` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself to
+**invoke a `Callable`** — a reference to either a [Function](./function.md) or a
+[Workflow](./workflow.md) (see the [Endpoint RFC · Callable](./endpoint.md#callable)). It is the
+in-graph caller for one workflow calling another workflow, or a workflow calling a Function, as a
+single step. Like `@w6w/control`, `@w6w/script`, `@w6w/data`, and `@w6w/trigger`, it is a **host**
+node with host capabilities — **not** a sandboxed `packages/apps` app. No registered app id may begin
+with `@w6w/`, so `@w6w/call` can never collide with a catalog app.
+
+### Kind & routing
+
+`@w6w/call` slots into the existing tables as an **internal** kind that routes through the one invoke
+seam — there is no parallel code path:
+
+| Kind       | `uses.app`  | Executed by                       | Examples                    |
+| ---------- | ----------- | --------------------------------- | --------------------------- |
+| `internal` | `@w6w/call` | the **host's internal API**       | call a Function or Workflow |
+
+Routing is unchanged: `isInternalApp("@w6w/call")` is `true` (reserved `@w6w/` prefix), so
+`ctx.invoke` / `invokeAction` dispatches it to the host's internal processor rather than the
+registry. That processor routes the node to a **new host capability**,
+[`ctx.invokeCallable`](./invocation.md#amendment--2026-07-23-the-ctxinvokecallable-seam-f-3), exactly
+as an app action routes to `ctx.invoke` and a function-step routes to `ctx.invokeFunction`.
+
+### Reserved internal pseudo-app
+
+| Id          | Action(s) | Input (`with`)                                   | Output                                                             | Processor                       |
+| ----------- | --------- | ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------- |
+| `@w6w/call` | `call`    | `{ target: Callable, input?, wait: boolean }`    | `wait` ⇒ the sub-run output · `no-wait` ⇒ a run handle `{ runId }` | host (`ctx.invokeCallable`)      |
+
+- `target` is a **Callable** (`{ kind:"function"; function } | { kind:"workflow"; workflow }`),
+  resolved within the **same project** as the calling workflow (HITL-D). It is independent of `wait`.
+- `input` is the resolved payload passed to the target (the same shape a Function's `inputs` or a
+  Workflow run's start payload expects). Expression bindings (`{ "$": "steps.x.output.y" }`) resolve
+  against the run scope like any other node's `with`.
+- `wait: boolean` is a **per-node** choice (HITL-5), independent of whether `target` is a Function or
+  a Workflow:
+  - **`wait: true`** — block until the sub-run (Function **or** Workflow) completes, then merge its
+    output into the parent graph under `steps.<nodeId>.output`, readable by downstream
+    `{ "$": "steps.<id>.output.…" }` expressions. This is the new **synchronous-await-subrun**
+    semantic resolved in the [Endpoint RFC](./endpoint.md#amendment--2026-07-23-per-node-waitno-wait-f-3).
+  - **`wait: false`** — return a **run handle** (`{ runId }`) immediately and continue the parent
+    graph without blocking; the caller polls `GET /runs/:id` for progress and the terminal result.
+
+The host stays the boundary owner: the engine never loads a Function or Workflow, resolves a
+connection, or touches the sandbox — it asks `ctx.invokeCallable`. This mirrors how a normal step
+never sees credentials and asks `ctx.invoke`.
+
+### Conformance (additive)
+
+A host that implements `@w6w/call` MUST:
+
+- Classify a node whose `uses.app === "@w6w/call"` as an **internal** kind and route it through the
+  one invoke seam to `ctx.invokeCallable` — never by loading the target inside the engine.
+- Resolve `target` to a Callable in the **same project** as the calling workflow and reject a
+  cross-project target (HITL-D).
+- Honor the per-node `wait` flag: on `wait: true`, await the sub-run and expose its output as the
+  node's `output`; on `wait: false`, return `{ runId }` without awaiting.
