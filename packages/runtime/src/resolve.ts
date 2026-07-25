@@ -6,7 +6,7 @@
  * Dynamic `options.source`, `dependsOn` ordering, and `validation.hook` are a
  * later slice; this covers the path that needs no hook execution.
  */
-import type { Param, Validation } from "@w6w/types";
+import { isSection, type Param, type Validation } from "@w6w/types";
 import { W6WError } from "./errors.ts";
 
 function fail(message: string, details?: unknown): never {
@@ -50,6 +50,19 @@ export function resolveParams(
   const resolved: Record<string, unknown> = {};
 
   for (const param of params) {
+    // A `type: "section"` param is a layout-only container: its children's
+    // values live FLAT at this enclosing form level (they are NOT nested under
+    // the section's `key`), so resolve the children here and merge them in. The
+    // section itself contributes no value of its own. Sections can nest, so this
+    // recurses. This mirrors the UI's `flattenParams` (ParamsForm.tsx), which
+    // descends into `section.children` only. Note: `group` is deliberately NOT
+    // flattened — a group's children DO nest under the group's key and are
+    // copied whole below.
+    if (isSection(param)) {
+      Object.assign(resolved, resolveParams(param.children, supplied));
+      continue;
+    }
+
     const hasSupplied = Object.prototype.hasOwnProperty.call(supplied, param.key);
     const value = hasSupplied ? supplied[param.key] : param.default;
 
