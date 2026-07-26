@@ -19,6 +19,13 @@ const VALIDATORS: Record<Kind, (v: unknown) => ValidationResult> = {
   auth: validateAuth,
 };
 
+/**
+ * Yields each fixture's path **relative to the fixture root** (e.g.
+ * `valid/action/read.json`). It must be relative: `kindOf` classifies by
+ * directory segment, and an absolute path can pick the segment up from the
+ * checkout location instead of the fixture tree (the devcontainer mounts this
+ * repo at `/app`, which made every fixture look like an `app/` fixture).
+ */
 async function* walkJson(dir: URL): AsyncIterable<{ path: string; data: unknown }> {
   for await (const entry of Deno.readDir(dir)) {
     const child = new URL(entry.name + (entry.isDirectory ? "/" : ""), dir);
@@ -26,7 +33,7 @@ async function* walkJson(dir: URL): AsyncIterable<{ path: string; data: unknown 
       yield* walkJson(child);
     } else if (entry.name.endsWith(".json") && entry.name !== "_expected.json") {
       const data = JSON.parse(await Deno.readTextFile(child));
-      yield { path: child.pathname, data };
+      yield { path: child.pathname.slice(FIXTURES.pathname.length), data };
     }
   }
 }
@@ -52,15 +59,14 @@ Deno.test("conformance: every fixture in invalid/ fails with the expected rule",
 
   const seen = new Set<string>();
   for await (const { path, data } of walkJson(new URL("invalid/", FIXTURES))) {
-    const rel = path.slice(path.indexOf("/invalid/") + 1);
-    seen.add(rel);
-    const hint = expected[rel];
-    assert(hint !== undefined, `${rel}: add an entry to invalid/_expected.json`);
+    seen.add(path);
+    const hint = expected[path];
+    assert(hint !== undefined, `${path}: add an entry to invalid/_expected.json`);
 
     const r = VALIDATORS[kindOf(path)](data);
-    assertEquals(r.ok, false, `${rel} should fail but passed`);
+    assertEquals(r.ok, false, `${path} should fail but passed`);
     const hit = r.errors.some((e) => e.path.includes(hint));
-    assert(hit, `${rel}: no error path contained "${hint}"; got ${JSON.stringify(r.errors)}`);
+    assert(hit, `${path}: no error path contained "${hint}"; got ${JSON.stringify(r.errors)}`);
   }
 
   for (const key of Object.keys(expected)) {

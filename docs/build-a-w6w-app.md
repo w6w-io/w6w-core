@@ -239,7 +239,11 @@ keep their own top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
   in the action sandbox and throw. The action worker has `read` scoped to the app dir and nothing
   else.
 - ✅ **Declare every host** a hook calls in `w6w.network.allow`. Undeclared egress is blocked.
-  (OAuth endpoint hosts are allowed implicitly.)
+  (OAuth endpoint hosts are allowed implicitly.) Entries are exact hostnames; two wildcard forms
+  cover APIs addressed by a per-tenant host a manifest cannot enumerate — `"*.zendesk.com"` matches
+  any subdomain at any depth (**not** the apex), and `"*"` disables egress restriction entirely and
+  is only appropriate when the endpoint is a user-supplied URL (a self-hosted install). Prefer the
+  narrowest form that works.
 - ❌ **Never put credentials in an Action.** No `Authorization` headers in `execute`; let `sign`
   inject them. Actions cannot read the credential and must not try.
 - ✅ **`sign` is credential-only and network-less** — mutate `request` and return it; don't call

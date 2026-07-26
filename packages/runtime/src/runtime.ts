@@ -80,6 +80,33 @@ function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined
   return app.auths.find((a) => a.auth.key === connection.auth) ?? app.auths[0];
 }
 
+/**
+ * Does `host` satisfy one entry of `w6w.network.allow`?
+ *
+ * Exact hostnames are the norm. Two wildcard forms exist because a whole class
+ * of SaaS APIs is addressed by a *per-tenant* host that no manifest can
+ * enumerate ahead of time — `acme.zendesk.com`, `acme.myshopify.com`,
+ * `acme.my.salesforce.com`, or a self-hosted WordPress at an arbitrary domain:
+ *
+ *   - `"*.zendesk.com"` — any subdomain, at any depth, of `zendesk.com`. The
+ *     apex itself is NOT matched: it is a different host and should be listed
+ *     separately if the app really calls it.
+ *   - `"*"` — any host. This opts the app out of egress restriction entirely,
+ *     so it is only appropriate for apps whose endpoint is a user-supplied URL
+ *     (self-hosted installs). Hosts SHOULD surface it prominently at install.
+ *
+ * Matching is case-insensitive; hostnames from `URL` are already lowercased.
+ */
+export function hostAllowed(allowlist: readonly string[], host: string): boolean {
+  for (const entry of allowlist) {
+    if (entry === "*") return true;
+    const pattern = entry.toLowerCase();
+    if (pattern === host) return true;
+    if (pattern.startsWith("*.") && host.endsWith(pattern.slice(1))) return true;
+  }
+  return false;
+}
+
 /** Perform a request on the host: enforce the allowlist, then fetch. */
 async function hostFetch(allowlist: string[], req: SignableRequest): Promise<WireResponse> {
   let host: string;
@@ -92,7 +119,7 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
       `Hook produced an invalid URL: ${req.url}`,
     );
   }
-  if (!allowlist.includes(host)) {
+  if (!hostAllowed(allowlist, host)) {
     throw new W6WError(
       "egress_denied",
       "execute",
