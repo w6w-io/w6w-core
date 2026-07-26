@@ -7,16 +7,17 @@
  * same walk against its own validator. See `tests/fixtures/README.md`.
  */
 import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
-import { validateAction, validateApp, validateAuth } from "../mod.ts";
+import { validateAction, validateApp, validateAuth, validateHealthCheck } from "../mod.ts";
 import type { ValidationResult } from "../mod.ts";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url);
 
-type Kind = "app" | "action" | "auth";
+type Kind = "app" | "action" | "auth" | "health";
 const VALIDATORS: Record<Kind, (v: unknown) => ValidationResult> = {
   app: validateApp,
   action: validateAction,
   auth: validateAuth,
+  health: validateHealthCheck,
 };
 
 /**
@@ -42,7 +43,8 @@ function kindOf(path: string): Kind {
   if (path.includes("/app/")) return "app";
   if (path.includes("/action/")) return "action";
   if (path.includes("/auth/")) return "auth";
-  throw new Error(`fixture not under app/action/auth: ${path}`);
+  if (path.includes("/health/")) return "health";
+  throw new Error(`fixture not under app/action/auth/health: ${path}`);
 }
 
 Deno.test("conformance: every fixture in valid/ passes", async () => {

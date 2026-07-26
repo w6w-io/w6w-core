@@ -1,6 +1,6 @@
 # RFC: Health Check
 
-**Status:** Draft
+**Status:** Draft — reference implementation landed
 **Author:** Segev Shmueli
 **Date:** 2026-07-26
 
@@ -388,8 +388,24 @@ A host claiming support MUST:
    time any check that pairs its own `network.allow` with `credential: "signed"`.
 7. **Never worsen a verdict on an `informational` check.**
 
-Fixtures: `fixtures/apps/*/health/` and the conformance cases under
-`packages/validator/tests/fixtures/{valid,invalid}/health/`.
+Fixtures: [`fixtures/apps/sendgrid/health/`](../fixtures/apps/sendgrid/health/) declares one
+check of each credential posture plus an `unavailable`; the conformance cases live under
+[`packages/validator/tests/fixtures/{valid,invalid}/health/`](../packages/validator/tests/fixtures/).
+
+### Reference implementation
+
+| Piece | Where |
+|---|---|
+| Types (`HealthCheck`, `HealthReport`, postures, default resolution) | [`@w6w/types`](../packages/types/src/health.ts) |
+| Spec rules, incl. the unsigned-egress rule and the tagged-Action rule | [`@w6w/validator`](../packages/validator/src/validate.ts) |
+| Loading, `auth:*` derivation, per-check allowlist composition | [`runtime/src/loader.ts`](../packages/runtime/src/loader.ts) |
+| `checkHealth()`, posture enforcement, `rollUpHealth()` | [`runtime/src/health.ts`](../packages/runtime/src/health.ts) |
+| `describe()` exposure, sandbox selector | [`runtime/src/runtime.ts`](../packages/runtime/src/runtime.ts), [`sandbox/`](../packages/runtime/src/sandbox/) |
+
+The posture rules are enforced in two places on purpose. The validator rejects a `signed`
+check that widens its egress at author time; `healthAllowlist()` refuses to widen it at load
+time regardless. An app that skipped validation still cannot leak a credential to a host
+outside its own allowlist.
 
 ## Migration
 
@@ -397,8 +413,8 @@ Staged, and non-breaking at every step.
 
 | Step | Change | Breaks anything? |
 |---|---|---|
-| 1 | Add the types; derive `auth:*` checks from existing `Auth.test` hooks | No — every App gains a credential check for free |
-| 2 | Host replaces its arbitrary-Action probe with the derived checks | No — strictly more correct |
+| 1 | Add the types; derive `auth:*` checks from existing `Auth.test` hooks | No — every App gains a credential check for free. **Done** |
+| 2 | Host replaces its arbitrary-Action probe with the derived checks | No — strictly more correct. **Pending** — the reference host still probes an arbitrary Action |
 | 3 | Publishers add `kind: "service"` / `"quota"` checks where the vendor supports one | No — additive |
 | 4 | Validator warns when an App declares neither a check nor `unavailable` for `service` | Warning only |
 

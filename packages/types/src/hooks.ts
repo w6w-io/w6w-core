@@ -11,6 +11,7 @@ import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
 import type { RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
+import type { HealthReport } from "./health.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -112,6 +113,17 @@ export type SignHook = (
   input: { request: SignableRequest; credential: unknown },
   ctx: HookContext,
 ) => SignableRequest | Promise<SignableRequest>;
+
+/**
+ * Health `check` — a declared, side-effect-free probe. Takes no input: a health
+ * check that needed configuring would not be one a host could run unattended.
+ * What it may reach depends on the check's `credential` posture — a `none` or
+ * `context` check is never routed through `sign`.
+ */
+export type HealthCheckHook = (
+  input: Record<string, never>,
+  ctx: HookContext,
+) => HealthReport | Promise<HealthReport>;
 
 /** A generic hook signature; specific kinds narrow `input`/`output`. */
 export type Hook<I = unknown, O = unknown> = (input: I, ctx: HookContext) => O | Promise<O>;

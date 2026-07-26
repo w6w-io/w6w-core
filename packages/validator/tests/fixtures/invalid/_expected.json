@@ -5,5 +5,9 @@
   "invalid/app/bad-version.json": "version",
   "invalid/action/bad-type.json": "action.type",
   "invalid/auth/oauth2-missing-endpoints.json": "auth.oauth2",
-  "invalid/auth/apikey-missing-config.json": "auth.apiKey"
+  "invalid/auth/apikey-missing-config.json": "auth.apiKey",
+  "invalid/health/signed-widens-egress.json": "network.allow",
+  "invalid/health/reserved-key.json": "key",
+  "invalid/health/bad-kind.json": "kind",
+  "invalid/health/bad-covers.json": "covers"
 }

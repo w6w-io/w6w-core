@@ -36,6 +36,12 @@ const PARAM_TYPES = [
   "array",
 ];
 const ACTION_TYPES = ["read", "search", "perform"];
+const HEALTH_KINDS = ["service", "credential", "quota", "dependency"];
+const HEALTH_SCOPES = ["app", "connection"];
+const HEALTH_CREDENTIALS = ["none", "context", "signed"];
+const HEALTH_SEVERITIES = ["fatal", "degraded", "informational"];
+/** Selector prefixes a `covers` entry may use, besides the bare `*`. */
+const COVERS_PREFIXES = ["action", "resource", "auth", "component"];
 const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
 
 /**
@@ -189,6 +195,120 @@ function validateActionInto(ctx: Ctx, action: unknown, path: string): void {
   ctx.enum(action.type, ACTION_TYPES, `${path}.type`);
   ctx.reqString(action.title, `${path}.title`);
   checkParams(ctx, action.params, `${path}.params`);
+
+  // A tagged Action is projected into the health surface and invoked with `{}`,
+  // so it has to be safe to call unattended.
+  if (action.healthCheck !== undefined) {
+    if (!isObject(action.healthCheck)) {
+      ctx.err(`${path}.healthCheck`, "must be an object");
+      return;
+    }
+    if (action.type !== "read") {
+      ctx.err(`${path}.healthCheck`, "is only valid on a `read` action");
+    }
+    const params = Array.isArray(action.params) ? action.params : [];
+    for (const [i, p] of params.entries()) {
+      if (isObject(p) && p.required === true && p.default === undefined) {
+        ctx.err(
+          `${path}.params[${i}]`,
+          "is required with no default, so this action cannot be used as a health check",
+        );
+      }
+    }
+    validateHealthCheckInto(ctx, {
+      ...action.healthCheck,
+      key: (action.healthCheck as Record<string, unknown>).key ?? action.key,
+      title: (action.healthCheck as Record<string, unknown>).title ?? action.title,
+    }, `${path}.healthCheck`);
+  }
+}
+
+/**
+ * Validate a Health Check's config (the serializable part — no `check` hook).
+ * See rfcs/healthcheck.md.
+ */
+export function validateHealthCheck(check: unknown, path = "healthCheck"): ValidationResult {
+  const ctx = new Ctx();
+  validateHealthCheckInto(ctx, check, path);
+  return ctx.result();
+}
+
+function validateHealthCheckInto(ctx: Ctx, check: unknown, path: string): void {
+  if (!isObject(check)) {
+    ctx.err(path, "must be an object");
+    return;
+  }
+  const key = ctx.reqString(check.key, `${path}.key`);
+  // `auth:` is reserved for checks derived from an Auth method's `test` hook.
+  if (key !== undefined && key.startsWith("auth:")) {
+    ctx.err(`${path}.key`, "must not use the reserved `auth:` prefix (those are derived)");
+  } else {
+    ctx.match(key, RE_NAME, `${path}.key`, "be lowercase kebab-case");
+  }
+  ctx.reqString(check.title, `${path}.title`);
+  ctx.enum(check.kind, HEALTH_KINDS, `${path}.kind`);
+  if (check.scope !== undefined) ctx.enum(check.scope, HEALTH_SCOPES, `${path}.scope`);
+  if (check.credential !== undefined) {
+    ctx.enum(check.credential, HEALTH_CREDENTIALS, `${path}.credential`);
+  }
+  if (check.severity !== undefined) {
+    ctx.enum(check.severity, HEALTH_SEVERITIES, `${path}.severity`);
+  }
+
+  if (check.covers !== undefined) {
+    if (!Array.isArray(check.covers)) {
+      ctx.err(`${path}.covers`, "must be an array of selectors");
+    } else {
+      check.covers.forEach((c, i) => {
+        if (typeof c !== "string") {
+          ctx.err(`${path}.covers[${i}]`, "must be a string");
+        } else if (c !== "*" && !COVERS_PREFIXES.some((p) => c.startsWith(`${p}:`))) {
+          ctx.err(
+            `${path}.covers[${i}]`,
+            `must be "*" or one of: ${COVERS_PREFIXES.map((p) => `${p}:<id>`).join(", ")}`,
+          );
+        }
+      });
+    }
+  }
+
+  if (check.minIntervalSeconds !== undefined) {
+    const n = check.minIntervalSeconds;
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) {
+      ctx.err(`${path}.minIntervalSeconds`, "must be a non-negative number");
+    }
+  }
+
+  // A check either probes or declares that nothing to probe exists. Never both,
+  // never neither — `hasHook` is supplied by the loader, which can see the
+  // function; a config-only caller passes it explicitly.
+  const declaresUnavailable = check.unavailable !== undefined;
+  if (declaresUnavailable) {
+    if (!isObject(check.unavailable)) {
+      ctx.err(`${path}.unavailable`, "must be an object");
+    } else {
+      ctx.reqString(check.unavailable.reason, `${path}.unavailable.reason`);
+    }
+    if (check.check !== undefined) {
+      ctx.err(path, "declares both `unavailable` and a `check` hook — it must be exactly one");
+    }
+  }
+
+  const allow = isObject(check.network) ? check.network.allow : undefined;
+  if (allow !== undefined) {
+    if (!Array.isArray(allow) || allow.some((h) => typeof h !== "string")) {
+      ctx.err(`${path}.network.allow`, "must be an array of hostname strings");
+    }
+    // The security rule from the RFC: widening egress without forcing an
+    // unsigned posture would hand a third-party host the user's credential.
+    const posture = check.credential ?? (check.kind === "service" ? "none" : "signed");
+    if (posture === "signed") {
+      ctx.err(
+        `${path}.network.allow`,
+        'requires `credential` of "none" or "context" — a signed request must never reach a host outside the app allowlist',
+      );
+    }
+  }
 }
 
 /** Validate an Auth method's config (no hook functions). */

@@ -1,0 +1,15 @@
+{
+  "key": "site-reachable",
+  "title": "Site reachable",
+  "kind": "dependency",
+  "scope": "connection",
+  "credential": "context",
+  "network": {
+    "allow": [
+      "probe.example.com"
+    ]
+  },
+  "covers": [
+    "component:site"
+  ]
+}

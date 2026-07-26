@@ -16,6 +16,7 @@ import type {
   AppManifest,
   Auth,
   Connection,
+  HealthCheck,
   Invocation,
   RedactedConnection,
   SignableRequest,
@@ -38,6 +39,8 @@ export interface AppDescription {
   actions: Action[];
   auth: Auth[];
   triggers: Trigger[];
+  /** Declared, promoted and derived checks — the whole health surface. */
+  health: HealthCheck[];
 }
 
 export interface InvokeOptions {
@@ -72,6 +75,7 @@ export function describe(app: LoadedApp): AppDescription {
     actions: [...app.actions.values()].map((a) => a.definition),
     auth: app.auths.map((a) => a.auth),
     triggers: [...app.triggers.values()].map((t) => t.trigger),
+    health: [...app.healthChecks.values()].map((h) => h.check),
   };
 }
 
@@ -142,18 +146,24 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
 }
 
 /**
- * Build the fetch handler an action/trigger hook's `ctx.fetch` routes through:
- * run the auth `sign` hook (network-less, the only code holding the credential),
- * perform the real request on the host, and report the result to `onEgress`.
+ * Build the fetch handler a hook's `ctx.fetch` routes through: run the auth
+ * `sign` hook (network-less, the only code holding the credential), perform the
+ * real request on the host, and report the result to `onEgress`.
  *
- * Shared by `invoke` and `invokeTriggerHook` so both surfaces sign, enforce the
- * allowlist and observe egress identically.
+ * Shared by `invoke`, `invokeTriggerHook` and `checkHealth` so every surface
+ * signs, enforces the allowlist and observes egress identically.
+ *
+ * `allowlist` is explicit rather than read off the app, because a health check
+ * runs under a composed allowlist — the app's hosts plus its own — and that
+ * widening is only ever granted to an UNSIGNED check. Passing `auth: undefined`
+ * is how a caller says "do not sign this".
  */
-function signingFetch(
+export function signingFetch(
   app: LoadedApp,
   auth: LoadedAuth | undefined,
   credential: unknown,
   opts: InvokeOptions,
+  allowlist: string[] = app.netAllowlist,
 ): (request: SignableRequest) => Promise<WireResponse> {
   const canSign = !!auth?.hooks.has("sign");
   return async (request: SignableRequest): Promise<WireResponse> => {
@@ -173,7 +183,7 @@ function signingFetch(
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {
-      const res = await hostFetch(app.netAllowlist, signed);
+      const res = await hostFetch(allowlist, signed);
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );

@@ -4,6 +4,7 @@
  */
 import type { Param } from "./param.ts";
 import type { ActionExecuteHook } from "./hooks.ts";
+import type { ActionHealthTag } from "./health.ts";
 
 /**
  * What an action does. `control` marks an internal flow-control / pseudo-app
@@ -52,6 +53,13 @@ export interface Action {
    * `true` when the App has auth, `false` when it doesn't.
    */
   requiresAuth?: boolean;
+  /**
+   * Promotes this Action into the App's health surface instead of duplicating
+   * it as a standalone check — some Actions are already the right probe. Only
+   * valid on a `read` Action whose params are all optional or defaulted, since
+   * a host invokes it with `{}`.
+   */
+  healthCheck?: ActionHealthTag;
 }
 
 /**

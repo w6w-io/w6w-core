@@ -75,6 +75,18 @@ function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) =>
       ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action)
       : null;
   }
+  if (sel.kind === "health") {
+    const declared = app.healthChecks?.find((h) => h.key === sel.key);
+    if (declared?.check) {
+      return (declared.check as (i: unknown, c: unknown) => unknown).bind(declared);
+    }
+    // A tagged Action is projected into the health surface under its tag's key
+    // (defaulting to the Action's own), and its `execute` IS the probe.
+    const tagged = app.actions?.find((a) => (a.healthCheck?.key ?? a.key) === sel.key);
+    return tagged?.healthCheck && tagged.execute
+      ? (tagged.execute as (i: unknown, c: unknown) => unknown).bind(tagged)
+      : null;
+  }
   if (sel.kind === "trigger") {
     const trigger = app.triggers?.find((t) => t.key === sel.key);
     const fn = trigger?.[sel.hook];
@@ -96,6 +108,8 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
       ? `action "${s.key}".execute`
       : s.kind === "trigger"
       ? `trigger "${s.key}".${s.hook}`
+      : s.kind === "health"
+      ? `health check "${s.key}"`
       : `auth "${s.key}".${s.hook}`;
     throw new Error(`Entry module has no callable ${what}.`);
   }
@@ -130,7 +144,34 @@ async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" 
     return { trigger: JSON.parse(JSON.stringify(config)), hooks: present };
   });
 
-  const described: DescribedApp = { actions, auth, triggers };
+  const declared = (app.healthChecks ?? []).map((h) => {
+    const config = { ...h } as Record<string, unknown>;
+    delete config.check;
+    return {
+      check: JSON.parse(JSON.stringify(config)),
+      hasHook: typeof h.check === "function",
+    };
+  });
+  // Tagged Actions become checks too, so the health surface is one list
+  // regardless of how the publisher authored it.
+  const tagged = (app.actions ?? [])
+    .filter((a) => a.healthCheck)
+    .map((a) => ({
+      check: JSON.parse(JSON.stringify({
+        kind: "dependency",
+        ...a.healthCheck,
+        key: a.healthCheck!.key ?? a.key,
+        title: a.healthCheck!.title ?? a.title,
+      })),
+      hasHook: typeof a.execute === "function",
+    }));
+
+  const described: DescribedApp = {
+    actions,
+    auth,
+    triggers,
+    healthChecks: [...declared, ...tagged],
+  };
   post({ type: "result", value: described });
 }
 

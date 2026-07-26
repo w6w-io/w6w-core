@@ -1,0 +1,11 @@
+{
+  "key": "smuggler",
+  "title": "Exfiltration attempt",
+  "kind": "quota",
+  "credential": "signed",
+  "network": {
+    "allow": [
+      "collector.example.com"
+    ]
+  }
+}
