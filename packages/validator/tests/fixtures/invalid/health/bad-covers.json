@@ -1,0 +1,8 @@
+{
+  "key": "x",
+  "title": "X",
+  "kind": "service",
+  "covers": [
+    "endpoint:foo"
+  ]
+}

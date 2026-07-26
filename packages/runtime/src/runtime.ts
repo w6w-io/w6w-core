@@ -16,6 +16,7 @@ import type {
   AppManifest,
   Auth,
   Connection,
+  HealthCheck,
   Invocation,
   RedactedConnection,
   SignableRequest,
@@ -27,22 +28,19 @@ import type { LoadedApp, LoadedAuth } from "./loader.ts";
 import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
+import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
 import { W6WError } from "./errors.ts";
+
+export type { EgressInfo };
+export { DEFAULT_EGRESS_BODY_LIMIT } from "./egress.ts";
 
 export interface AppDescription {
   app: AppManifest;
   actions: Action[];
   auth: Auth[];
   triggers: Trigger[];
-}
-
-/** One outbound (egress) request the runtime made on the app's behalf. */
-export interface EgressInfo {
-  host: string;
-  method: string;
-  status: number;
-  responseBytes: number;
-  durationMs: number;
+  /** Declared, promoted and derived checks — the whole health surface. */
+  health: HealthCheck[];
 }
 
 export interface InvokeOptions {
@@ -50,8 +48,20 @@ export interface InvokeOptions {
   connection?: Connection;
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
-  /** Observability hook: called once per outbound request the action/trigger makes. */
+  /**
+   * Observability hook: called once per outbound request the action/trigger
+   * makes — including requests that failed before a response (`status: 0` and
+   * `error` set).
+   */
   onEgress?: (info: EgressInfo) => void;
+  /**
+   * Capture the full URL, headers and bodies of each outbound request on
+   * `onEgress` (credentials redacted). Off by default: the record then carries
+   * only the metering fields.
+   */
+  captureEgress?: boolean;
+  /** Per-body cap for `captureEgress`, in bytes. Defaults to 32 KiB. */
+  egressBodyLimit?: number;
 }
 
 export interface InvokeResult {
@@ -65,12 +75,40 @@ export function describe(app: LoadedApp): AppDescription {
     actions: [...app.actions.values()].map((a) => a.definition),
     auth: app.auths.map((a) => a.auth),
     triggers: [...app.triggers.values()].map((t) => t.trigger),
+    health: [...app.healthChecks.values()].map((h) => h.check),
   };
 }
 
 /** Pick the LoadedAuth a Connection refers to (by `auth` key), else the app's sole auth. */
 function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined {
   return app.auths.find((a) => a.auth.key === connection.auth) ?? app.auths[0];
+}
+
+/**
+ * Does `host` satisfy one entry of `w6w.network.allow`?
+ *
+ * Exact hostnames are the norm. Two wildcard forms exist because a whole class
+ * of SaaS APIs is addressed by a *per-tenant* host that no manifest can
+ * enumerate ahead of time — `acme.zendesk.com`, `acme.myshopify.com`,
+ * `acme.my.salesforce.com`, or a self-hosted WordPress at an arbitrary domain:
+ *
+ *   - `"*.zendesk.com"` — any subdomain, at any depth, of `zendesk.com`. The
+ *     apex itself is NOT matched: it is a different host and should be listed
+ *     separately if the app really calls it.
+ *   - `"*"` — any host. This opts the app out of egress restriction entirely,
+ *     so it is only appropriate for apps whose endpoint is a user-supplied URL
+ *     (self-hosted installs). Hosts SHOULD surface it prominently at install.
+ *
+ * Matching is case-insensitive; hostnames from `URL` are already lowercased.
+ */
+export function hostAllowed(allowlist: readonly string[], host: string): boolean {
+  for (const entry of allowlist) {
+    if (entry === "*") return true;
+    const pattern = entry.toLowerCase();
+    if (pattern === host) return true;
+    if (pattern.startsWith("*.") && host.endsWith(pattern.slice(1))) return true;
+  }
+  return false;
 }
 
 /** Perform a request on the host: enforce the allowlist, then fetch. */
@@ -85,7 +123,7 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
       `Hook produced an invalid URL: ${req.url}`,
     );
   }
-  if (!allowlist.includes(host)) {
+  if (!hostAllowed(allowlist, host)) {
     throw new W6WError(
       "egress_denied",
       "execute",
@@ -104,6 +142,59 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
     statusText: res.statusText,
     headers,
     body: new Uint8Array(await res.arrayBuffer()),
+  };
+}
+
+/**
+ * Build the fetch handler a hook's `ctx.fetch` routes through: run the auth
+ * `sign` hook (network-less, the only code holding the credential), perform the
+ * real request on the host, and report the result to `onEgress`.
+ *
+ * Shared by `invoke`, `invokeTriggerHook` and `checkHealth` so every surface
+ * signs, enforces the allowlist and observes egress identically.
+ *
+ * `allowlist` is explicit rather than read off the app, because a health check
+ * runs under a composed allowlist — the app's hosts plus its own — and that
+ * widening is only ever granted to an UNSIGNED check. Passing `auth: undefined`
+ * is how a caller says "do not sign this".
+ */
+export function signingFetch(
+  app: LoadedApp,
+  auth: LoadedAuth | undefined,
+  credential: unknown,
+  opts: InvokeOptions,
+  allowlist: string[] = app.netAllowlist,
+): (request: SignableRequest) => Promise<WireResponse> {
+  const canSign = !!auth?.hooks.has("sign");
+  return async (request: SignableRequest): Promise<WireResponse> => {
+    let signed = request;
+    if (canSign && auth) {
+      // `sign` runs in its own worker with NO network, and is the only code
+      // given the (live, post-refresh) credential. It injects auth.
+      signed = await runHook<SignableRequest>({
+        entryPath: app.entryPath,
+        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
+        input: { request, credential },
+        readScope: app.dir,
+        timeoutMs: opts.timeoutMs,
+        // no onFetch -> the sign worker cannot make network calls.
+      });
+    }
+    const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
+    const egressStart = Date.now();
+    try {
+      const res = await hostFetch(allowlist, signed);
+      opts.onEgress?.(
+        egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
+      );
+      return res;
+    } catch (err) {
+      // A denied/failed request is still an egress event worth observing.
+      opts.onEgress?.(
+        egressFailure(signed, err, { ...capture, durationMs: Date.now() - egressStart }),
+      );
+      throw err;
+    }
   };
 }
 
@@ -216,43 +307,11 @@ export async function invoke(
       `Action "${invocation.action}" requires a connection — the app declares auth.`,
     );
   }
-  const canSign = !!auth?.hooks.has("sign");
-
   // 3. Resolve params.
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
-  const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
-    let signed = request;
-    if (canSign && auth) {
-      // `sign` runs in its own worker with NO network, and is the only code
-      // given the (live, post-refresh) credential. It injects auth.
-      signed = await runHook<SignableRequest>({
-        entryPath: app.entryPath,
-        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential },
-        readScope: app.dir,
-        timeoutMs: opts.timeoutMs,
-        // no onFetch -> the sign worker cannot make network calls.
-      });
-    }
-    const egressStart = Date.now();
-    const res = await hostFetch(app.netAllowlist, signed);
-    if (opts.onEgress) {
-      let host = "";
-      try {
-        host = new URL(signed.url).hostname;
-      } catch { /* non-URL requests are already rejected by hostFetch */ }
-      opts.onEgress({
-        host,
-        method: signed.method,
-        status: res.status,
-        responseBytes: res.body?.length ?? 0,
-        durationMs: Date.now() - egressStart,
-      });
-    }
-    return res;
-  };
+  const onFetch = signingFetch(app, auth, credential, opts);
 
   // 5. Invoke the action's `execute` in the sandbox.
   const value = await runHook({
@@ -314,36 +373,7 @@ export async function invokeTriggerHook(
   if (opts.connection) {
     ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
   }
-  const canSign = !!auth?.hooks.has("sign");
-
-  const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
-    let signed = request;
-    if (canSign && auth) {
-      signed = await runHook<SignableRequest>({
-        entryPath: app.entryPath,
-        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential },
-        readScope: app.dir,
-        timeoutMs: opts.timeoutMs,
-      });
-    }
-    const egressStart = Date.now();
-    const res = await hostFetch(app.netAllowlist, signed);
-    if (opts.onEgress) {
-      let host = "";
-      try {
-        host = new URL(signed.url).hostname;
-      } catch { /* non-URL requests are already rejected by hostFetch */ }
-      opts.onEgress({
-        host,
-        method: signed.method,
-        status: res.status,
-        responseBytes: res.body?.length ?? 0,
-        durationMs: Date.now() - egressStart,
-      });
-    }
-    return res;
-  };
+  const onFetch = signingFetch(app, auth, credential, opts);
 
   return await runHook({
     entryPath: app.entryPath,

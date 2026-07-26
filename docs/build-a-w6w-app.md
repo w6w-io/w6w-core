@@ -239,7 +239,11 @@ keep their own top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
   in the action sandbox and throw. The action worker has `read` scoped to the app dir and nothing
   else.
 - ✅ **Declare every host** a hook calls in `w6w.network.allow`. Undeclared egress is blocked.
-  (OAuth endpoint hosts are allowed implicitly.)
+  (OAuth endpoint hosts are allowed implicitly.) Entries are exact hostnames; two wildcard forms
+  cover APIs addressed by a per-tenant host a manifest cannot enumerate — `"*.zendesk.com"` matches
+  any subdomain at any depth (**not** the apex), and `"*"` disables egress restriction entirely and
+  is only appropriate when the endpoint is a user-supplied URL (a self-hosted install). Prefer the
+  narrowest form that works.
 - ❌ **Never put credentials in an Action.** No `Authorization` headers in `execute`; let `sign`
   inject them. Actions cannot read the credential and must not try.
 - ✅ **`sign` is credential-only and network-less** — mutate `request` and return it; don't call
@@ -275,6 +279,24 @@ Commands (from the template):
   `invoke(app, { manifestVersion: "1", app: "<id>",
   action: "<key>", params: {…} })`. Needs
   `deno run --unstable-worker-options -A`.
+
+## Health checks (proposed — Draft RFC)
+
+An App may declare probes a host runs to answer "is this working?": vendor status,
+credential liveness, quota headroom. `Auth.test` already covers the credential case and is
+derived into that surface automatically, so **nothing is required of you today**. Adding a
+vendor-status or quota check is additive — see [`rfcs/healthcheck.md`](../rfcs/healthcheck.md),
+which is `Draft` and not yet implemented in `@w6w/types`.
+
+Two things to know before it lands, because they shape how you write `test` now:
+
+- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
+  a scope the credential may legitimately lack reports a working App as broken. Prefer a
+  dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
+  cheapest read available.
+- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
+  not be added to `w6w.network.allow` to satisfy a probe — the RFC gives health checks their
+  own per-hook allowlist instead.
 
 ## Triggers (advanced / optional)
 

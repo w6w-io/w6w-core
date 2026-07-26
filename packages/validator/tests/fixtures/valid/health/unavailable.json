@@ -1,0 +1,8 @@
+{
+  "key": "webhooks",
+  "title": "Webhook delivery",
+  "kind": "dependency",
+  "unavailable": {
+    "reason": "the vendor publishes no webhook health signal"
+  }
+}

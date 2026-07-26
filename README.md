@@ -69,6 +69,7 @@ Primitives that are reused inside other manifests rather than declared standalon
 | **ImageObject** | Reusable image reference (icons, screenshots, badges). One container with vector and sized-raster sources. | [`rfcs/image-object.md`](./rfcs/image-object.md) — Final |
 | **Hook Runtime** | The contract every publisher-authored hook runs under: module format, ambient API, error shape, timeouts, sandbox posture, credential isolation. | [`rfcs/hook-runtime.md`](./rfcs/hook-runtime.md) — Final |
 | **Categories** | Controlled vocabulary for App `categories`. | [`rfcs/categories.md`](./rfcs/categories.md) — Final |
+| **Health Check** | Declared, side-effect-free probes an App publishes so a host can answer "is this working?" — vendor status, credential liveness and quota, each addressable and attributable. | [`rfcs/healthcheck.md`](./rfcs/healthcheck.md) — Draft |
 
 ## Build your own app
 

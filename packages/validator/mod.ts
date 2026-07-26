@@ -12,5 +12,6 @@ export {
   validateAction,
   validateApp,
   validateAuth,
+  validateHealthCheck,
 } from "./src/validate.ts";
 export type { ValidationError, ValidationResult } from "./src/validate.ts";

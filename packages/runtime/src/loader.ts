@@ -11,6 +11,7 @@ import type {
   Auth,
   AuthHookKind,
   Author,
+  HealthCheck,
   Trigger,
   TriggerHookKind,
   W6WPackageMetadata,
@@ -30,6 +31,18 @@ export interface LoadedAuth {
   hooks: Set<AuthHookKind>;
 }
 
+export interface LoadedHealthCheck {
+  /** Serializable config (no `check` function). */
+  check: HealthCheck;
+  /** False for an `unavailable` declaration, which has nothing to run. */
+  hasHook: boolean;
+  /**
+   * Hosts this check's worker may reach: the app allowlist plus the check's own
+   * `network.allow`. Only ever widened for an UNSIGNED check — see `healthAllowlist`.
+   */
+  netAllowlist: string[];
+}
+
 export interface LoadedTrigger {
   /** Serializable config (no hook functions). */
   trigger: Trigger;
@@ -46,6 +59,8 @@ export interface LoadedApp {
   actions: Map<string, LoadedAction>;
   auths: LoadedAuth[];
   triggers: Map<string, LoadedTrigger>;
+  /** Declared checks, checks promoted from tagged Actions, and one derived per Auth `test`. */
+  healthChecks: Map<string, LoadedHealthCheck>;
   /** Hostnames hooks may reach, host-enforced: `manifest.network.allow` plus OAuth endpoint hosts. */
   netAllowlist: string[];
 }
@@ -169,6 +184,42 @@ function computeAllowlist(manifest: AppManifest, auths: LoadedAuth[]): string[] 
 }
 
 /**
+ * A check derived from an Auth method's `test` hook, so every App has a
+ * credential check without its publisher writing one. Reserved `auth:` key
+ * prefix; validators reject a publisher using it.
+ */
+function derivedAuthChecks(auths: LoadedAuth[]): HealthCheck[] {
+  return auths
+    .filter((a) => a.hooks.has("test"))
+    .map(({ auth }) => ({
+      key: `auth:${auth.key}`,
+      title: `${auth.displayName} credential`,
+      description: `Derived from the \`${auth.key}\` auth method's \`test\` hook.`,
+      kind: "credential" as const,
+      scope: "connection" as const,
+      credential: "signed" as const,
+      covers: [`auth:${auth.key}`],
+      severity: "fatal" as const,
+    }));
+}
+
+/**
+ * Compose the allowlist a health check's worker runs under.
+ *
+ * A check may name extra hosts — vendor status pages live somewhere the app's
+ * own code has no business calling. Widening egress without constraining
+ * signing would be a credential-exfiltration path, so the extra hosts are
+ * honoured only for an unsigned posture; a `signed` check is pinned to the
+ * app's own allowlist regardless of what it declared. The validator rejects
+ * that combination at author time, and this is the belt to its braces.
+ */
+export function healthAllowlist(appAllowlist: string[], check: HealthCheck): string[] {
+  const posture = check.credential ?? (check.kind === "service" ? "none" : "signed");
+  if (posture === "signed") return appAllowlist;
+  return [...new Set([...appAllowlist, ...(check.network?.allow ?? [])])];
+}
+
+/**
  * Load an app from a local directory.
  *
  * Identity comes from `package.json` (the `w6w` block plus native fields), or a
@@ -212,6 +263,39 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     triggers.set(trigger.key, { trigger, hooks: new Set(hooks) });
   }
 
+  const netAllowlist = computeAllowlist(manifest, auths);
+
+  // One health surface regardless of authoring route: checks the entry module
+  // declared (including those the worker projected from tagged Actions), plus
+  // one derived per Auth `test` hook so every app has a credential check.
+  const healthChecks = new Map<string, LoadedHealthCheck>();
+  for (const { check, hasHook } of described.healthChecks) {
+    if (!check?.key) {
+      throw new LoadError(
+        "invalid_health_check",
+        `A health check in ${entryPath} is missing a \`key\`.`,
+      );
+    }
+    if (healthChecks.has(check.key)) {
+      throw new LoadError(
+        "invalid_health_check",
+        `Duplicate health check key "${check.key}" in ${entryPath}.`,
+      );
+    }
+    healthChecks.set(check.key, {
+      check,
+      hasHook,
+      netAllowlist: healthAllowlist(netAllowlist, check),
+    });
+  }
+  for (const check of derivedAuthChecks(auths)) {
+    // A publisher cannot occupy the reserved prefix (the validator rejects it),
+    // so a collision here would be a loader bug rather than an authoring one.
+    if (!healthChecks.has(check.key)) {
+      healthChecks.set(check.key, { check, hasHook: true, netAllowlist });
+    }
+  }
+
   return {
     dir: root,
     entryPath,
@@ -219,6 +303,7 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     actions,
     auths,
     triggers,
-    netAllowlist: computeAllowlist(manifest, auths),
+    healthChecks,
+    netAllowlist,
   };
 }

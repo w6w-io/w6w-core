@@ -1,0 +1,14 @@
+{
+  "key": "service",
+  "title": "Platform status",
+  "kind": "service",
+  "network": {
+    "allow": [
+      "status.example.com"
+    ]
+  },
+  "minIntervalSeconds": 60,
+  "covers": [
+    "*"
+  ]
+}

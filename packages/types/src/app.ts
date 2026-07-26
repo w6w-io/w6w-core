@@ -6,6 +6,7 @@ import type { ImageObject } from "./image.ts";
 import type { ActionDefinition } from "./action.ts";
 import type { AuthDefinition } from "./auth.ts";
 import type { TriggerDefinition } from "./trigger.ts";
+import type { HealthCheckDefinition } from "./health.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -118,6 +119,13 @@ export interface AppDefinition {
   auth?: AuthDefinition[];
   /** Optional. See the Trigger RFC. */
   triggers?: AnyTriggerDefinition[];
+  /**
+   * Optional. Probes a host runs to answer "is this working?" — vendor status,
+   * credential liveness, quota. A check derived from each Auth method's `test`
+   * hook is added automatically, so an App that declares none still has a
+   * health surface. See the Health Check RFC.
+   */
+  healthChecks?: HealthCheckDefinition[];
 }
 
 /**

@@ -1,0 +1,197 @@
+/**
+ * Health Check — a declared, side-effect-free probe an App publishes so a host
+ * can answer "is this working?" without guessing.
+ * See rfcs/healthcheck.md.
+ */
+import type { HealthCheckHook } from "./hooks.ts";
+
+/**
+ * `unknown` is deliberately distinct from `down`: a status API that itself 500s
+ * tells you nothing about the vendor, and reporting that as an outage would be
+ * a lie.
+ */
+export type HealthState = "ok" | "degraded" | "down" | "unknown";
+
+/** What the answer tells you. */
+export type HealthKind = "service" | "credential" | "quota" | "dependency";
+
+/**
+ * What the answer is about. `app` results are computed once and shared across
+ * every Connection — running a vendor status check per Connection would
+ * multiply one useful call by the number of users.
+ */
+export type HealthScope = "app" | "connection";
+
+/**
+ * What the check needs on the wire. Three postures, not two: whether a check
+ * needs a CREDENTIAL is a different question from whether it is per-CONNECTION.
+ *
+ * - `none`    — no Connection at all; `ctx.connection` is absent and `sign` never runs.
+ *               Vendor status pages, unauthenticated pings.
+ * - `context` — the Connection supplies the URL (a tenant subdomain, a self-hosted
+ *               site) but no credential is needed to interpret the answer. The hook
+ *               sees the redacted Connection; `sign` still never runs.
+ * - `signed`  — the credential goes on the wire, injected by `sign` exactly as for
+ *               an Action.
+ */
+export type CredentialPosture = "none" | "context" | "signed";
+
+/** How much a failure is allowed to worsen a roll-up verdict. */
+export type HealthSeverity = "fatal" | "degraded" | "informational";
+
+/** Per-component detail inside a report. */
+export interface HealthComponentReport {
+  state: HealthState;
+  message?: string;
+}
+
+/** A quota reading. Populated by `kind: "quota"` checks. */
+export interface HealthQuota {
+  /** Bucket name when the vendor meters several (GitHub's `core`, `search`, …). */
+  id?: string;
+  limit?: number;
+  remaining?: number;
+  /** ISO 8601. */
+  resetAt?: string;
+  /** e.g. `"requests"`, `"tokens"`. */
+  unit?: string;
+}
+
+/**
+ * What a check hook returns. A report, not a boolean — one call to a vendor's
+ * status API can light up several components, which is how those APIs are
+ * actually shaped.
+ */
+export interface HealthReport {
+  state: HealthState;
+  /** Human explanation. Rendered verbatim — MUST NOT contain credential material. */
+  message?: string;
+  /** Component id -> state. Lets one probe report many things. */
+  components?: Record<string, HealthComponentReport>;
+  quota?: HealthQuota[];
+  /** How long a host may serve this result from cache. */
+  ttlSeconds?: number;
+  /** Host-stamped when the hook omits it. */
+  latencyMs?: number;
+}
+
+/** Declares that no check exists — a positive fact, not an omission. */
+export interface HealthUnavailable {
+  reason: string;
+}
+
+/**
+ * A Health Check's serializable configuration — its metadata minus the `check`
+ * function. This is what `describe()` returns.
+ */
+export interface HealthCheck {
+  /**
+   * Machine name, unique within the App. Lowercase kebab-case. The `auth:`
+   * prefix is reserved for checks derived from an Auth method's `test` hook.
+   */
+  key: string;
+  title: string;
+  description?: string;
+  kind: HealthKind;
+  /** Defaults to `app` for `kind: "service"`, `connection` otherwise. */
+  scope?: HealthScope;
+  /**
+   * Selectors this check speaks for, so a host can attribute a failure rather
+   * than greying out the whole App: `"*"`, `"action:<key>"`, `"resource:<name>"`,
+   * `"auth:<key>"`, `"component:<id>"`. Defaults to `["*"]`.
+   */
+  covers?: string[];
+  /** Defaults to `none` for `kind: "service"`, `signed` otherwise. */
+  credential?: CredentialPosture;
+  /**
+   * Hosts this check may reach, IN ADDITION to the App's allowlist and only
+   * inside this hook's worker.
+   *
+   * Bound to an unsigned posture: a check declaring this MUST be `none` or
+   * `context`. Widening egress without that constraint would be a
+   * credential-exfiltration path — third-party status hosts are exactly the
+   * hosts that must never see a credential.
+   */
+  network?: { allow?: string[] };
+  /** Publisher's floor on how often a host may run it. */
+  minIntervalSeconds?: number;
+  /** Defaults to `fatal` for `kind: "credential"`, `degraded` otherwise. */
+  severity?: HealthSeverity;
+  /** Present instead of `check` when the vendor publishes nothing. */
+  unavailable?: HealthUnavailable;
+}
+
+/**
+ * A health-check module's shape: config and probe co-located, the same
+ * code-first model as ActionDefinition.
+ *
+ * ```ts
+ * const serviceHealth: HealthCheckDefinition = {
+ *   key: "service", title: "Platform status", kind: "service",
+ *   network: { allow: ["status.example.com"] },
+ *   async check(_input, ctx) { … },
+ * };
+ * ```
+ */
+export interface HealthCheckDefinition extends HealthCheck {
+  /** Required unless `unavailable` is set. */
+  check?: HealthCheckHook;
+}
+
+/**
+ * The tag that promotes an existing Action into the health surface, so an
+ * Action that is already the right probe need not be duplicated. A tagged
+ * Action MUST be safe to invoke with `{}`.
+ */
+export type ActionHealthTag = Omit<HealthCheck, "key" | "title" | "unavailable"> & {
+  /** Defaults to the Action's own key. */
+  key?: string;
+  /** Defaults to the Action's own title. */
+  title?: string;
+};
+
+// --- default resolution -----------------------------------------------------
+// Defaults are conveniences, not couplings: `scope` and `credential` are
+// independent axes. A `none` + `connection` check is exactly the `context`
+// case, and `signed` + `app` is possible when the credential is host-supplied.
+
+export function healthScope(check: HealthCheck): HealthScope {
+  return check.scope ?? (check.kind === "service" ? "app" : "connection");
+}
+
+export function healthCredential(check: HealthCheck): CredentialPosture {
+  return check.credential ?? (check.kind === "service" ? "none" : "signed");
+}
+
+export function healthSeverity(check: HealthCheck): HealthSeverity {
+  return check.severity ?? (check.kind === "credential" ? "fatal" : "degraded");
+}
+
+export function healthCovers(check: HealthCheck): string[] {
+  return check.covers ?? ["*"];
+}
+
+/** Does this check speak for `selector` (e.g. `"action:message-post"`)? */
+export function coversSelector(check: HealthCheck, selector: string): boolean {
+  const covers = healthCovers(check);
+  if (covers.includes("*") || covers.includes(selector)) return true;
+  // `resource:message` also covers an Action selector the caller cannot expand
+  // on its own; callers pass both forms when they know the Action's resource.
+  return false;
+}
+
+/** Worst-first ordering. `unknown` outranks `ok` so an unverifiable target is never shown healthy. */
+export const HEALTH_STATE_RANK: Record<HealthState, number> = {
+  ok: 0,
+  unknown: 1,
+  degraded: 2,
+  down: 3,
+};
+
+export function worstHealthState(states: readonly HealthState[]): HealthState {
+  let worst: HealthState = "ok";
+  for (const s of states) {
+    if (HEALTH_STATE_RANK[s] > HEALTH_STATE_RANK[worst]) worst = s;
+  }
+  return worst;
+}
