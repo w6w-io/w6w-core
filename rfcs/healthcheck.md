@@ -63,7 +63,10 @@ scopes" cannot describe any of these.
   or one endpoint — so a host can attribute a failure precisely.
 - A **single check may report several components**, because that is how vendor status APIs
   are actually shaped.
-- Checks that need no credential run **once per App**, not once per Connection.
+- A check states **what credential it needs** — none, the Connection's metadata, or the
+  credential itself — because those are three different postures, not two.
+- Checks that need no Connection at all run **once per App**, and can report before anyone
+  has connected.
 - `Auth.test` keeps working unchanged and appears in the same uniform list.
 - A host has a defined algorithm for **rolling many checks up** into one verdict.
 - An App can declare that **no check exists** for something, and have that be a first-class
@@ -85,18 +88,19 @@ scopes" cannot describe any of these.
 
 A health check is an ordinary hook — same sandbox, same `ctx.fetch`, same credential
 isolation as an Action (see [`hook-runtime.md`](./hook-runtime.md)). What makes it a health
-check is the metadata around it, along three orthogonal axes.
+check is the metadata around it, along three orthogonal axes — plus a fourth property,
+its credential posture, which is deliberately not folded into any of them.
 
 ### The three axes
 
 **`kind` — what the answer tells you.**
 
-| `kind` | Answers | Typically needs a credential |
+| `kind` | Answers | Usual `credential` posture |
 |---|---|---|
-| `service` | Is the vendor's platform up? | no |
-| `credential` | Is this stored credential live? | yes |
-| `quota` | Is there headroom left before throttling? | yes |
-| `dependency` | Is a thing this App depends on reachable? (a tenant's own host, a self-hosted install) | varies |
+| `service` | Is the vendor's platform up? | `none` |
+| `credential` | Is this stored credential live? | `signed` |
+| `quota` | Is there headroom left before throttling? | `signed` |
+| `dependency` | Is a thing this App depends on reachable? (a tenant's own host, a self-hosted install) | `context` |
 
 **`scope` — what the answer is about.**
 
@@ -118,6 +122,34 @@ App:
 - `"resource:<name>"` — every Action sharing that `resource`.
 - `"auth:<key>"` — one auth method.
 - `"component:<id>"` — a vendor-named component the check reports on.
+
+### Credential posture
+
+Whether a check needs a credential is **not** the same question as whether it is
+per-Connection, and collapsing them into one boolean loses a case that several Apps in this
+pack actually have. Three postures, not two:
+
+| `credential` | Connection required | `ctx.connection` | `sign` runs | Use for |
+|---|---|---|---|---|
+| `none` | no | absent | **no** | Vendor status pages, unauthenticated API pings (`slack.com/api/api.test`, `api.github.com/rate_limit`) |
+| `context` | yes | redacted (display only) | **no** | "Is this tenant's host reachable at all" — the Connection supplies the URL, not a credential |
+| `signed` | yes | redacted | yes | Credential liveness, quota — anything that needs the credential on the wire |
+
+`context` is the one a boolean would lose. Every App addressed by a per-tenant host —
+Zendesk (`acme.zendesk.com`), Shopify (`acme.myshopify.com`), Salesforce (per-org instance),
+Jira (per-site), and self-hosted WordPress — has a failure mode that is *not* a credential
+failure: the site is gone, DNS is wrong, the REST API has been disabled by a plugin. That
+probe needs the Connection's `display` data to know what URL to call, and needs no
+credential to interpret the answer. WordPress makes it explicit: `GET /wp-json/` is
+unauthenticated and tells you the REST API is alive, while `GET /wp-json/wp/v2/users/me`
+requires auth — two genuinely different failures that a host should be able to tell apart.
+
+Because a `none` check needs no Connection at all, a host can render vendor status **before
+anyone has connected**, and for an App with no Connections at all.
+
+Note that `scope` and `credential` are independent: `none` + `connection` is exactly the
+`context` case, and `signed` + `app` is possible for an App whose credential is
+host-supplied (`tenantAuth`). The defaults are conveniences, not a coupling.
 
 ### One probe, many components
 
@@ -221,6 +253,36 @@ const serviceHealth: HealthCheckDefinition = {
 };
 ```
 
+A `context` check, on an App whose host comes from the Connection:
+
+```ts
+const siteReachable: HealthCheckDefinition = {
+  key: "site",
+  title: "Site reachable",
+  kind: "dependency",
+  scope: "connection",     // the URL is per-Connection …
+  credential: "context",   // … but no credential is needed to ask
+  covers: ["*"],
+  minIntervalSeconds: 120,
+
+  async check(_input, ctx) {
+    // `display` is redacted Connection metadata — never the credential.
+    const { siteUrl } = (ctx.connection?.display ?? {}) as { siteUrl?: string };
+    if (!siteUrl) return { state: "unknown", message: "connection records no site URL" };
+
+    // Unauthenticated discovery document: proves the site is up AND that the
+    // REST API is enabled, which is a different failure from a bad credential.
+    const res = await ctx.fetch(`${siteUrl}/wp-json/`);
+    if (res.status === 404) {
+      return { state: "down", message: "REST API disabled or blocked by a plugin" };
+    }
+    return res.ok
+      ? { state: "ok", ttlSeconds: 120 }
+      : { state: "down", message: `site returned ${res.status}` };
+  },
+};
+```
+
 ### Field reference — `HealthCheck`
 
 | Field | Type | Required | Description |
@@ -231,7 +293,7 @@ const serviceHealth: HealthCheckDefinition = {
 | `kind` | enum | ✅ | `service` \| `credential` \| `quota` \| `dependency`. |
 | `scope` | enum | ⬜ | `app` \| `connection`. Defaults to `app` for `service`, `connection` otherwise. |
 | `covers` | string[] | ⬜ | Selectors this check speaks for. Defaults to `["*"]`. |
-| `requiresAuth` | boolean | ⬜ | Defaults to `false` when `scope` is `app`, `true` otherwise. |
+| `credential` | enum | ⬜ | `none` \| `context` \| `signed`. See [Credential posture](#credential-posture). Defaults to `none` for `service`, `signed` otherwise. |
 | `network` | object | ⬜ | `{ allow: string[] }` — hosts this check may reach, **in addition to** the App's allowlist and **only** inside this hook's worker. |
 | `minIntervalSeconds` | number | ⬜ | Publisher's floor on how often a host should run it. A host MUST NOT run it more often. |
 | `severity` | enum | ⬜ | `fatal` \| `degraded` \| `informational`. Defaults to `fatal` for `credential`, `degraded` otherwise. |
@@ -288,6 +350,25 @@ This follows the precedent already set for OAuth endpoint hosts, which are allow
 implicitly rather than restated by every publisher. The narrowing is the point: a status
 host becomes reachable by the one hook that needs it and by nothing else.
 
+### Extra hosts are never signed
+
+Widening the allowlist without constraining signing would be a credential-exfiltration
+path: a check could declare `network.allow: ["collector.example"]`, and a host that signs
+health requests the way it signs Action requests would hand that third party the user's
+credential. Third-party status hosts are exactly the hosts that must never see one.
+
+So the two are bound together:
+
+> A check that declares its own `network.allow` MUST have `credential` of `none` or
+> `context` — never `signed`. Validators MUST reject the combination, and a host MUST NOT
+> run `sign` for any request a health check makes to a host outside
+> `w6w.network.allow`.
+
+This costs nothing in practice. The observed cases that need an extra host are all vendor
+status pages, which are unauthenticated by design; the ones that need a credential
+(GitHub's `/rate_limit`, Salesforce's `/limits`) are on the App's own API host and are
+already covered by `w6w.network.allow`.
+
 ## Conformance
 
 A host claiming support MUST:
@@ -301,8 +382,11 @@ A host claiming support MUST:
 4. **Expose every check** — declared, derived and `unavailable` — through `describe()`, so a
    UI can render what is and is not knowable.
 5. **Isolate credentials** exactly as for Actions: a `check` hook reaches the network only
-   through `ctx.fetch`, and never receives the raw credential — `sign` still injects it.
-6. **Never worsen a verdict on an `informational` check.**
+   through `ctx.fetch` and never receives the raw credential.
+6. **Honour `credential`.** A host MUST NOT run `sign` for a check declared `none` or
+   `context`, MUST NOT supply `ctx.connection` to a `none` check, and MUST reject at load
+   time any check that pairs its own `network.allow` with `credential: "signed"`.
+7. **Never worsen a verdict on an `informational` check.**
 
 Fixtures: `fixtures/apps/*/health/` and the conformance cases under
 `packages/validator/tests/fixtures/{valid,invalid}/health/`.
@@ -334,9 +418,11 @@ rather than discovery.
    `components`.
 3. **Should `quota` be a `kind` at all,** or a field every check may populate? Salesforce's
    `/limits` is genuinely both, and today it would be declared twice or arbitrarily typed.
-4. **Who owns the status-host allowlist?** Per-check `network.allow` is proposed here. The
-   alternative is a host-side registry of known status hosts, which centralises trust but
-   makes the App less self-describing.
+4. **Who owns the status-host allowlist?** Per-check `network.allow` is proposed here,
+   bound to an unsigned posture so it cannot leak a credential. The alternative is a
+   host-side registry of known status hosts, which centralises trust but makes the App less
+   self-describing. The binding makes the per-check form safe; the question is now taste
+   rather than safety.
 5. **Cadence for `scope: "app"` checks across tenants** — one result per App globally, or
    per tenant? Globally is cheaper; per tenant matters if a host proxies egress differently
    per tenant.
