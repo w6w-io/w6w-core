@@ -280,6 +280,24 @@ Commands (from the template):
   action: "<key>", params: {…} })`. Needs
   `deno run --unstable-worker-options -A`.
 
+## Health checks (proposed — Draft RFC)
+
+An App may declare probes a host runs to answer "is this working?": vendor status,
+credential liveness, quota headroom. `Auth.test` already covers the credential case and is
+derived into that surface automatically, so **nothing is required of you today**. Adding a
+vendor-status or quota check is additive — see [`rfcs/healthcheck.md`](../rfcs/healthcheck.md),
+which is `Draft` and not yet implemented in `@w6w/types`.
+
+Two things to know before it lands, because they shape how you write `test` now:
+
+- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
+  a scope the credential may legitimately lack reports a working App as broken. Prefer a
+  dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
+  cheapest read available.
+- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
+  not be added to `w6w.network.allow` to satisfy a probe — the RFC gives health checks their
+  own per-hook allowlist instead.
+
 ## Triggers (advanced / optional)
 
 Apps may also declare `triggers` (what _starts_ a workflow) via `TriggerDefinition` with
