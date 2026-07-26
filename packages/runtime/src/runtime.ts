@@ -27,7 +27,11 @@ import type { LoadedApp, LoadedAuth } from "./loader.ts";
 import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
+import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
 import { W6WError } from "./errors.ts";
+
+export type { EgressInfo };
+export { DEFAULT_EGRESS_BODY_LIMIT } from "./egress.ts";
 
 export interface AppDescription {
   app: AppManifest;
@@ -36,22 +40,25 @@ export interface AppDescription {
   triggers: Trigger[];
 }
 
-/** One outbound (egress) request the runtime made on the app's behalf. */
-export interface EgressInfo {
-  host: string;
-  method: string;
-  status: number;
-  responseBytes: number;
-  durationMs: number;
-}
-
 export interface InvokeOptions {
   /** The full Connection, including its opaque credential. Held by the host; never exposed to the action. */
   connection?: Connection;
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
-  /** Observability hook: called once per outbound request the action/trigger makes. */
+  /**
+   * Observability hook: called once per outbound request the action/trigger
+   * makes — including requests that failed before a response (`status: 0` and
+   * `error` set).
+   */
   onEgress?: (info: EgressInfo) => void;
+  /**
+   * Capture the full URL, headers and bodies of each outbound request on
+   * `onEgress` (credentials redacted). Off by default: the record then carries
+   * only the metering fields.
+   */
+  captureEgress?: boolean;
+  /** Per-body cap for `captureEgress`, in bytes. Defaults to 32 KiB. */
+  egressBodyLimit?: number;
 }
 
 export interface InvokeResult {
@@ -104,6 +111,53 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
     statusText: res.statusText,
     headers,
     body: new Uint8Array(await res.arrayBuffer()),
+  };
+}
+
+/**
+ * Build the fetch handler an action/trigger hook's `ctx.fetch` routes through:
+ * run the auth `sign` hook (network-less, the only code holding the credential),
+ * perform the real request on the host, and report the result to `onEgress`.
+ *
+ * Shared by `invoke` and `invokeTriggerHook` so both surfaces sign, enforce the
+ * allowlist and observe egress identically.
+ */
+function signingFetch(
+  app: LoadedApp,
+  auth: LoadedAuth | undefined,
+  credential: unknown,
+  opts: InvokeOptions,
+): (request: SignableRequest) => Promise<WireResponse> {
+  const canSign = !!auth?.hooks.has("sign");
+  return async (request: SignableRequest): Promise<WireResponse> => {
+    let signed = request;
+    if (canSign && auth) {
+      // `sign` runs in its own worker with NO network, and is the only code
+      // given the (live, post-refresh) credential. It injects auth.
+      signed = await runHook<SignableRequest>({
+        entryPath: app.entryPath,
+        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
+        input: { request, credential },
+        readScope: app.dir,
+        timeoutMs: opts.timeoutMs,
+        // no onFetch -> the sign worker cannot make network calls.
+      });
+    }
+    const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
+    const egressStart = Date.now();
+    try {
+      const res = await hostFetch(app.netAllowlist, signed);
+      opts.onEgress?.(
+        egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
+      );
+      return res;
+    } catch (err) {
+      // A denied/failed request is still an egress event worth observing.
+      opts.onEgress?.(
+        egressFailure(signed, err, { ...capture, durationMs: Date.now() - egressStart }),
+      );
+      throw err;
+    }
   };
 }
 
@@ -216,43 +270,11 @@ export async function invoke(
       `Action "${invocation.action}" requires a connection — the app declares auth.`,
     );
   }
-  const canSign = !!auth?.hooks.has("sign");
-
   // 3. Resolve params.
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
-  const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
-    let signed = request;
-    if (canSign && auth) {
-      // `sign` runs in its own worker with NO network, and is the only code
-      // given the (live, post-refresh) credential. It injects auth.
-      signed = await runHook<SignableRequest>({
-        entryPath: app.entryPath,
-        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential },
-        readScope: app.dir,
-        timeoutMs: opts.timeoutMs,
-        // no onFetch -> the sign worker cannot make network calls.
-      });
-    }
-    const egressStart = Date.now();
-    const res = await hostFetch(app.netAllowlist, signed);
-    if (opts.onEgress) {
-      let host = "";
-      try {
-        host = new URL(signed.url).hostname;
-      } catch { /* non-URL requests are already rejected by hostFetch */ }
-      opts.onEgress({
-        host,
-        method: signed.method,
-        status: res.status,
-        responseBytes: res.body?.length ?? 0,
-        durationMs: Date.now() - egressStart,
-      });
-    }
-    return res;
-  };
+  const onFetch = signingFetch(app, auth, credential, opts);
 
   // 5. Invoke the action's `execute` in the sandbox.
   const value = await runHook({
@@ -314,36 +336,7 @@ export async function invokeTriggerHook(
   if (opts.connection) {
     ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
   }
-  const canSign = !!auth?.hooks.has("sign");
-
-  const onFetch = async (request: SignableRequest): Promise<WireResponse> => {
-    let signed = request;
-    if (canSign && auth) {
-      signed = await runHook<SignableRequest>({
-        entryPath: app.entryPath,
-        selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential },
-        readScope: app.dir,
-        timeoutMs: opts.timeoutMs,
-      });
-    }
-    const egressStart = Date.now();
-    const res = await hostFetch(app.netAllowlist, signed);
-    if (opts.onEgress) {
-      let host = "";
-      try {
-        host = new URL(signed.url).hostname;
-      } catch { /* non-URL requests are already rejected by hostFetch */ }
-      opts.onEgress({
-        host,
-        method: signed.method,
-        status: res.status,
-        responseBytes: res.body?.length ?? 0,
-        durationMs: Date.now() - egressStart,
-      });
-    }
-    return res;
-  };
+  const onFetch = signingFetch(app, auth, credential, opts);
 
   return await runHook({
     entryPath: app.entryPath,
