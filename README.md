@@ -7,9 +7,19 @@ The core monorepo for the workflow platform.
 
 ## Purpose
 
-This monorepo defines the primitives, runtime, and SDKs that power workflows across the platform. It is the source of truth for *what a workflow is* and *how its parts compose*.
+This monorepo defines the primitives, runtime, and SDKs of the platform. It is the source of truth
+for **what an integrated API is** — how it's described, called, authenticated, configured, composed,
+and checked.
 
-It contains two halves: the **specification** (the [`rfcs/`](./rfcs) — what a workflow *is*) and a **Deno workspace of packages** (the reference implementation — code that proves the spec runs).
+Workflows are one primitive among many here, not the subject. An App declares Actions and Auth
+methods; a Connection holds a credential; a Function gives an operation a stable interface over a
+swappable implementation; an Endpoint is how anything outside calls in; a Health Check declares how
+the thing should be probed. A Workflow composes several of those into a graph.
+
+It contains two halves: the **specification** ([`rfcs/`](./rfcs) — what each primitive *is*) and a
+**Deno workspace of packages** (the reference implementation — code that proves the spec runs).
+`core` is deliberately **transport-free**: no HTTP server, no database, no credential storage. A
+host supplies those.
 
 ## Spec status
 
@@ -22,7 +32,7 @@ Every RFC carries one of:
 | `Final` | Frozen for the current `manifestVersion`. Breaking changes require a new RFC and a `manifestVersion` bump. |
 | `Superseded` | Replaced by another RFC; carries a pointer to its successor. |
 
-`manifestVersion: "1"` covers the seven primitive RFCs listed below plus the Hook Runtime and Categories vocabulary. Trigger, Webhook, Workflow, and Run will land in `manifestVersion: "2"`. New RFCs use the template at [`rfcs/_template.md`](./rfcs/_template.md).
+`manifestVersion: "1"` covers the primitive RFCs listed below plus the Hook Runtime and Categories vocabulary. **There are 17 RFCs**; Trigger, Workflow, Engine, Node Types, Function, Endpoint and Health Check have all landed since this section was first written, and Webhook and Run are still TBD. New RFCs use the template at [`rfcs/_template.md`](./rfcs/_template.md).
 
 ## Packages
 
@@ -53,10 +63,14 @@ The platform is built from a small set of primitives. Each one has (or will have
 | **Auth** | How a user connects their account to an App (`oauth2` / `apiKey` / `basic` / `bearer` / `custom`) plus lifecycle hooks. | [`rfcs/auth.md`](./rfcs/auth.md) — Final |
 | **Connection** | The stored, per-user result of a completed Auth flow. Holds the opaque credential, display metadata, and lifecycle state. | [`rfcs/connection.md`](./rfcs/connection.md) — Final |
 | **Invocation** | The envelope used to call an Action — binds App, Action, Connection, and resolved params. | [`rfcs/invocation.md`](./rfcs/invocation.md) — Final |
+| **Function** | A saved operation with a **stable declared interface** over a **swappable implementation** — `inputs`/`output` stay fixed while `impl` changes. Switch vendors without breaking callers. | [`rfcs/function.md`](./rfcs/function.md) |
+| **Endpoint** | A named entry point dispatching to a Callable (Function or Workflow), sync or async. How anything outside calls in. | [`rfcs/endpoint.md`](./rfcs/endpoint.md) |
+| **Health Check** | Declared, side-effect-free probes an App publishes so a host can answer "is this working?" without guessing — vendor status, credential liveness, quota, and dependencies the customer owns. | [`rfcs/healthcheck.md`](./rfcs/healthcheck.md) — Draft |
 | **Registry** | Host-side service: the collection of registered Apps, versioned and lifecycle-managed. Datastore-pluggable; reference impl lives in [`w6w-registry`](../registry/). | [`rfcs/registry.md`](./rfcs/registry.md) — Draft |
+| **Trigger** | What starts a run — inbound event or schedule. | [`rfcs/trigger.md`](./rfcs/trigger.md) |
+| **Workflow** | The graph of steps the platform executes. | [`rfcs/workflow.md`](./rfcs/workflow.md), [`rfcs/node-types.md`](./rfcs/node-types.md) |
+| **Engine** | The contract a conforming workflow engine implements. Reference impl: [`w6w-workflow`](../w6w-workflow/). | [`rfcs/engine.md`](./rfcs/engine.md) |
 | **Webhook** | Inbound event delivery from an App. | TBD |
-| **Trigger** | What starts a workflow. | TBD |
-| **Workflow** | The graph of steps the platform executes. | TBD |
 | **Run** | A single execution of a workflow. | TBD |
 
 ### Shared types
@@ -69,7 +83,6 @@ Primitives that are reused inside other manifests rather than declared standalon
 | **ImageObject** | Reusable image reference (icons, screenshots, badges). One container with vector and sized-raster sources. | [`rfcs/image-object.md`](./rfcs/image-object.md) — Final |
 | **Hook Runtime** | The contract every publisher-authored hook runs under: module format, ambient API, error shape, timeouts, sandbox posture, credential isolation. | [`rfcs/hook-runtime.md`](./rfcs/hook-runtime.md) — Final |
 | **Categories** | Controlled vocabulary for App `categories`. | [`rfcs/categories.md`](./rfcs/categories.md) — Final |
-| **Health Check** | Declared, side-effect-free probes an App publishes so a host can answer "is this working?" — vendor status, credential liveness and quota, each addressable and attributable. | [`rfcs/healthcheck.md`](./rfcs/healthcheck.md) — Draft |
 
 ## Build your own app
 
