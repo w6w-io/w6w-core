@@ -40,6 +40,7 @@ const HEALTH_KINDS = ["service", "credential", "quota", "dependency"];
 const HEALTH_SCOPES = ["app", "connection"];
 const HEALTH_CREDENTIALS = ["none", "context", "signed"];
 const HEALTH_SEVERITIES = ["fatal", "degraded", "informational"];
+const HEALTH_FEED_FORMATS = ["atom", "rss", "auto"];
 /** Selector prefixes a `covers` entry may use, besides the bare `*`. */
 const COVERS_PREFIXES = ["action", "resource", "auth", "component"];
 const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
@@ -294,6 +295,8 @@ function validateHealthCheckInto(ctx: Ctx, check: unknown, path: string): void {
     }
   }
 
+  const posture = check.credential ?? (check.kind === "service" ? "none" : "signed");
+
   const allow = isObject(check.network) ? check.network.allow : undefined;
   if (allow !== undefined) {
     if (!Array.isArray(allow) || allow.some((h) => typeof h !== "string")) {
@@ -301,11 +304,55 @@ function validateHealthCheckInto(ctx: Ctx, check: unknown, path: string): void {
     }
     // The security rule from the RFC: widening egress without forcing an
     // unsigned posture would hand a third-party host the user's credential.
-    const posture = check.credential ?? (check.kind === "service" ? "none" : "signed");
     if (posture === "signed") {
       ctx.err(
         `${path}.network.allow`,
         'requires `credential` of "none" or "context" — a signed request must never reach a host outside the app allowlist',
+      );
+    }
+  }
+
+  // A declared feed widens egress to its own host, so it carries the same
+  // unsigned-posture rule as `network.allow`, for the same reason: a status
+  // host is exactly the kind of host that must never see a credential.
+  if (check.feed !== undefined) {
+    if (!isObject(check.feed)) {
+      ctx.err(`${path}.feed`, "must be an object");
+    } else {
+      const url = ctx.reqString(check.feed.url, `${path}.feed.url`);
+      if (url !== undefined) {
+        let parsed: URL | undefined;
+        try {
+          parsed = new URL(url);
+        } catch {
+          ctx.err(`${path}.feed.url`, "must be an absolute URL");
+        }
+        if (parsed && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          ctx.err(`${path}.feed.url`, "must be an http(s) URL");
+        }
+      }
+      if (check.feed.format !== undefined) {
+        ctx.enum(check.feed.format, HEALTH_FEED_FORMATS, `${path}.feed.format`);
+      }
+      if (check.feed.limit !== undefined) {
+        const n = check.feed.limit;
+        if (typeof n !== "number" || !Number.isInteger(n) || n < 1) {
+          ctx.err(`${path}.feed.limit`, "must be a positive integer");
+        }
+      }
+    }
+    if (posture === "signed") {
+      ctx.err(
+        `${path}.feed`,
+        'requires `credential` of "none" or "context" — a feed is fetched unsigned, and a status host must never see a credential',
+      );
+    }
+    // Nothing parses the feed on the App's behalf if there is no probe to hand
+    // it to, and a declared absence has no probe by definition.
+    if (declaresUnavailable) {
+      ctx.err(
+        `${path}.feed`,
+        "cannot be combined with `unavailable` — there is no hook to receive it",
       );
     }
   }

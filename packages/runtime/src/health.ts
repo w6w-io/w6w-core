@@ -10,11 +10,22 @@
  *   - a check's extra `network.allow` hosts are honoured only when unsigned,
  *     so widening egress can never hand a third party the credential.
  */
-import type { Connection, HealthCheck, HealthReport, HealthState } from "@w6w/types";
+import type {
+  Connection,
+  HealthCheck,
+  HealthCheckInput,
+  HealthFeedInput,
+  HealthReport,
+  HealthState,
+} from "@w6w/types";
 import { healthCredential, healthScope, healthSeverity, redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import { signingFetch } from "./runtime.ts";
+import { latestPerId, parseFeed } from "./feed.ts";
+
+/** Entries handed to a hook when the source names no `limit`. */
+const DEFAULT_FEED_LIMIT = 50;
 
 /** One check's outcome, with enough provenance to attribute a verdict. */
 export interface HealthResult {
@@ -86,7 +97,12 @@ export async function checkHealth(
   }
 
   try {
-    const report = await runHealthHook(app, loaded, posture, opts);
+    // A declared feed is fetched and parsed HOST-side, before the hook runs, so
+    // the App receives entries rather than XML. See `fetchFeed`.
+    const input: HealthCheckInput = check.feed
+      ? { feed: await fetchFeed(app, loaded, opts, now) }
+      : {};
+    const report = await runHealthHook(app, loaded, posture, opts, input);
     return stamp(normalizeReport(report));
   } catch (err) {
     return stamp({
@@ -109,11 +125,64 @@ function normalizeReport(value: unknown): HealthReport {
   return r;
 }
 
+/**
+ * Fetch and parse a check's declared feed, host-side.
+ *
+ * Host-side and not in the hook because parsing Atom/RSS is generic and
+ * identical for every publisher, while interpreting an entry is vendor-specific
+ * — so the host does the part that is the same everywhere, and the App does the
+ * part only it knows. The request is unsigned by construction (the posture rule
+ * on `feed` guarantees it) and constrained to the check's own allowlist, into
+ * which the feed's host was folded at load time.
+ *
+ * Never throws: a feed that cannot be read becomes `error` on the input, and a
+ * check that sees it should report `unknown` — a broken feed says nothing about
+ * the vendor.
+ */
+async function fetchFeed(
+  app: LoadedApp,
+  loaded: LoadedHealthCheck,
+  opts: CheckHealthOptions,
+  now: () => Date,
+): Promise<HealthFeedInput> {
+  const source = loaded.check.feed!;
+  const fetchedAt = now().toISOString();
+  const empty = (error: string): HealthFeedInput => ({
+    entries: [],
+    latest: [],
+    fetchedAt,
+    error,
+  });
+
+  try {
+    // No auth: `feed` is bound to an unsigned posture, so `sign` never runs and
+    // a status host never sees a credential.
+    const res = await signingFetch(app, undefined, undefined, {
+      timeoutMs: opts.timeoutMs,
+      onLog: opts.onLog,
+    }, loaded.netAllowlist)({
+      url: source.url,
+      method: "GET",
+      headers: { accept: "application/atom+xml, application/rss+xml, application/xml;q=0.9" },
+    });
+    if (res.status < 200 || res.status >= 300) {
+      return empty(`feed returned ${res.status}`);
+    }
+    const entries = parseFeed(new TextDecoder().decode(res.body), source.format ?? "auto");
+    const limit = source.limit ?? DEFAULT_FEED_LIMIT;
+    const capped = entries.slice(0, limit);
+    return { entries: capped, latest: latestPerId(capped), fetchedAt };
+  } catch (err) {
+    return empty(`feed fetch failed: ${(err as Error).message}`);
+  }
+}
+
 function runHealthHook(
   app: LoadedApp,
   loaded: LoadedHealthCheck,
   posture: ReturnType<typeof healthCredential>,
   opts: CheckHealthOptions,
+  input: HealthCheckInput,
 ): Promise<unknown> {
   const conn = opts.connection;
   // Passing `auth: undefined` is how the caller says "do not sign this", which
@@ -125,7 +194,7 @@ function runHealthHook(
   return runHook<unknown>({
     entryPath: app.entryPath,
     selector: { kind: "health", key: loaded.check.key },
-    input: {},
+    input,
     readScope: app.dir,
     timeoutMs: opts.timeoutMs,
     onLog: opts.onLog,

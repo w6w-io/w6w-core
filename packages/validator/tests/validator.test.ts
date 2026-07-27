@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
+import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import {
   CATEGORIES,
   unknownCategories,
@@ -211,4 +211,73 @@ Deno.test("validateAction accepts a health tag when every param is defaulted", (
     healthCheck: { kind: "quota", severity: "informational" },
   });
   assert(r.ok, JSON.stringify(r.errors));
+});
+
+// --- feed-backed checks (rfcs/healthcheck.md § "Feed-backed checks") --------
+
+Deno.test("health feed: a well-formed source validates", () => {
+  const r = validateHealthCheck({
+    key: "service",
+    title: "Platform status",
+    kind: "service",
+    feed: { url: "https://status.example.com/feed.rss", format: "auto", limit: 25 },
+  });
+  assert(r.ok, JSON.stringify(r.errors));
+});
+
+Deno.test("health feed: a signed check may not declare one", () => {
+  // The security rule: a feed widens egress to a status host, and a status host
+  // is exactly the kind that must never see a credential.
+  const r = validateHealthCheck({
+    key: "quota",
+    title: "Quota",
+    kind: "quota", // defaults to `signed`
+    feed: { url: "https://status.example.com/feed.rss" },
+  });
+  assertFalse(r.ok);
+  assert(r.errors.some((e) => e.path === "healthCheck.feed"));
+});
+
+Deno.test("health feed: an unsigned posture makes it legal again", () => {
+  const r = validateHealthCheck({
+    key: "quota",
+    title: "Quota",
+    kind: "quota",
+    credential: "none",
+    feed: { url: "https://status.example.com/feed.rss" },
+  });
+  assert(r.ok, JSON.stringify(r.errors));
+});
+
+Deno.test("health feed: the url must be an absolute http(s) URL", () => {
+  for (const url of ["/feed.rss", "not a url", "ftp://example.com/feed.rss"]) {
+    const r = validateHealthCheck({ key: "s", title: "S", kind: "service", feed: { url } });
+    assertFalse(r.ok, `expected ${url} to be rejected`);
+    assert(r.errors.some((e) => e.path === "healthCheck.feed.url"));
+  }
+});
+
+Deno.test("health feed: format and limit are constrained", () => {
+  const bad = validateHealthCheck({
+    key: "s",
+    title: "S",
+    kind: "service",
+    feed: { url: "https://x.test/f", format: "json", limit: 0 },
+  });
+  assertFalse(bad.ok);
+  assert(bad.errors.some((e) => e.path === "healthCheck.feed.format"));
+  assert(bad.errors.some((e) => e.path === "healthCheck.feed.limit"));
+});
+
+Deno.test("health feed: cannot be combined with `unavailable`", () => {
+  // A declared absence has no hook, so there is nothing to hand the entries to.
+  const r = validateHealthCheck({
+    key: "s",
+    title: "S",
+    kind: "service",
+    unavailable: { reason: "nothing published" },
+    feed: { url: "https://x.test/f" },
+  });
+  assertFalse(r.ok);
+  assert(r.errors.some((e) => e.path === "healthCheck.feed"));
 });

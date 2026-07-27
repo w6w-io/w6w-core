@@ -113,12 +113,97 @@ export interface HealthCheck {
    * hosts that must never see a credential.
    */
   network?: { allow?: string[] };
+  /**
+   * An Atom or RSS status feed the host fetches and parses BEFORE running the
+   * hook, handing the result to `check` as `input.feed`.
+   *
+   * Declared rather than fetched by the hook because the two halves of reading
+   * a feed belong in different places: parsing Atom/RSS is generic, fiddly and
+   * identical for every publisher, while interpreting what an entry MEANS is
+   * vendor-specific and belongs to the App. See rfcs/healthcheck.md
+   * § "Feed-backed checks".
+   *
+   * The feed's host is added to this hook's allowlist implicitly, exactly as
+   * OAuth endpoint hosts are — so a publisher need not restate it in `network`.
+   * Bound to an unsigned posture for the same reason as `network`: a feed lives
+   * on a status host, and status hosts must never see a credential.
+   */
+  feed?: HealthFeedSource;
   /** Publisher's floor on how often a host may run it. */
   minIntervalSeconds?: number;
   /** Defaults to `fatal` for `kind: "credential"`, `degraded` otherwise. */
   severity?: HealthSeverity;
   /** Present instead of `check` when the vendor publishes nothing. */
   unavailable?: HealthUnavailable;
+}
+
+/** Which feed syntax to expect. `auto` (the default) sniffs the payload. */
+export type HealthFeedFormat = "atom" | "rss" | "auto";
+
+/** A status feed a check reads. See `HealthCheck.feed`. */
+export interface HealthFeedSource {
+  /** Absolute http(s) URL of the Atom or RSS document. */
+  url: string;
+  /**
+   * Defaults to `auto`, which detects the syntax from the payload rather than
+   * the URL or content-type — status hosts serve both from paths that do not
+   * always say which is which.
+   */
+  format?: HealthFeedFormat;
+  /** Cap on entries handed to the hook, newest first. Defaults to 50. */
+  limit?: number;
+}
+
+/**
+ * One feed entry, normalised across Atom and RSS.
+ *
+ * JSON-safe by construction: this crosses the sandbox boundary, so the
+ * timestamp is an ISO string rather than a `Date`.
+ */
+export interface HealthFeedEntry {
+  /**
+   * Stable identity — Atom `<id>`, RSS `<guid>`, else the link. Several entries
+   * sharing one id are successive UPDATES to the same incident, which is the
+   * distinction `latest` exists to resolve.
+   */
+  id?: string;
+  title: string;
+  /** Body as plain text: CDATA unwrapped, markup stripped, entities decoded. */
+  summary: string;
+  /** Body with markup intact, for when the markup carries meaning (an `<li>` list of components). */
+  summaryHtml: string;
+  link?: string;
+  /** ISO 8601. Absent when the entry carried no readable date. */
+  publishedAt?: string;
+}
+
+/** What the host hands a feed-backed check as `input.feed`. */
+export interface HealthFeedInput {
+  /** Every entry, newest first, capped at the source's `limit`. */
+  entries: HealthFeedEntry[];
+  /**
+   * The newest entry per `id` — successive updates folded onto the incident
+   * they describe, newest first. This is almost always what a check wants: a
+   * feed is a log of updates, not a statement of current state, so the newest
+   * entry overall says nothing about whether its incident is still open.
+   */
+  latest: HealthFeedEntry[];
+  /** ISO 8601 — when the host fetched it. */
+  fetchedAt: string;
+  /**
+   * Set when the feed could not be fetched or parsed; `entries` and `latest`
+   * are then empty. A check seeing this should report `unknown`, never `down` —
+   * a broken feed says nothing about the vendor.
+   */
+  error?: string;
+}
+
+/**
+ * What a health `check` hook receives. Empty unless the check declares a
+ * `feed`, so a hook that ignores its input keeps working unchanged.
+ */
+export interface HealthCheckInput {
+  feed?: HealthFeedInput;
 }
 
 /**

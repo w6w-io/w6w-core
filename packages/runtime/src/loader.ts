@@ -212,11 +212,25 @@ function derivedAuthChecks(auths: LoadedAuth[]): HealthCheck[] {
  * honoured only for an unsigned posture; a `signed` check is pinned to the
  * app's own allowlist regardless of what it declared. The validator rejects
  * that combination at author time, and this is the belt to its braces.
+ *
+ * A declared `feed`'s host is allowed implicitly, on the same footing as the
+ * extra hosts and for the same reason — it is a status host, reached unsigned.
+ * Implicit rather than restated in `network.allow` because the URL already says
+ * where it is, exactly as OAuth endpoint hosts are allowed without a publisher
+ * naming them twice.
  */
 export function healthAllowlist(appAllowlist: string[], check: HealthCheck): string[] {
   const posture = check.credential ?? (check.kind === "service" ? "none" : "signed");
   if (posture === "signed") return appAllowlist;
-  return [...new Set([...appAllowlist, ...(check.network?.allow ?? [])])];
+  const extra = [...(check.network?.allow ?? [])];
+  if (check.feed?.url) {
+    try {
+      extra.push(new URL(check.feed.url).hostname);
+    } catch {
+      // A malformed feed URL is the validator's to report; widen nothing.
+    }
+  }
+  return [...new Set([...appAllowlist, ...extra])];
 }
 
 /**

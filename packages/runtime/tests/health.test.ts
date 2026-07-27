@@ -13,7 +13,7 @@ const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", impo
 Deno.test("loader: exposes declared checks and derives one per auth `test`", async () => {
   const app = await loadApp(SENDGRID_DIR);
   const keys = [...app.healthChecks.keys()].sort();
-  assertEquals(keys, ["auth:api-key", "quota", "reachable", "service", "webhooks"]);
+  assertEquals(keys, ["auth:api-key", "feed", "quota", "reachable", "service", "webhooks"]);
 
   // Derived from the auth method — the app declared no credential check itself.
   const derived = app.healthChecks.get("auth:api-key")!;
@@ -34,7 +34,7 @@ Deno.test("loader: an `unavailable` declaration carries no probe", async () => {
 Deno.test("describe: the health surface is part of the app description", async () => {
   const app = await loadApp(SENDGRID_DIR);
   const health = describe(app).health;
-  assertEquals(health.length, 5);
+  assertEquals(health.length, 6);
   assert(health.some((h) => h.key === "service"));
   assert(health.some((h) => h.key === "auth:api-key"));
 });
@@ -240,4 +240,62 @@ Deno.test("a probe that throws becomes `unknown`, never an exception", async () 
   const result = await checkHealth(app, "service");
   assertEquals(result.report.state, "unknown");
   assert(result.report.message?.startsWith("probe failed:"));
+});
+
+// --- feed-backed checks (rfcs/healthcheck.md § "Feed-backed checks") --------
+
+Deno.test("health: a declared feed's host is allowed implicitly", () => {
+  const check: HealthCheck = {
+    key: "feed",
+    title: "Feed",
+    kind: "service",
+    feed: { url: "https://status.example.test/feed.rss" },
+  };
+  const allowed = healthAllowlist(["api.example.test"], check);
+  assert(allowed.includes("status.example.test"), "feed host must be reachable by this hook");
+  assert(allowed.includes("api.example.test"), "app allowlist is still honoured");
+});
+
+Deno.test("health: a signed check never has its feed host added", () => {
+  // The posture rule: a status host must never see a credential. The validator
+  // rejects this pairing at author time; this is the belt to its braces.
+  const check: HealthCheck = {
+    key: "feed",
+    title: "Feed",
+    kind: "quota",
+    credential: "signed",
+    feed: { url: "https://status.example.test/feed.rss" },
+  };
+  assertEquals(healthAllowlist(["api.example.test"], check), ["api.example.test"]);
+});
+
+Deno.test("health: a malformed feed URL widens nothing", () => {
+  const check: HealthCheck = {
+    key: "feed",
+    title: "Feed",
+    kind: "service",
+    feed: { url: "not a url" },
+  };
+  assertEquals(healthAllowlist(["api.example.test"], check), ["api.example.test"]);
+});
+
+Deno.test("health: the fixture's feed check is exposed with its source", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const feed = app.healthChecks.get("feed")!;
+  assert(feed, "fixture declares a feed-backed check");
+  assertEquals(feed.check.feed?.url, "https://status.example.test/feed.rss");
+  assertEquals(feed.check.feed?.limit, 25);
+  assert(
+    feed.netAllowlist.includes("status.example.test"),
+    "the feed host is folded into the check's allowlist at load time",
+  );
+});
+
+Deno.test("health: an unreachable feed reports unknown, never down", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  // status.example.test does not resolve, so the host-side fetch fails and the
+  // hook receives `feed.error` — a broken feed says nothing about the vendor.
+  const result = await checkHealth(app, "feed", { timeoutMs: 5000 });
+  assertEquals(result.report.state, "unknown");
+  assert(result.report.message, "the reason is carried through to the report");
 });
