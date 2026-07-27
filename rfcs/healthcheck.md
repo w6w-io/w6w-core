@@ -191,6 +191,82 @@ violates this, because the whole point is that a host can call it unattended.
 service, and an App should be able to say so rather than leave a host to conclude the
 publisher forgot.
 
+### Feed-backed checks
+
+Plenty of vendors publish an Atom or RSS status feed instead of — or alongside — a JSON
+status API. A check may **declare** one with `feed`, and the host fetches and parses it
+*before* running the hook, handing the entries over as `input.feed`:
+
+```ts
+const service: HealthCheckDefinition = {
+  key: "service",
+  title: "Platform status",
+  kind: "service",
+  feed: { url: "https://status.example.com/feed.rss" },   // host fetches + parses
+
+  check({ feed }, _ctx) {
+    if (feed?.error) return { state: "unknown", message: feed.error };
+    const open = feed!.latest.filter((e) => !/^status:\s*resolved/i.test(e.summary));
+    return open.length === 0
+      ? { state: "ok" }
+      : { state: "degraded", message: open.map((e) => e.title).join("; ") };
+  },
+};
+```
+
+The split is deliberate, and it is the whole reason this is declarative rather than
+something each publisher writes by hand: **parsing Atom/RSS is generic and identical for
+every publisher; interpreting what an entry means is vendor-specific.** So the host does
+the part that is the same everywhere, and the App does the part only it knows. A publisher
+never reimplements a feed reader, and therefore never reimplements one subtly wrong.
+
+#### A feed is a log of updates, not a statement of current state
+
+This is the trap the shape exists to prevent, and it is not hypothetical. Mistral's status
+feed carries **50 entries describing 26 incidents**: every update to an incident is its own
+entry, and the newest entry for a *resolved* incident still carries the incident's original
+title.
+
+```xml
+<title><![CDATA[Audio API Degraded]]></title>          <!-- still the title … -->
+<description><![CDATA[Status: Resolved<br/>…]]></description>   <!-- … but it is fixed -->
+```
+
+A check that reads the newest entry's title reports an outage that ended days ago. So the
+host supplies both projections and names them so the difference is hard to miss:
+
+- **`entries`** — every entry, newest first, capped at `limit`.
+- **`latest`** — the newest entry *per `id`*, i.e. successive updates folded onto the
+  incident they describe. This is almost always the one a check wants.
+
+Interpretation still belongs to the App, because only it knows the vendor's vocabulary.
+Where a vendor writes a machine-readable status (Mistral prefixes every update body with
+`Status: Resolved` / `Status: Investigating`), read it; guessing from prose when a real
+field exists is inexcusable. Where a vendor offers nothing like it, report `unknown` rather
+than inventing a state.
+
+#### Egress and posture
+
+A feed lives on a status host, which is exactly the kind of host that must never see a
+credential. So `feed` carries the same binding as `network.allow`:
+
+> A check declaring `feed` MUST have `credential` of `none` or `context` — never `signed`.
+> Validators MUST reject the combination, and a host MUST fetch the feed unsigned.
+
+The feed's host is added to that hook's allowlist **implicitly**, on the same footing as
+OAuth endpoint hosts: the URL already says where it is, and making a publisher restate it
+in `network.allow` would be redundant bookkeeping that a publisher can only get wrong.
+
+`feed` and `unavailable` are mutually exclusive — an absence has no hook to hand entries to.
+
+#### Choosing Atom over RSS
+
+Where a vendor serves both (Slack publishes `/feed/atom` and `/feed/rss` with identical
+content), prefer Atom: its `<updated>` says when an entry last *changed*, where RSS's
+`<pubDate>` conflates that with first publication — and "changed lately" is usually the
+question. `format` defaults to `auto`, which sniffs the payload rather than trusting the
+URL or content-type, because status hosts serve both from paths that do not say which.
+
 ## Shape
 
 ```jsonc
@@ -295,10 +371,25 @@ const siteReachable: HealthCheckDefinition = {
 | `covers` | string[] | ⬜ | Selectors this check speaks for. Defaults to `["*"]`. |
 | `credential` | enum | ⬜ | `none` \| `context` \| `signed`. See [Credential posture](#credential-posture). Defaults to `none` for `service`, `signed` otherwise. |
 | `network` | object | ⬜ | `{ allow: string[] }` — hosts this check may reach, **in addition to** the App's allowlist and **only** inside this hook's worker. |
+| `feed` | object | ⬜ | `{ url, format?, limit? }` — an Atom/RSS status feed the host fetches and parses before the hook runs, delivered as `input.feed`. Same unsigned-posture binding as `network`; the feed's host is allowed implicitly. See [Feed-backed checks](#feed-backed-checks). |
 | `minIntervalSeconds` | number | ⬜ | Publisher's floor on how often a host should run it. A host MUST NOT run it more often. |
 | `severity` | enum | ⬜ | `fatal` \| `degraded` \| `informational`. Defaults to `fatal` for `credential`, `degraded` otherwise. |
 | `unavailable` | object | ⬜ | `{ reason: string }`. Declares that no check exists. Mutually exclusive with `check`. |
 | `check` | hook | ✅¹ | The probe. ¹Required unless `unavailable` is set. |
+
+### Field reference — `input.feed` (present only for a feed-backed check)
+
+| Field | Type | Description |
+|---|---|---|
+| `entries` | `HealthFeedEntry[]` | Every entry, newest first, capped at `limit` (default 50). |
+| `latest` | `HealthFeedEntry[]` | Newest entry **per `id`** — updates folded onto their incident. Usually the one to read. |
+| `fetchedAt` | string | ISO 8601, host-stamped. |
+| `error` | string | Set when the feed could not be read; both arrays are then empty. Report `unknown`. |
+
+A `HealthFeedEntry` is `{ id?, title, summary, summaryHtml, link?, publishedAt? }`, normalised
+across Atom and RSS. `summary` is plain text; `summaryHtml` keeps markup for when the markup
+carries meaning (a vendor listing affected components as an `<li>` list). `publishedAt` is an
+ISO string, not a `Date` — the value crosses the sandbox boundary.
 
 ### Field reference — `HealthReport` (the hook's return)
 
@@ -387,6 +478,9 @@ A host claiming support MUST:
    `context`, MUST NOT supply `ctx.connection` to a `none` check, and MUST reject at load
    time any check that pairs its own `network.allow` with `credential: "signed"`.
 7. **Never worsen a verdict on an `informational` check.**
+8. **Fetch a declared `feed` itself**, unsigned, before invoking the hook, and deliver both
+   projections (`entries` and `latest`). A fetch or parse failure MUST become
+   `input.feed.error` rather than an exception, so the check can report `unknown`.
 
 Fixtures: [`fixtures/apps/sendgrid/health/`](../fixtures/apps/sendgrid/health/) declares one
 check of each credential posture plus an `unavailable`; the conformance cases live under
@@ -400,6 +494,7 @@ check of each credential posture plus an `unavailable`; the conformance cases li
 | Spec rules, incl. the unsigned-egress rule and the tagged-Action rule | [`@w6w/validator`](../packages/validator/src/validate.ts) |
 | Loading, `auth:*` derivation, per-check allowlist composition | [`runtime/src/loader.ts`](../packages/runtime/src/loader.ts) |
 | `checkHealth()`, posture enforcement, `rollUpHealth()` | [`runtime/src/health.ts`](../packages/runtime/src/health.ts) |
+| Atom/RSS parsing, `latestPerId` fold | [`runtime/src/feed.ts`](../packages/runtime/src/feed.ts) |
 | `describe()` exposure, sandbox selector | [`runtime/src/runtime.ts`](../packages/runtime/src/runtime.ts), [`sandbox/`](../packages/runtime/src/sandbox/) |
 
 The posture rules are enforced in two places on purpose. The validator rejects a `signed`
@@ -417,6 +512,7 @@ Staged, and non-breaking at every step.
 | 2 | Host replaces its arbitrary-Action probe with the derived checks | No — strictly more correct. **Pending** — the reference host still probes an arbitrary Action |
 | 3 | Publishers add `kind: "service"` / `"quota"` checks where the vendor supports one | No — additive |
 | 4 | Validator warns when an App declares neither a check nor `unavailable` for `service` | Warning only |
+| 5 | Add `feed` so a vendor's Atom/RSS status feed is declared rather than hand-parsed per App | No — additive; a check without `feed` still receives `{}`. **Done** |
 
 The 35 first-party Apps already carry the research this needs: each documents its vendor
 status endpoint, its credential probe and its quota mechanism, so step 3 is transcription

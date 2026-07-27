@@ -5,11 +5,12 @@ import service from "./health/service.ts";
 import reachable from "./health/reachable.ts";
 import quota from "./health/quota.ts";
 import unavailable from "./health/unavailable.ts";
+import feed from "./health/feed.ts";
 
 export default {
   actions: [sendEmail],
   auth: [apiKey],
   // One of each credential posture, plus a declared absence — the fixture the
   // conformance tests run against.
-  healthChecks: [service, reachable, quota, unavailable],
+  healthChecks: [service, reachable, quota, unavailable, feed],
 } satisfies AppDefinition;

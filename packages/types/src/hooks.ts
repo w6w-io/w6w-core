@@ -11,7 +11,7 @@ import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
 import type { RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
-import type { HealthReport } from "./health.ts";
+import type { HealthCheckInput, HealthReport } from "./health.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -115,13 +115,19 @@ export type SignHook = (
 ) => SignableRequest | Promise<SignableRequest>;
 
 /**
- * Health `check` — a declared, side-effect-free probe. Takes no input: a health
- * check that needed configuring would not be one a host could run unattended.
+ * Health `check` — a declared, side-effect-free probe.
+ *
+ * Input is empty unless the check declares a `feed`, in which case the host has
+ * already fetched and parsed it and hands the entries over as `input.feed`.
+ * Nothing else is ever passed: a check that needed *configuring* would not be
+ * one a host could run unattended, and the feed is host-supplied data, not
+ * configuration.
+ *
  * What it may reach depends on the check's `credential` posture — a `none` or
  * `context` check is never routed through `sign`.
  */
 export type HealthCheckHook = (
-  input: Record<string, never>,
+  input: HealthCheckInput,
   ctx: HookContext,
 ) => HealthReport | Promise<HealthReport>;
 

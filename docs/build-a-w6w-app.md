@@ -280,23 +280,51 @@ Commands (from the template):
   action: "<key>", params: {…} })`. Needs
   `deno run --unstable-worker-options -A`.
 
-## Health checks (proposed — Draft RFC)
+## Health checks
 
 An App may declare probes a host runs to answer "is this working?": vendor status,
 credential liveness, quota headroom. `Auth.test` already covers the credential case and is
-derived into that surface automatically, so **nothing is required of you today**. Adding a
-vendor-status or quota check is additive — see [`rfcs/healthcheck.md`](../rfcs/healthcheck.md),
-which is `Draft` and not yet implemented in `@w6w/types`.
+derived into that surface automatically, so **nothing is required of you today** — adding a
+`service` or `quota` check is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
 
-Two things to know before it lands, because they shape how you write `test` now:
+Four things to know:
 
 - **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
   a scope the credential may legitimately lack reports a working App as broken. Prefer a
   dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
   cheapest read available.
 - **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
-  not be added to `w6w.network.allow` to satisfy a probe — the RFC gives health checks their
-  own per-hook allowlist instead.
+  not be added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook
+  allowlist via `network.allow`, honoured only for an unsigned posture.
+- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no
+  hook is a first-class answer, and a better one than a silent gap. Give it
+  `severity: "informational"`, or the permanent `unknown` it reports will pin your App's
+  verdict there forever.
+- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it
+  with `feed` and the host fetches and parses it for you:
+
+  ```ts
+  const service: HealthCheckDefinition = {
+    key: "service",
+    title: "Platform status",
+    kind: "service",
+    feed: { url: "https://status.example.com/feed.rss" },   // host fetches + parses
+
+    check({ feed }, _ctx) {
+      if (feed?.error) return { state: "unknown", message: feed.error };
+      const open = feed!.latest.filter((e) => !/^status:\s*resolved/i.test(e.summary));
+      return open.length === 0
+        ? { state: "ok" }
+        : { state: "degraded", message: open.map((e) => e.title).join("; ") };
+    },
+  };
+  ```
+
+  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current
+  state**: most vendors emit one entry per *update*, so the newest entry for a resolved
+  incident still carries that incident's original title, and judging by it reports an
+  outage that ended days ago. `latest` is the host's fold to one entry per incident.
+  The feed's host is allowlisted implicitly, so do not restate it in `network.allow`.
 
 ## Triggers (advanced / optional)
 
