@@ -328,6 +328,113 @@ Because the in-graph caller reuses the same `invokeFunction` / `enqueueRun` path
 dispatch table, no new engine, credential, source, or sandbox path is introduced — the wait vs
 no-wait choice is a host concern owned by `ctx.invokeCallable`, not the engine.
 
+## Amendment — 2026-07-27: the `action` target arm
+
+> This section is **additive**. It leaves the [Callable](#callable) union **unchanged** — a Callable
+> is still one hop, to a Function or a Workflow ([Open-Q#3](#open-questions)), and `@w6w/call` is
+> untouched. It widens only what an **Endpoint's `target`** may be.
+
+An Endpoint may now dispatch directly to **one app Action**, without an intervening Function:
+
+```ts
+type ActionTarget = {
+  kind: "action";
+  uses: { app: string; action: string; connection?: string | null };
+  with?: Record<string, unknown>;   // Endpoint input → the action's params
+};
+
+type EndpointTarget = Callable | ActionTarget;   // Endpoint.target
+```
+
+**Why.** The Function primitive exists to make an operation *vendor-abstractable* — a canonical
+interface with a swappable `impl`. An operator who just wants "this named entry point runs this app
+action" was forced to create a throwaway Function to carry the binding, which added a level of
+indirection that abstracted nothing. The `action` arm removes that ceremony; promoting such an
+Endpoint to a real Function or a Workflow later replaces only `target`, exactly like every other
+target change, and `id`, `key`, and `input` are preserved so callers do not break.
+
+**Shape and adapter.** `uses` is the same `{ app, action, connection? }` triple a workflow Step's app
+arm and a Function's [`impl`](./function.md#adapter) use, and `with` is the same adapter mapping,
+resolved by `resolveWith` against a scope carrying `{ inputs }` — so `{ "$": "inputs.to" }` reads the
+Endpoint's declared `input`. **`with` omitted ⇒ the inbound payload is passed to the action as its
+params unchanged**, matching the pass-through rule `input` already has.
+
+**Dispatch.** The `action` arm is **synchronous**, like the Function arm, and routes through the same
+single `invokeAction` choke point every other action path uses — which keeps ownership of connection
+resolution, entitlement, tenantAuth, metering, and the sandbox. The result envelope gains a third arm:
+
+| `target.kind` | Dispatch | Model | Result envelope | HTTP |
+|---|---|---|---|---|
+| `"action"` | `invokeAction(uses, resolveWith(with, { inputs }))` | **synchronous** — returns a value | `{ kind: "action", output }` | `200` |
+
+Callers already branch on the `kind` discriminant; a caller that does not know the `action` tag sees
+a new tag rather than a silently reshaped `function` result. `POST /run` maps this arm onto its
+existing `{ kind: "action", value }` envelope, so that surface is unchanged.
+
+**Unchanged by this amendment.** The Callable union, `@w6w/call` and `ctx.invokeCallable` (which
+still take a Callable, not an `EndpointTarget`), the exposure fence (HITL-1), and the Function and
+Workflow arms' behavior.
+
+## Amendment — 2026-07-27: the universal invoke URL and inbound `security` (HITL-1, partial)
+
+> This section **resolves the auth half of [Open-Q#1](#open-questions)** and leaves the *custom
+> public path* half fenced. It does not change any dispatch semantics.
+
+### One URL for everything runnable
+
+Every runnable thing is reachable at a single path, keyed by URN:
+
+```
+POST <PUBLIC_BASE_URL>/invoke/<urn>          body: the payload, verbatim
+POST <PUBLIC_BASE_URL>/invoke/conn_…?action=<key>
+```
+
+`urn` is a `conn_` / `fn_` / `wf_` / `ep_` id, and an internal router resolves the prefix to the
+same runner the dedicated routes use — there is no new execution path, and no per-resource URL
+vocabulary for a caller to learn. The body **is** the payload (no `{input}` envelope); `?action=`
+names the app action, which only a connection URN needs. The pre-existing per-resource invoke routes
+are unchanged.
+
+A host MUST render an Endpoint's callable URL from its configured public base (the studio never
+assembles a hostname), and this URL — not an internal path — is what an operator hands to a caller.
+
+### Inbound `security`
+
+`exposure` gains a **live** `security` block declaring how an inbound caller authenticates:
+
+```jsonc
+"exposure": {
+  "security": { "auth": "header", "headerName": "X-API-Key", "headerValue": "…" }
+}
+```
+
+| `auth` | Who may call | Runs as |
+|---|---|---|
+| `platform` (**default**, and the value assumed when `security` is absent) | a platform bearer token — a w6w token or a partner OIDC token, resolved to a Principal exactly as on every other route | the **caller** |
+| `none` | anyone with the URL | the Endpoint's **owner** |
+| `basic` | HTTP Basic matching `basicUser`/`basicPassword` | the Endpoint's **owner** |
+| `header` | a request carrying `headerName: headerValue` | the Endpoint's **owner** |
+| `jwt` | a Bearer JWT verified HS256 against `jwtSecret` | the Endpoint's **owner** |
+
+The non-`platform` modes are exactly the modes the [`@w6w/webhook`](./trigger.md) trigger already
+enforces on its public receive URL — deliberately the same set, verified by one shared implementation,
+so an operator learns one inbound-security model for the whole platform.
+
+**Conformance for an exposed Endpoint.** A host that implements `security` MUST:
+
+- treat an absent `security` block as `platform`, so an Endpoint written before this amendment keeps
+  its previous protection;
+- run a **non-`platform`** invocation as the Endpoint's stored **owner** scope, never as a
+  caller-supplied identity — a request that carries no platform identity cannot choose one;
+- expose **only Endpoints** this way: a `conn_`/`fn_`/`wf_` URN always takes the platform path, so
+  exposure is a deliberate per-Endpoint act rather than something a URN guess can reach;
+- keep the configured secrets **write-only** — encrypted at rest, masked on read, and a save that
+  echoes the mask preserves the stored value.
+
+**Still fenced.** A custom public *path* (`exposure.http.path`) remains declarative-only: the callable
+URL is always `/invoke/<urn>`. `exposure.http.method`/`auth` likewise stay legacy descriptors — the
+live policy is `exposure.security`.
+
 ## Status ladder
 
 - `Draft` — under active design; fields and shape may change without notice.
