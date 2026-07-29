@@ -359,11 +359,21 @@ succeeds. It is expressed by the new optional `Edge.when` field:
 edge meant before this amendment. A host MUST reject a `when` value outside the two-member enum at
 **load time**, alongside the graph validations in [Planning](#planning).
 
-**Outcome selects the outgoing edges.** When a step reaches a terminal status, the engine activates
-that step's outgoing edges whose `when` matches the outcome and marks the remaining outgoing edges
-**skipped**. A step reachable only through skipped edges is recorded `status: "skipped"` — the same
-propagation the unmatched branch of `if` already produces. Success routing and error routing are one
-mechanism, not two.
+**Outcome selects the outgoing edges.** A step that ends `succeeded` activates its `when: "success"`
+edges (an omitted `when` is one of them) and marks its outgoing `when: "error"` edges **skipped**. A
+step that ends `failed` **and declares at least one outgoing `when: "error"` edge** does the
+converse: it activates those error edges and marks its outgoing success edges **skipped**. A step
+reachable only through skipped edges is recorded `status: "skipped"` — the same propagation the
+unmatched branch of `if` already produces. Success routing and error routing are one mechanism, not
+two.
+
+**A failing step with no error edge is left to `onError`.** When a step ends `failed` and declares
+**no** outgoing `when: "error"` edge, the rule above does not fire: that step's success edges are
+**not** skipped, and its `onError` alone decides. `"fail"` (the default) ends the run; `"continue"`
+and `"continue-record"` proceed along the step's ordinary outgoing edges, so the next step runs
+exactly as it did before `Edge.when` existed — `"continue-record"` additionally keeping the
+[StepError](#steperror) in the run's end state. Skipping a step's success lane on failure is what an
+**authored error edge** buys; failing alone never does it.
 
 **An error edge overrides `onError`.** When a step declares at least one outgoing `when: "error"`
 edge, that edge — not the step's `onError` — decides what happens on failure. The run takes the
