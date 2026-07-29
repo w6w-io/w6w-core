@@ -141,6 +141,14 @@ skipped. The engine keys a skipped edge by `(from, to, when)`, so a success edge
 between the same pair of steps are distinct keys; a step that is the target of both therefore runs
 **exactly once**, on whichever path is live.
 
+**An unmatched `if` skips every outgoing edge.** [`@w6w/control` · `if`](#w6wcontrol--if) whose
+`condition` evaluates false treats **all** of its outgoing edges as skipped, error edges included —
+even though the step itself ends `succeeded`, which is why the generic outcome rule above must not be
+read as activating that step's success edges. The two rules do not conflict, because marking an edge
+skipped is **additive**: a routing decision may only add edges to the skipped set, and an edge once
+marked skipped is **never undone**. An engine that implements the success/error split by *replacing*
+the skipped set rather than adding to it silently breaks `if`.
+
 **Precedence.** A step that declares at least one outgoing `when: "error"` edge routes its failure
 down that edge and the run continues; the step's `onError` is **not** consulted for that step. A step
 with no error edge is unchanged — `onError` (`fail` / `continue` / `continue-record`) decides, after

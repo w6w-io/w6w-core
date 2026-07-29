@@ -46,7 +46,7 @@ The graph is either **explicit** (via `edges`) or **implicit** (when no edges ar
 
 Execution is **checkpointed**. After every step, the engine persists a `StepExecution` (input, output, status, timings) plus the run's updated status. If the engine crashes mid-run, the host reads the `RunState` back and resumes from the first non-terminal step. Replays reuse recorded step outputs verbatim — no re-invocation of `execute` — so historical runs remain deterministic even if upstream apps change behavior.
 
-Steps have **retry** and **on-error** policies. Retries apply to a single step's Invocation; when retries are exhausted, `onError` decides whether the run fails (`fail`, the default) or continues to the next step (`continue`). Retry policy honors the Invocation's `retryable` classification: `phase: "auth"` errors are never retried (credentials aren't going to change mid-run), `phase: "execute"` errors are retried only when the action declares `idempotent: true` or the error object marks itself `retryable: true`.
+Steps have **retry** and **on-error** policies. Retries apply to a single step's Invocation; when retries are exhausted, `onError` selects one of three outcomes: `fail` (the default) aborts the run, `continue` proceeds to the next step, and `continue-record` proceeds **and** keeps the step's [StepError](#steperror) in the run's end state so the failure stays observable. A step that declares an authored **error edge** (`Edge.when: "error"`) is the exception: its failure routes down that edge and its `onError` is not consulted — see [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen), which is the governing text for both. Retry policy honors the Invocation's `retryable` classification: `phase: "auth"` errors are never retried (credentials aren't going to change mid-run), `phase: "execute"` errors are retried only when the action declares `idempotent: true` or the error object marks itself `retryable: true`.
 
 The engine never touches the outside world directly. Every operational effect — calling an app, writing a log, checkpointing state, scheduling a delay, enqueueing a fan-out job — flows through `WorkflowContext`. This is the same shape [HookContext](./hook-runtime.md#context) has for action `execute`: a thin abstraction hostable in-process, over HTTP, or against a test double, without engine changes.
 
@@ -104,6 +104,7 @@ The engine never touches the outside world directly. Every operational effect �
 | `variables` | [WorkflowVariable](#workflowvariable)[] | ⬜ | Inputs collected from the caller / trigger event and made available as `vars.*`. |
 | `steps` | [Step](#step)[] | ✅ | The graph nodes. At least one. |
 | `edges` | [Edge](#edge)[] | ⬜ | Directed dependencies. When absent, the engine treats `steps` as a linear chain in declared order. |
+| `settings` | object | ⬜ | `{ autoSave?, savePosition?, viewport? }` — authoring presentation for this workflow. Declarative only; the engine ignores it. `autoSave` and `savePosition` **default to `true`** when omitted. See [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings). |
 
 #### Step
 
@@ -119,6 +120,7 @@ The engine never touches the outside world directly. Every operational effect �
 | `onError` | enum | ⬜ | `"fail"` (default), `"continue"`, or `"continue-record"`. Applied when retries are exhausted: `fail` aborts the run; `continue` swallows the failure and proceeds; `continue-record` proceeds **and** rolls the step's [StepError](#steperror) into the run's end state (`RunState.stepErrors`) so the failure stays observable. Overridden, for the step it is declared on, by an authored error edge — see [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
 | `ports` | object | ⬜ | `{ in?, out? }` — declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`. `in > 1` opts the step into accepting multiple inbound edges (a fan-in node). See [Node Types RFC · Ports & cardinality](./node-types.md#ports--cardinality). |
 | `notes` | string | ⬜ | Free-form author notes carried on the step. Declarative only — the engine ignores it. |
+| `position` | object | ⬜ | `{ x, y }` — the step's coordinate on an authoring tool's canvas. Declarative only — the engine ignores it. Omitted ⇒ the editor lays the step out itself, exactly as today. See [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings). |
 
 #### Edge
 
@@ -406,3 +408,93 @@ a failure reaches a step that declares neither an error edge nor a continuing `o
 definitions are JSON, so existing `manifestVersion: "2"` workflows — every edge of which is
 implicitly a success edge — remain valid and unchanged with **no migration**. A host that does not
 understand `when` reads every edge as `when: "success"`, which is exactly the pre-existing behavior.
+
+## Amendment — 2026-07-29: authoring presentation (`Step.position`, `Workflow.settings`)
+
+> This section is **additive** to the [Workflow](#workflow) and [Step](#step) shapes above; it
+> introduces no breaking change, no new host primitive, and no change to any existing field. It adds
+> two optional fields that carry **authoring presentation** — where a step sits on an editor's
+> canvas, and how an editor should behave while someone edits this workflow. **The engine ignores
+> both fields entirely**: they are purely declarative, exactly like [`Step.notes`](#step). No plan,
+> no checkpoint, no expression scope, and no [Conformance](#conformance) rule reads them, and a
+> workflow's execution is byte-for-byte identical with them present, absent, or arbitrary. It is
+> independent of, and does not interact with,
+> [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen).
+> **HITL-6** asked whether a workflow's arrangement and its auto-save preference belong to *the
+> workflow* or to *the person looking at it*; this amendment takes the **workflow** answer — both
+> fields live in the workflow document, so everyone who opens a workflow sees the same arrangement
+> and the same preferences.
+
+Authoring tools need two things the pre-amendment model cannot carry: **where each step was placed**
+on the canvas, and **per-workflow authoring preferences** (does editing save itself, is the
+arrangement persisted at all, and what was the last camera position). Both are presentation, not
+semantics, so they enter the model as optional declarative fields rather than as engine behaviour.
+
+```ts
+// on Step
+position?: { x: number; y: number };
+
+// on Workflow
+settings?: {
+  autoSave?: boolean; // omitted ⇒ true
+  savePosition?: boolean; // omitted ⇒ true
+  viewport?: { x: number; y: number; zoom: number };
+};
+```
+
+### `Workflow.settings`
+
+`settings` is itself optional; when the object is absent, every member below takes its own default.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `settings.autoSave` | boolean | ⬜ | **`true`** | Whether an authoring tool persists edits to this workflow without an explicit save action. |
+| `settings.savePosition` | boolean | ⬜ | **`true`** | Whether an authoring tool persists step coordinates (`Step.position`) and `settings.viewport` when it saves. When `false`, an authoring tool does not write them; any values already stored are left as they are, not erased. |
+| `settings.viewport` | object | ⬜ | *none* | `{ x: number, y: number, zoom: number }` — the last camera position of the canvas, so reopening the workflow restores the view. No default: a workflow with no `viewport` opens at whatever view the editor computes, exactly as today. |
+
+`viewport` sits **inside** `settings` deliberately, so exactly one new top-level key enters the
+portable workflow document. All three members are the same thing — authoring presentation for this
+workflow — and they belong under one key.
+
+**`autoSave` and `savePosition` default to `true` when omitted.** This is the single most important
+sentence in this amendment, and it is *deliberately unlike* the house rule that
+[`ports`](./node-types.md#ports--cardinality) and [`onError`](#step) follow, where an omitted field
+reproduces prior behaviour. Here it does **not**: omitting `autoSave` means auto-save is **on**, and
+omitting `savePosition` means positions are **persisted**, neither of which is what a host did before
+this amendment. That is intended — the product requires both features **on by default**, so the
+absent-value reading must be `true`, not `false` and not "whatever happened before". Concretely:
+`settings.autoSave ?? true` and `settings.savePosition ?? true`. An implementation that reads either
+as `?? false`, or that treats an absent `settings` object as "both off", contradicts this amendment.
+Only an explicit `false` turns a feature off.
+
+### `Step.position`
+
+`position` is the step's coordinate on an authoring tool's canvas: `{ x: number, y: number }`, in the
+editor's own coordinate space (the spec pins no unit, origin, or grid — those are the authoring
+tool's).
+
+**Rename-safe by construction.** Because the coordinate travels **with the step**, renaming a step id
+carries its position along untouched: there is no workflow-level `id → {x,y}` map to keep in step
+with renames, and therefore no orphaned entries and no id fix-up. This is why coordinates attach
+per-`Step` rather than as one layout map on the workflow.
+
+**No positions is a valid workflow.** `position` is optional per step, so a workflow whose steps
+carry none — every workflow authored before this amendment — is laid out by the editor exactly as it
+is today, from the graph alone. Partial coverage is likewise valid: an editor places the steps that
+declare a `position` and computes the rest.
+
+### Storage
+
+Both fields live in the **workflow document itself** — the same JSON object that already carries
+`steps` and `edges`. A host that stores a workflow definition as an opaque document (the reference
+host stores it in an existing `definition` jsonb column) therefore needs **no new column and no
+migration**; the two fields round-trip as ordinary members of the document. This RFC pins no storage
+mechanism beyond that: what is normative is that both fields are part of the portable workflow
+document, so a workflow exported from one host and imported into another keeps its arrangement.
+
+**Additive & backward-compatible.** `settings` is a new **optional** field on `Workflow` and
+`position` is a new **optional** field on `Step`; workflow definitions are JSON, so existing
+`manifestVersion: "2"` workflows — none of which declares either — remain valid and unchanged with
+**no migration**. A host that does not understand them ignores them, which is exactly the
+pre-existing behavior; an engine is required to do precisely that. The one thing a host MUST NOT do
+is read an omitted `autoSave` or `savePosition` as `false`.
