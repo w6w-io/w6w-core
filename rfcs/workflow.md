@@ -116,7 +116,9 @@ The engine never touches the outside world directly. Every operational effect �
 | `uses.connection` | string \| null | ⬜ | Connection id. Required when the action's app declares auth and the action doesn't opt out with `requiresAuth: false`. |
 | `with` | object | ⬜ | Param values. Each value is a literal, an object, an array, or an expression marker. See [Expression markers](#expression-markers). |
 | `retry` | [RetryPolicy](#retrypolicy) | ⬜ | How to retry on failure. Defaults to no retry. |
-| `onError` | enum | ⬜ | `"fail"` (default) or `"continue"`. When retries are exhausted, `continue` records the failure and proceeds; `fail` aborts the run. |
+| `onError` | enum | ⬜ | `"fail"` (default), `"continue"`, or `"continue-record"`. Applied when retries are exhausted: `fail` aborts the run; `continue` swallows the failure and proceeds; `continue-record` proceeds **and** rolls the step's [StepError](#steperror) into the run's end state (`RunState.stepErrors`) so the failure stays observable. Overridden, for the step it is declared on, by an authored error edge — see [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
+| `ports` | object | ⬜ | `{ in?, out? }` — declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`. `in > 1` opts the step into accepting multiple inbound edges (a fan-in node). See [Node Types RFC · Ports & cardinality](./node-types.md#ports--cardinality). |
+| `notes` | string | ⬜ | Free-form author notes carried on the step. Declarative only — the engine ignores it. |
 
 #### Edge
 
@@ -124,6 +126,7 @@ The engine never touches the outside world directly. Every operational effect �
 |---|---|---|---|
 | `from` | string | ✅ | Step id. |
 | `to` | string | ✅ | Step id. |
+| `when` | enum | ⬜ | `"success"` (default) or `"error"` — which outcome of the `from` step activates this edge. `"success"` activates when that step succeeds, `"error"` when it fails. **An omitted `when` means `"success"`**, so every pre-existing edge is a success edge. See [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
 
 #### WorkflowVariable
 
@@ -332,3 +335,74 @@ The `@w6w/workflow` reference engine + its test fixtures constitute the executab
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for `manifestVersion: "2"`. Breaking changes require a new RFC and a `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-07-29: failure-conditioned edges (`Edge.when`)
+
+> This section is **additive** to the [Edge](#edge) shape and the [Execution model](#execution-model)
+> above; it introduces no breaking change and no new host primitive. It adds one optional field to
+> `Edge` and pins how a step's **failure** is routed along the graph. Everything it relies on already
+> exists in the model: plan-time cycle rejection, and the edge-skip propagation the unmatched branch
+> of `@w6w/control` · `if` already uses. Where this section and the pre-amendment prose on `onError`
+> disagree, **this section governs**.
+
+An **error edge** is an edge that activates when its source step **fails**, instead of when it
+succeeds. It is expressed by the new optional `Edge.when` field:
+
+| Value | Meaning |
+|---|---|
+| `"success"` | The edge activates when the `from` step reaches `status: "succeeded"`. **The default.** |
+| `"error"` | The edge activates when the `from` step reaches `status: "failed"`. |
+
+**Default.** `when` is optional and its omission means `"success"` — which is exactly what every
+edge meant before this amendment. A host MUST reject a `when` value outside the two-member enum at
+**load time**, alongside the graph validations in [Planning](#planning).
+
+**Outcome selects the outgoing edges.** When a step reaches a terminal status, the engine activates
+that step's outgoing edges whose `when` matches the outcome and marks the remaining outgoing edges
+**skipped**. A step reachable only through skipped edges is recorded `status: "skipped"` — the same
+propagation the unmatched branch of `if` already produces. Success routing and error routing are one
+mechanism, not two.
+
+**An error edge overrides `onError`.** When a step declares at least one outgoing `when: "error"`
+edge, that edge — not the step's `onError` — decides what happens on failure. The run takes the
+error edge and continues, whatever the step declares for `onError` (`"fail"`, `"continue"`, or
+`"continue-record"`); the two do not compose. The edge is the more specific statement about that
+step's failure. `onError` stays authoritative for every step that declares **no** error edge.
+
+**All failure phases route.** Any step that ends `failed` takes its error edge, whatever the
+[StepError](#steperror) `phase` — `"resolution"`, `"auth"`, `"execute"`, or `"output"`. v1 draws no
+phase distinction.
+
+**Retries come first.** A step takes its error edge only once it is *finally* failed: after its
+`retry` policy is exhausted, or as soon as the error is classified non-retryable. Two step kinds run
+no retry loop at all and therefore take their error edge on their **first** failure: `@w6w/call`
+steps, and `@w6w/control` steps. An author who wants attempts before the error branch must declare
+`retry` on a step kind that honors one.
+
+**Error edges stay in the DAG.** An error edge is an ordinary directed edge and is validated like
+one: dangling endpoints and **cycles** are rejected at load time. A failure therefore cannot route
+backwards to an earlier step in v1 — "retry from step X" is not expressible as an error edge. This
+is a stated limit of v1, carried by the existing cycle rejection rather than by new enforcement.
+
+**Main graph only.** `when: "error"` applies to edges of the **main** graph. Steps owned by a
+control's sub-block (`foreach.body`, `parallel.branches`, an `if` branch block) do not participate in
+main-graph edge routing, and an edge touching such a step is already rejected at plan time; a step
+inside a sub-block therefore cannot carry an error edge. A sub-block failure is handled by its
+enclosing control's own failure modes (see the [Engine RFC](./engine.md#canonical-controls)).
+
+**A success edge and an error edge MAY share a target.** The model permits `{ from: "a", to: "b" }`
+and `{ from: "a", to: "b", when: "error" }` to coexist. The engine keys a skipped edge by
+`(from, to, when)`, so the two never collide, and because a step is skipped only when **every**
+inbound edge is skipped, the shared target runs **exactly once** on either path. The v1 *editor*
+declines to author that pair — that is an authoring-tool limit, not a limit of this model.
+
+**Terminal status.** A run whose failed step routes down an error edge, and whose error branch then
+completes, ends `succeeded`. The failure is not erased: the failed step keeps its
+[StepExecution](#stepexecution) in `RunState.steps` with `status: "failed"` and its `error`
+populated, and the underlying call remains in the host's API-call log. A run ends `failed` only when
+a failure reaches a step that declares neither an error edge nor a continuing `onError`.
+
+**Additive & backward-compatible.** `when` is a new **optional** field on `Edge`; workflow
+definitions are JSON, so existing `manifestVersion: "2"` workflows — every edge of which is
+implicitly a success edge — remain valid and unchanged with **no migration**. A host that does not
+understand `when` reads every edge as `when: "success"`, which is exactly the pre-existing behavior.
