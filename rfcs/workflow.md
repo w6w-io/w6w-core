@@ -46,7 +46,7 @@ The graph is either **explicit** (via `edges`) or **implicit** (when no edges ar
 
 Execution is **checkpointed**. After every step, the engine persists a `StepExecution` (input, output, status, timings) plus the run's updated status. If the engine crashes mid-run, the host reads the `RunState` back and resumes from the first non-terminal step. Replays reuse recorded step outputs verbatim — no re-invocation of `execute` — so historical runs remain deterministic even if upstream apps change behavior.
 
-Steps have **retry** and **on-error** policies. Retries apply to a single step's Invocation; when retries are exhausted, `onError` decides whether the run fails (`fail`, the default) or continues to the next step (`continue`). Retry policy honors the Invocation's `retryable` classification: `phase: "auth"` errors are never retried (credentials aren't going to change mid-run), `phase: "execute"` errors are retried only when the action declares `idempotent: true` or the error object marks itself `retryable: true`.
+Steps have **retry** and **on-error** policies. Retries apply to a single step's Invocation; when retries are exhausted, `onError` selects one of three outcomes: `fail` (the default) aborts the run, `continue` proceeds to the next step, and `continue-record` proceeds **and** keeps the step's [StepError](#steperror) in the run's end state so the failure stays observable. A step that declares an authored **error edge** (`Edge.when: "error"`) is the exception: its failure routes down that edge and its `onError` is not consulted — see [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen), which is the governing text for both. Retry policy honors the Invocation's `retryable` classification: `phase: "auth"` errors are never retried (credentials aren't going to change mid-run), `phase: "execute"` errors are retried only when the action declares `idempotent: true` or the error object marks itself `retryable: true`.
 
 The engine never touches the outside world directly. Every operational effect — calling an app, writing a log, checkpointing state, scheduling a delay, enqueueing a fan-out job — flows through `WorkflowContext`. This is the same shape [HookContext](./hook-runtime.md#context) has for action `execute`: a thin abstraction hostable in-process, over HTTP, or against a test double, without engine changes.
 
@@ -104,6 +104,7 @@ The engine never touches the outside world directly. Every operational effect �
 | `variables` | [WorkflowVariable](#workflowvariable)[] | ⬜ | Inputs collected from the caller / trigger event and made available as `vars.*`. |
 | `steps` | [Step](#step)[] | ✅ | The graph nodes. At least one. |
 | `edges` | [Edge](#edge)[] | ⬜ | Directed dependencies. When absent, the engine treats `steps` as a linear chain in declared order. |
+| `settings` | object | ⬜ | `{ autoSave?, savePosition?, viewport? }` — authoring presentation for this workflow. Declarative only; the engine ignores it. `autoSave` and `savePosition` **default to `true`** when omitted. See [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings). |
 
 #### Step
 
@@ -116,7 +117,10 @@ The engine never touches the outside world directly. Every operational effect �
 | `uses.connection` | string \| null | ⬜ | Connection id. Required when the action's app declares auth and the action doesn't opt out with `requiresAuth: false`. |
 | `with` | object | ⬜ | Param values. Each value is a literal, an object, an array, or an expression marker. See [Expression markers](#expression-markers). |
 | `retry` | [RetryPolicy](#retrypolicy) | ⬜ | How to retry on failure. Defaults to no retry. |
-| `onError` | enum | ⬜ | `"fail"` (default) or `"continue"`. When retries are exhausted, `continue` records the failure and proceeds; `fail` aborts the run. |
+| `onError` | enum | ⬜ | `"fail"` (default), `"continue"`, or `"continue-record"`. Applied when retries are exhausted: `fail` aborts the run; `continue` swallows the failure and proceeds; `continue-record` proceeds **and** rolls the step's [StepError](#steperror) into the run's end state (`RunState.stepErrors`) so the failure stays observable. Overridden, for the step it is declared on, by an authored error edge — see [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
+| `ports` | object | ⬜ | `{ in?, out? }` — declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`. `in > 1` opts the step into accepting multiple inbound edges (a fan-in node). See [Node Types RFC · Ports & cardinality](./node-types.md#ports--cardinality). |
+| `notes` | string | ⬜ | Free-form author notes carried on the step. Declarative only — the engine ignores it. |
+| `position` | object | ⬜ | `{ x, y }` — the step's coordinate on an authoring tool's canvas. Declarative only — the engine ignores it. Omitted ⇒ the editor lays the step out itself, exactly as today. See [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings). |
 
 #### Edge
 
@@ -124,6 +128,7 @@ The engine never touches the outside world directly. Every operational effect �
 |---|---|---|---|
 | `from` | string | ✅ | Step id. |
 | `to` | string | ✅ | Step id. |
+| `when` | enum | ⬜ | `"success"` (default) or `"error"` — which outcome of the `from` step activates this edge. `"success"` activates when that step succeeds, `"error"` when it fails. **An omitted `when` means `"success"`**, so every pre-existing edge is a success edge. See [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
 
 #### WorkflowVariable
 
@@ -332,3 +337,174 @@ The `@w6w/workflow` reference engine + its test fixtures constitute the executab
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for `manifestVersion: "2"`. Breaking changes require a new RFC and a `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-07-29: failure-conditioned edges (`Edge.when`)
+
+> This section is **additive** to the [Edge](#edge) shape and the [Execution model](#execution-model)
+> above; it introduces no breaking change and no new host primitive. It adds one optional field to
+> `Edge` and pins how a step's **failure** is routed along the graph. Everything it relies on already
+> exists in the model: plan-time cycle rejection, and the edge-skip propagation the unmatched branch
+> of `@w6w/control` · `if` already uses. Where this section and the pre-amendment prose on `onError`
+> disagree, **this section governs**.
+
+An **error edge** is an edge that activates when its source step **fails**, instead of when it
+succeeds. It is expressed by the new optional `Edge.when` field:
+
+| Value | Meaning |
+|---|---|
+| `"success"` | The edge activates when the `from` step reaches `status: "succeeded"`. **The default.** |
+| `"error"` | The edge activates when the `from` step reaches `status: "failed"`. |
+
+**Default.** `when` is optional and its omission means `"success"` — which is exactly what every
+edge meant before this amendment. A host MUST reject a `when` value outside the two-member enum at
+**load time**, alongside the graph validations in [Planning](#planning).
+
+**Outcome selects the outgoing edges.** A step that ends `succeeded` activates its `when: "success"`
+edges (an omitted `when` is one of them) and marks its outgoing `when: "error"` edges **skipped**. A
+step that ends `failed` **and declares at least one outgoing `when: "error"` edge** does the
+converse: it activates those error edges and marks its outgoing success edges **skipped**. A step
+reachable only through skipped edges is recorded `status: "skipped"` — the same propagation the
+unmatched branch of `if` already produces. Success routing and error routing are one mechanism, not
+two.
+
+**A failing step with no error edge is left to `onError`.** When a step ends `failed` and declares
+**no** outgoing `when: "error"` edge, the rule above does not fire: that step's success edges are
+**not** skipped, and its `onError` alone decides. `"fail"` (the default) ends the run; `"continue"`
+and `"continue-record"` proceed along the step's ordinary outgoing edges, so the next step runs
+exactly as it did before `Edge.when` existed — `"continue-record"` additionally keeping the
+[StepError](#steperror) in the run's end state. Skipping a step's success lane on failure is what an
+**authored error edge** buys; failing alone never does it.
+
+**An error edge overrides `onError`.** When a step declares at least one outgoing `when: "error"`
+edge, that edge — not the step's `onError` — decides what happens on failure. The run takes the
+error edge and continues, whatever the step declares for `onError` (`"fail"`, `"continue"`, or
+`"continue-record"`); the two do not compose. The edge is the more specific statement about that
+step's failure. `onError` stays authoritative for every step that declares **no** error edge.
+
+**All failure phases route.** Any step that ends `failed` takes its error edge, whatever the
+[StepError](#steperror) `phase` — `"resolution"`, `"auth"`, `"execute"`, or `"output"`. v1 draws no
+phase distinction.
+
+**Retries come first.** A step takes its error edge only once it is *finally* failed: after its
+`retry` policy is exhausted, or as soon as the error is classified non-retryable. Two step kinds run
+no retry loop at all and therefore take their error edge on their **first** failure: `@w6w/call`
+steps, and `@w6w/control` steps. An author who wants attempts before the error branch must declare
+`retry` on a step kind that honors one.
+
+**Error edges stay in the DAG.** An error edge is an ordinary directed edge and is validated like
+one: dangling endpoints and **cycles** are rejected at load time. A failure therefore cannot route
+backwards to an earlier step in v1 — "retry from step X" is not expressible as an error edge. This
+is a stated limit of v1, carried by the existing cycle rejection rather than by new enforcement.
+
+**Main graph only.** `when: "error"` applies to edges of the **main** graph. Steps owned by a
+control's sub-block (`foreach.body`, `parallel.branches`, an `if` branch block) do not participate in
+main-graph edge routing, and an edge touching such a step is already rejected at plan time; a step
+inside a sub-block therefore cannot carry an error edge. A sub-block failure is handled by its
+enclosing control's own failure modes (see the [Engine RFC](./engine.md#canonical-controls)).
+
+**A success edge and an error edge MAY share a target.** The model permits `{ from: "a", to: "b" }`
+and `{ from: "a", to: "b", when: "error" }` to coexist. The engine keys a skipped edge by
+`(from, to, when)`, so the two never collide, and because a step is skipped only when **every**
+inbound edge is skipped, the shared target runs **exactly once** on either path. The v1 *editor*
+declines to author that pair — that is an authoring-tool limit, not a limit of this model.
+
+**Terminal status.** A run whose failed step routes down an error edge, and whose error branch then
+completes, ends `succeeded`. The failure is not erased: the failed step keeps its
+[StepExecution](#stepexecution) in `RunState.steps` with `status: "failed"` and its `error`
+populated, and the underlying call remains in the host's API-call log. A run ends `failed` only when
+a failure reaches a step that declares neither an error edge nor a continuing `onError`.
+
+**Additive & backward-compatible.** `when` is a new **optional** field on `Edge`; workflow
+definitions are JSON, so existing `manifestVersion: "2"` workflows — every edge of which is
+implicitly a success edge — remain valid and unchanged with **no migration**. A host that does not
+understand `when` reads every edge as `when: "success"`, which is exactly the pre-existing behavior.
+
+## Amendment — 2026-07-29: authoring presentation (`Step.position`, `Workflow.settings`)
+
+> This section is **additive** to the [Workflow](#workflow) and [Step](#step) shapes above; it
+> introduces no breaking change, no new host primitive, and no change to any existing field. It adds
+> two optional fields that carry **authoring presentation** — where a step sits on an editor's
+> canvas, and how an editor should behave while someone edits this workflow. **The engine ignores
+> both fields entirely**: they are purely declarative, exactly like [`Step.notes`](#step). No plan,
+> no checkpoint, no expression scope, and no [Conformance](#conformance) rule reads them, and a
+> workflow's execution is byte-for-byte identical with them present, absent, or arbitrary. It is
+> independent of, and does not interact with,
+> [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen).
+> **HITL-6** asked whether a workflow's arrangement and its auto-save preference belong to *the
+> workflow* or to *the person looking at it*; this amendment takes the **workflow** answer — both
+> fields live in the workflow document, so everyone who opens a workflow sees the same arrangement
+> and the same preferences.
+
+Authoring tools need two things the pre-amendment model cannot carry: **where each step was placed**
+on the canvas, and **per-workflow authoring preferences** (does editing save itself, is the
+arrangement persisted at all, and what was the last camera position). Both are presentation, not
+semantics, so they enter the model as optional declarative fields rather than as engine behaviour.
+
+```ts
+// on Step
+position?: { x: number; y: number };
+
+// on Workflow
+settings?: {
+  autoSave?: boolean; // omitted ⇒ true
+  savePosition?: boolean; // omitted ⇒ true
+  viewport?: { x: number; y: number; zoom: number };
+};
+```
+
+### `Workflow.settings`
+
+`settings` is itself optional; when the object is absent, every member below takes its own default.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `settings.autoSave` | boolean | ⬜ | **`true`** | Whether an authoring tool persists edits to this workflow without an explicit save action. |
+| `settings.savePosition` | boolean | ⬜ | **`true`** | Whether an authoring tool persists step coordinates (`Step.position`) and `settings.viewport` when it saves. When `false`, an authoring tool does not write them; any values already stored are left as they are, not erased. |
+| `settings.viewport` | object | ⬜ | *none* | `{ x: number, y: number, zoom: number }` — the last camera position of the canvas, so reopening the workflow restores the view. No default: a workflow with no `viewport` opens at whatever view the editor computes, exactly as today. |
+
+`viewport` sits **inside** `settings` deliberately, so exactly one new top-level key enters the
+portable workflow document. All three members are the same thing — authoring presentation for this
+workflow — and they belong under one key.
+
+**`autoSave` and `savePosition` default to `true` when omitted.** This is the single most important
+sentence in this amendment, and it is *deliberately unlike* the house rule that
+[`ports`](./node-types.md#ports--cardinality) and [`onError`](#step) follow, where an omitted field
+reproduces prior behaviour. Here it does **not**: omitting `autoSave` means auto-save is **on**, and
+omitting `savePosition` means positions are **persisted**, neither of which is what a host did before
+this amendment. That is intended — the product requires both features **on by default**, so the
+absent-value reading must be `true`, not `false` and not "whatever happened before". Concretely:
+`settings.autoSave ?? true` and `settings.savePosition ?? true`. An implementation that reads either
+as `?? false`, or that treats an absent `settings` object as "both off", contradicts this amendment.
+Only an explicit `false` turns a feature off.
+
+### `Step.position`
+
+`position` is the step's coordinate on an authoring tool's canvas: `{ x: number, y: number }`, in the
+editor's own coordinate space (the spec pins no unit, origin, or grid — those are the authoring
+tool's).
+
+**Rename-safe by construction.** Because the coordinate travels **with the step**, renaming a step id
+carries its position along untouched: there is no workflow-level `id → {x,y}` map to keep in step
+with renames, and therefore no orphaned entries and no id fix-up. This is why coordinates attach
+per-`Step` rather than as one layout map on the workflow.
+
+**No positions is a valid workflow.** `position` is optional per step, so a workflow whose steps
+carry none — every workflow authored before this amendment — is laid out by the editor exactly as it
+is today, from the graph alone. Partial coverage is likewise valid: an editor places the steps that
+declare a `position` and computes the rest.
+
+### Storage
+
+Both fields live in the **workflow document itself** — the same JSON object that already carries
+`steps` and `edges`. A host that stores a workflow definition as an opaque document (the reference
+host stores it in an existing `definition` jsonb column) therefore needs **no new column and no
+migration**; the two fields round-trip as ordinary members of the document. This RFC pins no storage
+mechanism beyond that: what is normative is that both fields are part of the portable workflow
+document, so a workflow exported from one host and imported into another keeps its arrangement.
+
+**Additive & backward-compatible.** `settings` is a new **optional** field on `Workflow` and
+`position` is a new **optional** field on `Step`; workflow definitions are JSON, so existing
+`manifestVersion: "2"` workflows — none of which declares either — remain valid and unchanged with
+**no migration**. A host that does not understand them ignores them, which is exactly the
+pre-existing behavior; an engine is required to do precisely that. The one thing a host MUST NOT do
+is read an omitted `autoSave` or `savePosition` as `false`.

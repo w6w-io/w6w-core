@@ -52,7 +52,7 @@ The engine owns:
 - **Control interpretation** — the canonical control set is native; unknown control actions raise `unknown_control`.
 - **Expression evaluation** — resolving `with` markers against the run scope (delegated to `@w6w/expr`).
 - **Retry decisions** — applying step `retry` policy and honoring runtime retryability classification.
-- **On-error routing** — `fail` vs. `continue` after retries exhaust.
+- **On-error routing** — deciding where a failed step goes once retries exhaust. An authored **error edge** (`Edge.when: "error"`) is the higher-precedence decision and overrides the step's policy; only a step with no error edge falls back to `onError` (`fail` vs. `continue` vs. `continue-record`). See [Error routing](#error-routing--failure-conditioned-edges-edgewhen).
 - **Replay logic** — using recorded `StepExecution.output` for previously-completed steps.
 - **Cancellation** — checking `context.signal` between steps.
 
@@ -119,6 +119,59 @@ export interface RunSeed {
 ```
 
 `Engine` is intentionally the minimum surface. Everything an engine needs from outside is either in `input` or accessed through `context`. Additional convenience methods (`cancel`, `pause`) are host-level operations layered on top — they mutate state via `context.state` and rely on the engine's next `run` / `resume` call to observe the change.
+
+### Error routing — failure-conditioned edges (`Edge.when`)
+
+> **Additive (2026-07-29).** Routing a step's **failure** along an edge. It is neither a new control
+> nor a new host primitive: it reads one new optional field, `Edge.when` (see
+> [Workflow RFC · Amendment 2026-07-29](./workflow.md#amendment--2026-07-29-failure-conditioned-edges-edgewhen)),
+> and decides it with the engine's existing edge-skip propagation and plan-time cycle rejection.
+> Conformance invariant 9; fixture tag `error-routing`.
+
+Routing a step's **outcome** onto its outgoing edges is the engine's responsibility, and it is the
+same responsibility for success and for failure. `Edge.when` is `"success"` (the default, and the
+meaning of every edge authored before this amendment) or `"error"`.
+
+**Semantics:** when a step reaches a terminal status, the engine activates the outgoing edges whose
+`when` matches the outcome — `"success"` on `succeeded`, `"error"` on `failed` — and marks the
+step's remaining outgoing edges **skipped**. Skipped edges propagate exactly as they already do for
+the unmatched branch of `@w6w/control` · `if`: a step is skipped, and records
+`status: "skipped"`, only when it has at least one incoming edge and **every** incoming edge is
+skipped. The engine keys a skipped edge by `(from, to, when)`, so a success edge and an error edge
+between the same pair of steps are distinct keys; a step that is the target of both therefore runs
+**exactly once**, on whichever path is live.
+
+**An unmatched `if` skips every outgoing edge.** [`@w6w/control` · `if`](#w6wcontrol--if) whose
+`condition` evaluates false treats **all** of its outgoing edges as skipped, error edges included —
+even though the step itself ends `succeeded`, which is why the generic outcome rule above must not be
+read as activating that step's success edges. The two rules do not conflict, because marking an edge
+skipped is **additive**: a routing decision may only add edges to the skipped set, and an edge once
+marked skipped is **never undone**. An engine that implements the success/error split by *replacing*
+the skipped set rather than adding to it silently breaks `if`.
+
+**Precedence.** A step that declares at least one outgoing `when: "error"` edge routes its failure
+down that edge and the run continues; the step's `onError` is **not** consulted for that step. A step
+with no error edge is unchanged — `onError` (`fail` / `continue` / `continue-record`) decides, after
+retries exhaust, as before.
+
+**Ordering against retry.** The error edge is taken only when the step is finally `failed` — after
+`retry` is exhausted or the error is classified non-retryable (invariant 3 is unaffected). Step
+kinds that run no retry loop (`@w6w/call` and `@w6w/control` steps) take their error edge on the
+first failure.
+
+**Scope.** Every [StepError](./workflow.md#steperror) `phase` routes — `"resolution"`, `"auth"`,
+`"execute"`, `"output"` alike. Error edges belong to the **main** graph only: sub-block steps
+(`foreach.body`, `parallel.branches`, an `if` branch block) do not participate in main-graph edge
+routing, and a main-graph edge touching one is already rejected at plan time. Error edges are
+ordinary DAG edges, so a cycle — routing a failure back to an earlier step — is rejected at plan
+time in v1.
+
+**Terminal status:** a run whose failed step routed down an error edge, and whose error branch then
+completed, ends `succeeded`, with the failed step's `StepExecution` retained in `RunState.steps`
+(`status: "failed"`, `error` populated).
+
+**Failure modes:** a `when` value outside the enum raises `param_invalid` at load time, never at run
+time.
 
 ## Canonical controls
 
@@ -235,6 +288,7 @@ A host + engine pair conform to this RFC when the following invariants hold:
 6. **Expression scope.** The engine populates `vars`, `steps`, and `trigger` in every expression evaluation as specified in the [Workflow RFC](./workflow.md#expression-markers). Within a `foreach` sub-block, `foreach.item` and `foreach.index` are added.
 7. **Cancellation.** When `context.signal` fires, the engine finishes the in-flight step invocation (best-effort abort via the runtime), then transitions the run to `status: "canceled"` and stops.
 8. **Suspend / resume.** After `wait`, the engine may only be resumed via `resume(runId, resumeToken)` where the token matches the one passed to `context.schedule`.
+9. **Error routing** (fixture tag `error-routing`). A step that ends `failed` and declares at least one outgoing edge with `when: "error"` routes down that edge — its `onError` is not consulted — and the step's outgoing `when: "success"` edges are marked skipped; on `succeeded`, the converse. Any `StepError` `phase` routes, and routing happens only after `retry` is exhausted or the error is non-retryable. A step that is the target of both a success edge and an error edge out of the same step executes **exactly once** (skipped edges are keyed by `(from, to, when)`, and a step is skipped only when every one of its incoming edges is skipped). A run whose error branch completes ends `status: "succeeded"` with the failed step's `StepExecution` retained (`status: "failed"`, `error` populated).
 
 A conformance test fixtures package (`@w6w/engine-conformance`, TBD) will ship alongside this RFC. Each invariant maps to one or more fixtures the engine's harness runs against. A `run-conformance` CLI in the reference engine repo demonstrates the shape.
 
