@@ -206,6 +206,11 @@ metering, and the runtime sandbox (see the [Invocation RFC](./invocation.md)). A
 | `with` | object | ⬜ | Maps canonical `inputs` → the action's params. Each value is a literal or an expression marker (see [Adapter](#adapter)). Resolved against a scope carrying `inputs`. |
 | `outputMap` | object | ⬜ | Maps the action's output → the canonical `output`. Same marker syntax, resolved against a scope carrying `inputs` **and** `output`. Omitted ⇒ the action's raw output is returned as-is. |
 
+> **Note:** "Required" (✅) above describes what a **valid, runnable** FnImpl needs — it is not a
+> storage-time constraint. A host may persist a FnImpl (and a Function containing it) as an
+> incomplete draft, e.g. with `uses.app`/`uses.action` unset. A separate computed validity signal
+> or a publish/invoke-time gate is what enforces runnability, not storage rejection.
+
 ## Adapter
 
 `impl.with` and `impl.outputMap` are resolved by **`resolveWith`** exported from **`@w6w/workflow`**
