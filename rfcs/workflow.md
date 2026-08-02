@@ -122,6 +122,11 @@ The engine never touches the outside world directly. Every operational effect �
 | `notes` | string | ⬜ | Free-form author notes carried on the step. Declarative only — the engine ignores it. |
 | `position` | object | ⬜ | `{ x, y }` — the step's coordinate on an authoring tool's canvas. Declarative only — the engine ignores it. Omitted ⇒ the editor lays the step out itself, exactly as today. See [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings). |
 
+> **Note:** "Required" (✅) above describes what a **valid, runnable** Step needs — it is not a
+> storage-time constraint. A host may persist a Step (and a Workflow containing it) as an
+> incomplete draft, e.g. with `uses.app`/`uses.action` unset. A separate computed validity signal
+> or a publish/invoke-time gate is what enforces runnability, not storage rejection.
+
 #### Edge
 
 | Field | Type | Required | Description |
