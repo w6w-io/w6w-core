@@ -435,6 +435,132 @@ so an operator learns one inbound-security model for the whole platform.
 URL is always `/invoke/<urn>`. `exposure.http.method`/`auth` likewise stay legacy descriptors — the
 live policy is `exposure.security`.
 
+## Amendment — 2026-08-07: account-owned Endpoints and the `{account_slug}/{key}` address
+
+> This section is **additive**. It does not change dispatch, the [Callable](#callable) union, the
+> result envelope, the `action` target arm, or the inbound `security` model. It settles two things
+> the model left implicit: **which owner** an Endpoint has, and **how many addresses** it has.
+> Where it and the *Still fenced* clause of
+> [Amendment — the universal invoke URL and inbound `security`](#amendment--2026-07-27-the-universal-invoke-url-and-inbound-security-hitl-1-partial)
+> disagree about the number of system-defined callable URL forms, **this section governs**; every
+> other clause of that amendment stands.
+
+### An Endpoint belongs to the account
+
+An Endpoint is owned by the **account** — the organization it lives in — not by the user who created
+it. Its `key` is unique within that account: the uniqueness tuple is `(account, key)`. Every member
+of the owning account sees, edits, and invokes the same Endpoint, and the second member to claim a
+`key` is told it is taken rather than silently given a second Endpoint wearing the same name.
+
+This follows from the address form below, not taste. `{account_slug}/{key}` names an account and
+a key and nothing else. If a `key` were unique per **user**, that address would be under-determined:
+two members of one account could each hold `notify-customer`, and the address would resolve
+non-deterministically to one of them. Something that can resolve to more than one Endpoint is not an
+address. A host MUST enforce `(account, key)` uniqueness at write time and refuse a colliding save
+as a caller-visible conflict.
+
+`project` is **not** part of Endpoint key uniqueness. An Endpoint may still record the project it
+belongs to, but that field takes no part in the key and none in addressing. The reason is the same
+one: the address form has **no project segment**, so leaving `project` in the uniqueness key is a
+latent ambiguity with a fuse on it — it would fire the day projects start being written, turning a
+well-defined address back into a non-deterministic one.
+
+### `subject` survives as the *runs-as* identity
+
+The *owning* axis moves to the account; the *executing* one does not move at all. `subject` stays on
+the Endpoint, with unchanged values and a now-explicit meaning: it is the identity the Endpoint
+**executes as** — its **runs-as** identity.
+
+That distinction is load-bearing, not editorial. An invocation's execution scope is built from
+`subject`, and connection resolution is per-subject: which stored credential an app action reaches
+for follows from the runs-as identity and nothing else. An Endpoint with no runs-as identity has
+nothing to execute as. The earlier amendment's rule that a non-`platform` invocation runs as the
+Endpoint's **owner** scope is exactly this field, and is now stated precisely: it runs as the
+Endpoint's `subject`.
+
+**The corollary is the point: an account-owned Endpoint is not an account-owned credential.**
+Ownership widens to the account; execution identity does not. A host MUST resolve connections
+against the Endpoint's `subject` and MUST NOT synthesize an account-wide identity from the owner.
+
+### `key` is immutable after first save
+
+A host MUST treat `key` as **immutable** once the Endpoint has first been saved. `displayName` stays
+freely editable — that is what a display name is for — and a genuine rename is create-new plus
+delete-old, which is honest about what it does to callers.
+
+The reasoning, because the rule is worth more than the rule: a URL built from a mutable name is not
+an address. This RFC already attaches stability to `id` ("Stable across renames **and target
+changes**", [field reference](#endpoint)), and [Conformance](#conformance) guarantees that `key`
+survives a change of `target`, so callers bound to the Endpoint are never broken. Promoting `key`
+to a public address without first making it stable would **invert** that guarantee: the friendly
+address would become the fragile one and the opaque one the durable one — the exact inverse of
+what a caller expects, and of what the id form exists to provide.
+
+### Two address forms, and which of them is stable
+
+The URN form remains canonical and is unchanged:
+
+```
+POST <PUBLIC_BASE_URL>/invoke/<urn>          body: the payload, verbatim
+```
+
+An Endpoint MAY **additionally** be reached by its owning account's slug and its key, on a host
+configured as a tenant's domain:
+
+```
+POST <TENANT_DOMAIN>/invoke/{account_slug}/{key}
+```
+
+This is an **additional** addressing form, not a replacement. It relaxes exactly one earlier clause,
+named here so the relaxation is not inferred: *"the callable URL is **always** `/invoke/<urn>`"*, in
+the [universal invoke URL amendment](#amendment--2026-07-27-the-universal-invoke-url-and-inbound-security-hitl-1-partial).
+There are now **two** system-defined forms rather than one. Nothing else in that clause moves: a
+custom, per-Endpoint public *path* (`exposure.http.path`) remains declarative-only and still fenced.
+
+**The URN form is the stable address.** `id` is host-issued and stable across renames and target
+changes, so the URN is stable by construction. The key form is a **convenience address built over a
+name**: it is stable only because of the immutability rule above, and only for as long as the
+Endpoint and its account's slug both live. A host MUST keep an Endpoint reachable at its URN for as
+long as the Endpoint exists — a key address never retires or rewrites the URN address — and MUST
+render both forms from configured, host-side values rather than have a client assemble a hostname.
+
+### The host may narrow, never widen
+
+Where a tenant has a configured domain, a host MAY establish the **tenant** from the request host —
+that is what a tenant domain is for. The trust rule is fixed:
+
+**The credential is authoritative for authorization. The host may only narrow, never widen.**
+
+- Credential and host agree → proceed.
+- Credential and host disagree → **refuse**. A host MUST NOT let the request host select a tenant
+  the credential does not carry. A host that did would let a caller pick whose data it reaches
+  by picking a hostname.
+- The host maps to no tenant — any unmapped host, including a default API origin → **no-op**: the
+  credential's tenant stands. Host resolution may remove authority, never add it.
+
+A refusal has two shapes, and they differ deliberately:
+
+- **Unauthenticated caller → `404`**, generic, with **no echo** of the slug or the key, and
+  indistinguishable from every other miss on this path (unknown slug, unknown key, wrong tenant, no
+  entitlement). `{account_slug}/{key}` is short, human-chosen and guessable, where an opaque URN is
+  not; a distinguishable refusal would turn the address into a directory of which organizations are
+  customers and what their automations are called.
+- **Already-authenticated caller → `403`** with a specific code. The caller has proved who it is, so
+  there is no enumeration left to prevent, and a `404` answered to a valid credential is a support
+  ticket that reads *"your API is broken"*.
+
+Every failure on this path — a host/credential disagreement, an unknown slug, an unknown key, a
+save colliding on `(account, key)` — MUST be reported as a 4xx with a machine-readable body. These
+are caller-visible conditions, not host faults, and a host that reports one as a server fault denies
+the caller the one thing that would let it correct the request.
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the [Callable](#callable) union
+and the `action` target arm; `@w6w/call` and `ctx.invokeCallable`; the inbound `security` model and
+its conformance rules; the fence on custom public paths; `id` as the caller's stable binding point
+and the URN as the stable address; and the requirement that callable URLs be rendered host-side. No
+field is removed, no field changes type, and no Endpoint that was valid before this section is
+invalid after it.
+
 ## Status ladder
 
 - `Draft` — under active design; fields and shape may change without notice.
@@ -442,5 +568,3 @@ live policy is `exposure.security`.
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
-</content>
-</invoke>
