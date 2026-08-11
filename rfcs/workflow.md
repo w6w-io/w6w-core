@@ -256,6 +256,7 @@ interface RunScope {
 ```
 
 Expression semantics — operators, coercion, error handling — are specified by `@w6w/expr` (JSONLogic-based). This RFC only pins the marker convention and the scope shape.
+See [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which specifies the multipart envelope and declares two further run-scope roots (`secrets`, `documents`) — the `RunScope` block above is incomplete rather than exhaustive, and that section governs where the two disagree.
 
 ## Host contract — `WorkflowContext`
 
@@ -315,6 +316,7 @@ A host conforms to this RFC when:
 - **Retry classification** — `phase: "auth"` errors are never retried; `phase: "execute"` errors are retried only when idempotent or `retryable: true`.
 - **Replay determinism** — replaying a run yields the same terminal `status` and, for succeeded steps, the same `output`, without calling `execute` again.
 - **Expression scope** — the engine populates `vars`, `steps`, and `trigger` in every expression evaluation as specified.
+  See [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which adds the `secrets` and `documents` roots to that enumeration and governs this bullet.
 
 The `@w6w/workflow` reference engine + its test fixtures constitute the executable version of this contract.
 
@@ -563,9 +565,16 @@ A part is `{ "kind": <kind>, … }`. **Five** kinds are defined, and each popula
 | `expr` | `expr` (JSONLogic) | JSONLogic evaluated against the **generic data root**, exactly as `{ "$expr": … }`. |
 | `render` | `ref` (path) | **New.** The string at `ref`, parsed as a `{{ }}` template and rendered — see [The `render` part kind](#the-render-part-kind). |
 
-A part carries no field beyond the one its kind names, and an absent `value` / `ref` / `expr` is
-read as empty rather than as an error. The set of kinds is **closed**: a part whose `kind` falls
-outside these five is invalid, and a host MUST reject it rather than guess.
+A part carries no field beyond the one its kind names. On the two kinds that carry their own content
+— `text` and `expr` — an absent `value` / `expr` is read as empty rather than as an error. On the
+three kinds whose field *names* something to look up, that field is **required**: a `var` part's
+`ref`, a `secret` part's `ref`, and a `render` part's `ref`. A `secret` part whose `ref` names no
+available secret fails the step rather than contributing empty, and a `render` part's `ref` must
+resolve to a string — see [The `render` part kind](#the-render-part-kind).
+
+Five kinds are defined here and no other is. A part whose `kind` is none of them is outside this
+model; the reference engine contributes the empty string for it, which is a description of what that
+engine does and not a requirement this RFC places on a host.
 
 ### An `ExprValue` always resolves to a single string
 
@@ -575,11 +584,12 @@ stringified before it is concatenated. This is a **stated limit of the model, no
 one**: it is what makes concatenation well defined for every combination of parts, and it is why the
 envelope needs no result-type negotiation.
 
-The consequence worth stating plainly, so that nobody meets it as a surprise: **a `json` document
-rendered through a `render` part cannot be handed to an object-typed param.** It arrives as the
-string the envelope produced. An author who needs the structured value itself passes a
-`{ "$": "steps.<id>.output.content" }` marker, which resolves to the value rather than to its
-string form.
+The consequence worth stating plainly, so that nobody meets it as a surprise: **a document rendered
+through a `render` part cannot be handed to an object-typed param.** Whatever the document holds,
+the envelope's contribution is a string. The structured value of a `json` document is reached the
+other way round: a `{ "$": "steps.<id>.output.content" }` marker resolves to the value itself rather
+than to a string form of it. Pointing a `render` part's `ref` at that parsed object does **not**
+stringify it either — it fails the step, per [The `render` part kind](#the-render-part-kind).
 
 ### The `render` part kind
 
@@ -588,13 +598,22 @@ enters the model. It resolves in four steps:
 
 1. **Resolve `ref`** against the **generic data root** — the run scope minus `secrets`, per
    [Run-scope roots](#run-scope-roots) — to a value, exactly as a `var` part would.
-2. **Coerce** that value to the string to be rendered: `null` and `undefined` become the empty
-   string `""`; a string is taken as it is; anything else is stringified the way the envelope's
-   concatenation rule stringifies it.
+2. **Require a string.** The value from step 1 must **be** a string; there is no coercion here and
+   no fallback. A path that is absent, or that resolves to `null` or `undefined`, **fails the step**
+   with `render_ref_unresolved`, naming the `ref` that was asked for. A path that resolves to any
+   other non-string — an object, an array, a number, a boolean — **fails the step** with
+   `render_ref_not_a_string`, naming the `ref` and the type found.
 3. **Parse** the resulting string as a `{{ }}` template in **render mode** (below), yielding a list
    of parts.
 4. **Resolve** each of those parts against **that same generic data root** and concatenate the
    results; the concatenation is this part's contribution to the envelope.
+
+**Why step 2 fails rather than coerces.** An absent path is otherwise **byte-identical to an empty
+template**: a `ref` with a typo in it renders to nothing, the step succeeds, and the run mails a
+blank body. That failure is invisible — nothing in the run record distinguishes it from a document
+that really was empty. Failing by name is what makes it visible, and it is why the two error names
+above are part of this contract rather than an implementation detail: the step's outcome is the only
+signal this model offers.
 
 **One pass.** The parts produced in step 3 are resolved in step 4 and never re-enter step 1: a
 reference produced *by* rendering is never itself rendered, whatever it resolves to. So content
@@ -682,9 +701,8 @@ A host that implements the multipart expression envelope MUST:
 
 - Resolve an `ExprValue` to a **single string**, including when `parts` holds exactly one member,
   and including when that member's value is an object or an array — which is stringified before
-  concatenation, never handed through as a structured value.
-- Treat a part whose `kind` is outside `text` · `var` · `secret` · `expr` · `render` as **invalid**,
-  rather than resolving it to an empty contribution.
+  concatenation, never handed through as a structured value. (A `render` part's own `ref` is the one
+  place this stringification does not apply: it requires a string, per the bullet below.)
 - Evaluate `var` parts, `expr` parts, `{ "$": … }` and `{ "$expr": … }` against a data root from
   which `secrets` has been **removed**. Testably: for every run scope **S** and every `with` block
   that contains no `secret` part, resolving that block against **S** MUST produce a result identical
@@ -698,7 +716,10 @@ A host that implements the multipart expression envelope MUST:
 - Render in **one pass**: the parts produced by parsing a `render` part's content MUST NOT
   themselves be rendered. Testably: rendering content that contains `{{ documents.other.body }}`
   MUST substitute that document's text verbatim, including any `{{ }}` sequences inside it.
-- Coerce a `render` part whose `ref` resolves to `null` or `undefined` to the empty string, rather
-  than failing the step or emitting the literal text `null`.
+- **Fail the step** when a `render` part's `ref` does not resolve to a string: `render_ref_unresolved`
+  when the path is absent or resolves to `null` / `undefined`, and `render_ref_not_a_string` for any
+  other non-string, each naming the `ref`. Testably: a `render` part whose `ref` names a path the run
+  scope does not carry MUST fail the step — it MUST NOT render as the empty string, and MUST NOT
+  emit the literal text `null`.
 - Make `documents.<key>` reachable through the generic data root like any other data, populated
   under the run's own project.
