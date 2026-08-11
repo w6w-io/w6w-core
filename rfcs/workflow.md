@@ -256,6 +256,7 @@ interface RunScope {
 ```
 
 Expression semantics — operators, coercion, error handling — are specified by `@w6w/expr` (JSONLogic-based). This RFC only pins the marker convention and the scope shape.
+See [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which specifies the multipart envelope and declares two further run-scope roots (`secrets`, `documents`) — the `RunScope` block above is incomplete rather than exhaustive, and that section governs where the two disagree.
 
 ## Host contract — `WorkflowContext`
 
@@ -315,6 +316,7 @@ A host conforms to this RFC when:
 - **Retry classification** — `phase: "auth"` errors are never retried; `phase: "execute"` errors are retried only when idempotent or `retryable: true`.
 - **Replay determinism** — replaying a run yields the same terminal `status` and, for succeeded steps, the same `output`, without calling `execute` again.
 - **Expression scope** — the engine populates `vars`, `steps`, and `trigger` in every expression evaluation as specified.
+  See [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which adds the `secrets` and `documents` roots to that enumeration and governs this bullet.
 
 The `@w6w/workflow` reference engine + its test fixtures constitute the executable version of this contract.
 
@@ -513,3 +515,211 @@ document, so a workflow exported from one host and imported into another keeps i
 **no migration**. A host that does not understand them ignores them, which is exactly the
 pre-existing behavior; an engine is required to do precisely that. The one thing a host MUST NOT do
 is read an omitted `autoSave` or `savePosition` as `false`.
+
+## Amendment — 2026-08-11: the multipart expression envelope (`ExprValue`) and the `render` part kind (F-3)
+
+> This section is **additive** to [Expression markers](#expression-markers) above; it introduces no
+> breaking change, no new host primitive, and no change to any existing marker or field. It does
+> three things: it **specifies the multipart expression envelope** (`ExprValue`) that authoring
+> tools and engines already exchange but which this RFC has never named; it **declares two run-scope
+> roots** — `secrets` and `documents` — that the pre-amendment scope block omits; and it adds
+> **exactly one** new part kind, `render`. It is independent of, and does not interact with,
+> [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen)
+> and
+> [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings)
+> — the three amend independent parts of this RFC. **Where this section and the pre-amendment prose
+> disagree, this section governs.** That applies specifically to the three-member `RunScope`
+> interface under [Expression markers](#expression-markers) and to the *Expression scope* bullet
+> under [Conformance](#conformance), each of which enumerates `vars`, `steps` and `trigger` alone:
+> both are read as **incomplete rather than exhaustive**, extended by [Run-scope
+> roots](#run-scope-roots) below, and neither is edited. The companion node that loads a document by
+> key at run time is
+> [Node Types RFC — the `@w6w/document` host node](./node-types.md#amendment--2026-08-11-the-w6wdocument-host-node-f-3).
+
+[Expression markers](#expression-markers) pins two markers and the shape of the run scope, and says
+as much in as many words: *"This RFC only pins the marker convention and the scope shape."* A third
+form is nevertheless already in the model — the **multipart expression envelope** an authoring tool
+produces whenever one param value mixes literal text with references (`Hi {{ vars.name }}, your
+order is ready`). This section specifies that envelope, then adds one part kind to it.
+
+### The envelope
+
+An **`ExprValue`** is a `with` value of the form `{ "type": "expr", "parts": [ … ] }`: an ordered
+list of **parts**, each resolved independently, **concatenated** into one string. It takes its place
+alongside the two existing markers — the first two rows below are restated unchanged from
+[Expression markers](#expression-markers) for context; only the third is new:
+
+| Marker | Meaning |
+|---|---|
+| `{ "$": "steps.fetch.output.items.0.title" }` | Path lookup sugar over the run scope. |
+| `{ "$expr": <JSONLogic> }` | Full JSONLogic evaluation over the run scope. |
+| `{ "type": "expr", "parts": [ … ] }` | **Multipart expression envelope** — an ordered list of parts concatenated to a single string. |
+
+A part is `{ "kind": <kind>, … }`. **Five** kinds are defined, and each populates exactly one field:
+
+| `kind` | Field it populates | Resolves to |
+|---|---|---|
+| `text` | `value` (string) | The literal chunk, verbatim. |
+| `var` | `ref` (path) | A path lookup against the **generic data root**, exactly as `{ "$": … }`. |
+| `secret` | `ref` (secret name) | The plaintext of that named secret, read from the [`secrets`](#run-scope-roots) root. The **only** production in the model that may read it. |
+| `expr` | `expr` (JSONLogic) | JSONLogic evaluated against the **generic data root**, exactly as `{ "$expr": … }`. |
+| `render` | `ref` (path) | **New.** The string at `ref`, parsed as a `{{ }}` template and rendered — see [The `render` part kind](#the-render-part-kind). |
+
+A part carries no field beyond the one its kind names. On the two kinds that carry their own content
+— `text` and `expr` — an absent `value` / `expr` is read as empty rather than as an error. On the
+three kinds whose field *names* something to look up, that field is **required**: a `var` part's
+`ref`, a `secret` part's `ref`, and a `render` part's `ref`. A `secret` part whose `ref` names no
+available secret fails the step rather than contributing empty, and a `render` part's `ref` must
+resolve to a string — see [The `render` part kind](#the-render-part-kind).
+
+Five kinds are defined here and no other is. A part whose `kind` is none of them is outside this
+model; the reference engine contributes the empty string for it, which is a description of what that
+engine does and not a requirement this RFC places on a host.
+
+### An `ExprValue` always resolves to a single string
+
+An `ExprValue` resolves to **one string** — always. That includes the case where `parts` holds
+exactly one part, and the case where that one part's value is an object or an array, which is
+stringified before it is concatenated. This is a **stated limit of the model, not a discovered
+one**: it is what makes concatenation well defined for every combination of parts, and it is why the
+envelope needs no result-type negotiation.
+
+The consequence worth stating plainly, so that nobody meets it as a surprise: **a document rendered
+through a `render` part cannot be handed to an object-typed param.** Whatever the document holds,
+the envelope's contribution is a string. The structured value of a `json` document is reached the
+other way round: a `{ "$": "steps.<id>.output.content" }` marker resolves to the value itself rather
+than to a string form of it. Pointing a `render` part's `ref` at that parsed object does **not**
+stringify it either — it fails the step, per [The `render` part kind](#the-render-part-kind).
+
+### The `render` part kind
+
+`{ "kind": "render", "ref": "<path>" }` reuses the envelope's existing `ref` field — no new field
+enters the model. It resolves in four steps:
+
+1. **Resolve `ref`** against the **generic data root** — the run scope minus `secrets`, per
+   [Run-scope roots](#run-scope-roots) — to a value, exactly as a `var` part would.
+2. **Require a string.** The value from step 1 must **be** a string; there is no coercion here and
+   no fallback. A path that is absent, or that resolves to `null` or `undefined`, **fails the step**
+   with `render_ref_unresolved`, naming the `ref` that was asked for. A path that resolves to any
+   other non-string — an object, an array, a number, a boolean — **fails the step** with
+   `render_ref_not_a_string`, naming the `ref` and the type found.
+3. **Parse** the resulting string as a `{{ }}` template in **render mode** (below), yielding a list
+   of parts.
+4. **Resolve** each of those parts against **that same generic data root** and concatenate the
+   results; the concatenation is this part's contribution to the envelope.
+
+**Why step 2 fails rather than coerces.** An absent path is otherwise **byte-identical to an empty
+template**: a `ref` with a typo in it renders to nothing, the step succeeds, and the run mails a
+blank body. That failure is invisible — nothing in the run record distinguishes it from a document
+that really was empty. Failing by name is what makes it visible, and it is why the two error names
+above are part of this contract rather than an implementation detail: the step's outcome is the only
+signal this model offers.
+
+**One pass.** The parts produced in step 3 are resolved in step 4 and never re-enter step 1: a
+reference produced *by* rendering is never itself rendered, whatever it resolves to. So content
+containing `{{ documents.other.body }}` substitutes that other document's text **verbatim** —
+`{{ }}` sequences and all, un-rendered. There is no recursion, no depth limit and no cycle
+detection, because there is no second pass to bound.
+
+**`render` has no `{{ }}` text spelling, in either parser mode.** It is an authored part kind only:
+`{ "kind": "render", "ref": … }`. Nothing an author can type between `{{` and `}}`, and nothing a
+document can contain, parses to a `render` part. That is what makes "one pass" a property of the
+grammar rather than a rule an implementation must remember to apply.
+
+### Render mode, and why rendered content cannot reach a secret
+
+The `{{ }}` template grammar has **two parser modes**, and `render` uses the narrower one:
+
+| Mode | Productions | Used by |
+|---|---|---|
+| editor | `{{ =<JSONLogic> }}` → an `expr` part · `{{ secrets.<name> }}` → a `secret` part · `{{ <path> }}` → a `var` part | authoring tools, round-tripping an authored `ExprValue` to text and back |
+| **render** | `{{ =<JSONLogic> }}` → an `expr` part · `{{ <path> }}` → a `var` part | step 3 of a `render` part |
+
+**Render mode's grammar has exactly two productions, and neither one is a secret reference.** It has
+no production for a secret part and no production for a nested render part. This is a property of
+the grammar itself, not a filter over its output: in render mode **no input has a parse that yields
+a `secret` part**, so there is no such part in existence to be removed, rejected or skipped, and
+nothing an implementer could forget to do.
+
+`{{ secrets.API_KEY }}` inside rendered content is therefore not a secret reference at all. It
+matches the ordinary path production and parses to `{ "kind": "var", "ref": "secrets.API_KEY" }` — a
+path lookup like any other. And the generic data root it is looked up in is the run scope **minus**
+`secrets` ([Run-scope roots](#run-scope-roots)), so the lookup finds nothing and contributes the
+empty string, exactly as every unknown path does. Two independent structural barriers, each
+sufficient on its own: the grammar cannot produce the part, and the root does not carry the data.
+That the parse yields a `var` part naming the literal path `secrets.API_KEY` — rather than nothing
+at all — is the observable difference between this mechanism and a post-parse filter, and it is what
+a conformance test asserts on.
+
+**Why the barrier is needed.** Rendered content is **data**, and the model does not guarantee it was
+authored by the run's caller: a conforming host's document store may serve a run both the caller's
+own documents and documents shared across the tenant, so a run started by one subject can render
+content written by another. If a rendered `{{ secrets.X }}` resolved to plaintext, writing a shared
+document would be enough to read someone else's vault through their own run — and on a host's
+single-step authoring path the injected `secrets` root is typically every secret the scope can see,
+not merely the ones the definition names. The barrier is what keeps *"a document is data"* true.
+
+The barrier is about **`secrets` and nothing else.** Rendered content reads the same generic data
+root every other expression reads — `vars`, `steps`, `trigger`, `documents`, and whatever else the
+host populates for that pass. `render` is not a sandbox and narrows no other read surface; it simply
+cannot reach `secrets`.
+
+### Run-scope roots
+
+The `RunScope` block under [Expression markers](#expression-markers) enumerates three roots (`vars`,
+`steps`, `trigger`). Two more are part of the model and are declared here; per the governing clause
+above, that block is incomplete rather than exhaustive.
+
+| Root | Contents | Reachable through the generic data root? |
+|---|---|---|
+| `secrets` | Host-injected **plaintext**, keyed by secret name. | **No — never.** |
+| `documents` | The run's project-scoped document store, keyed by document `key`. Ordinary data. | **Yes.** |
+
+**`secrets`** is injected by the host from its vault before the run and is never persisted with run
+state. Exactly one production in this model may read it: a `secret` part of an `ExprValue`, which
+reads `secrets[ref]` **directly**, never through expression evaluation. It is **excluded from the
+generic data root** — the root that `{ "$": … }`, `{ "$expr": … }`, `var` parts, `expr` parts and
+every rendered reference are evaluated against is the run scope with `secrets` removed. So
+`{ "$": "secrets.X" }` is an unknown path rather than a secret read and resolves to nothing, which
+is what an unknown path always does. A host that puts `secrets` on the generic data root does not
+conform to this RFC.
+
+**`documents`** is ordinary data with no special handling: reachable as `documents.<key>` from any
+expression, exactly like `vars` or `steps`. The host populates it under the run's own
+`(tenant, subject, project)` — a workflow reads its **own** project's documents. Loading one lazily
+by key at run time instead, so the key can come from a trigger input or an upstream step's output,
+is what the
+[`@w6w/document` node](./node-types.md#amendment--2026-08-11-the-w6wdocument-host-node-f-3) is for.
+
+This section declares `secrets` and `documents`, and only those two. Any further root a host
+populates for a particular pass is neither declared nor forbidden here; it remains unspecified by
+this RFC.
+
+### Conformance (additive)
+
+A host that implements the multipart expression envelope MUST:
+
+- Resolve an `ExprValue` to a **single string**, including when `parts` holds exactly one member,
+  and including when that member's value is an object or an array — which is stringified before
+  concatenation, never handed through as a structured value. (A `render` part's own `ref` is the one
+  place this stringification does not apply: it requires a string, per the bullet below.)
+- Evaluate `var` parts, `expr` parts, `{ "$": … }` and `{ "$expr": … }` against a data root from
+  which `secrets` has been **removed**. Testably: for every run scope **S** and every `with` block
+  that contains no `secret` part, resolving that block against **S** MUST produce a result identical
+  to resolving it against `{ ...S, secrets: {} }`.
+- Read plaintext from `secrets` for a `secret` part **only**, directly, and never through expression
+  evaluation.
+- Parse a `render` part's resolved content in **render mode**, whose grammar has no production for a
+  secret reference. Testably: for every content string **T**, parsing **T** in render mode MUST
+  yield **zero** parts of kind `secret`; and `{{ secrets.X }}` in particular MUST parse to a `var`
+  part whose `ref` is the literal path `secrets.X`, and MUST therefore render as the empty string.
+- Render in **one pass**: the parts produced by parsing a `render` part's content MUST NOT
+  themselves be rendered. Testably: rendering content that contains `{{ documents.other.body }}`
+  MUST substitute that document's text verbatim, including any `{{ }}` sequences inside it.
+- **Fail the step** when a `render` part's `ref` does not resolve to a string: `render_ref_unresolved`
+  when the path is absent or resolves to `null` / `undefined`, and `render_ref_not_a_string` for any
+  other non-string, each naming the `ref`. Testably: a `render` part whose `ref` names a path the run
+  scope does not carry MUST fail the step — it MUST NOT render as the empty string, and MUST NOT
+  emit the literal text `null`.
+- Make `documents.<key>` reachable through the generic data root like any other data, populated
+  under the run's own project.
