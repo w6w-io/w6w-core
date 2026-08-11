@@ -59,7 +59,7 @@ The engine owns:
 The host owns:
 
 - **Registering + resolving apps** — so `context.invoke` can dispatch to the right action.
-- **Credentials + Connections** — the engine never sees a secret.
+- **Credentials + Connections** — the engine never sees a credential or a connection, and performs no decryption: an at-rest secret envelope passes through it untouched and the host decrypts it around `invoke`. Named-secret **plaintext** is the one thing the host does hand the engine — injected into `RunScope.secrets` for dedicated `secret` parts only, and excluded from the generic data root every expression evaluates against (see [Workflow RFC — the multipart expression envelope and the `render` part kind](./workflow.md#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)).
 - **State persistence** — `context.state.checkpoint / load`.
 - **Scheduling** — `context.schedule` for `wait`.
 - **Queuing** — `context.queue` for fan-out under `parallel` when distributed.

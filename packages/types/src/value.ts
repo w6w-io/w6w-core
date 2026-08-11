@@ -2,15 +2,18 @@
  * Value — the multipart/expression value model for a step's `with` block.
  *
  * A `with` value is either a plain literal, OR one of the envelopes below.
- * See `.ai/projects/26-07-13-00-fixes.md` (Design amendments, 2026-07-13):
+ * The normative specification is the Workflow RFC — see `rfcs/workflow.md`,
+ * *Amendment — 2026-08-11: the multipart expression envelope (`ExprValue`) and
+ * the `render` part kind*:
  *
  *   - **ExprValue** (`{ type: "expr", parts: [...] }`) — an ordered list of
  *     segments that concatenate to a single string at resolve time. Each part is
- *     `text` (a literal chunk), `var` / `secret` (a named reference), or `expr`
- *     (inline JSONLogic). Resolved by extending the engine's existing
- *     `resolveValue` seam (`w6w-workflow/engine/src/expr.ts`) alongside the
- *     current `{"$":path}` / `{"$expr":logic}` markers — one authoritative value
- *     model, not a second grammar.
+ *     `text` (a literal chunk), `var` / `secret` (a named reference), `expr`
+ *     (inline JSONLogic), or `render` (a path whose resolved string is parsed as
+ *     a `{{ }}` template and rendered). Resolved by extending the engine's
+ *     existing `resolveValue` seam (`w6w-workflow/engine/src/expr.ts`) alongside
+ *     the current `{"$":path}` / `{"$expr":logic}` markers — one authoritative
+ *     value model, not a second grammar.
  *   - **SecretValue** (`{ type: "secret", ciphertext, iv }`) — the at-rest form
  *     of a secret-typed field: an AES-256-GCM encrypted scalar (base64),
  *     decrypted server-side via `packages/server/packages/db/crypto.ts`. The
@@ -21,7 +24,7 @@
  */
 
 /** The segment kinds an {@link ExprValue} part can take. */
-export type ExprPartKind = "text" | "var" | "secret" | "expr";
+export type ExprPartKind = "text" | "var" | "secret" | "expr" | "render";
 
 /**
  * One segment of an {@link ExprValue}. The populated field depends on `kind`:
@@ -29,12 +32,15 @@ export type ExprPartKind = "text" | "var" | "secret" | "expr";
  *   - `var`    → `ref` names a project variable.
  *   - `secret` → `ref` names a vault secret (surfaced via the secret picker).
  *   - `expr`   → `expr` holds inline JSONLogic evaluated against the run scope.
+ *   - `render` → `ref` names the path whose resolved string is parsed and
+ *     rendered as a `{{ }}` template against the same run scope. No new field:
+ *     `render` reuses `ref`.
  */
 export interface ExprPart {
   kind: ExprPartKind;
   /** Literal chunk, for `kind: "text"`. */
   value?: string;
-  /** Name of the referenced variable/secret, for `kind: "var" | "secret"`. */
+  /** Name/path of the reference, for `kind: "var" | "secret" | "render"`. */
   ref?: string;
   /** Inline JSONLogic, for `kind: "expr"`. */
   expr?: unknown;
