@@ -59,7 +59,7 @@ The engine owns:
 The host owns:
 
 - **Registering + resolving apps** — so `context.invoke` can dispatch to the right action.
-- **Credentials + Connections** — the engine never sees a secret.
+- **Credentials + Connections** — the engine never sees a credential or a connection, and performs no decryption: an at-rest secret envelope passes through it untouched and the host decrypts it around `invoke`. Named-secret **plaintext** is the one thing the host does hand the engine — injected into `RunScope.secrets` for dedicated `secret` parts only, and excluded from the generic data root every expression evaluates against (see [Workflow RFC — the multipart expression envelope and the `render` part kind](./workflow.md#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)).
 - **State persistence** — `context.state.checkpoint / load`.
 - **Scheduling** — `context.schedule` for `wait`.
 - **Queuing** — `context.queue` for fan-out under `parallel` when distributed.
@@ -286,6 +286,7 @@ A host + engine pair conform to this RFC when the following invariants hold:
 4. **Replay determinism.** Replaying a run reuses recorded `StepExecution.output` verbatim for previously-succeeded steps and produces the same terminal `status`.
 5. **Control set support.** All four canonical controls interpret as specified. Unknown control actions raise `unknown_control` at plan time (never at run time).
 6. **Expression scope.** The engine populates `vars`, `steps`, and `trigger` in every expression evaluation as specified in the [Workflow RFC](./workflow.md#expression-markers). Within a `foreach` sub-block, `foreach.item` and `foreach.index` are added.
+   See [Workflow RFC — Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](./workflow.md#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which adds the `secrets` and `documents` roots to that enumeration and governs it.
 7. **Cancellation.** When `context.signal` fires, the engine finishes the in-flight step invocation (best-effort abort via the runtime), then transitions the run to `status: "canceled"` and stops.
 8. **Suspend / resume.** After `wait`, the engine may only be resumed via `resume(runId, resumeToken)` where the token matches the one passed to `context.schedule`.
 9. **Error routing** (fixture tag `error-routing`). A step that ends `failed` and declares at least one outgoing edge with `when: "error"` routes down that edge — its `onError` is not consulted — and the step's outgoing `when: "success"` edges are marked skipped; on `succeeded`, the converse. Any `StepError` `phase` routes, and routing happens only after `retry` is exhausted or the error is non-retryable. A step that is the target of both a success edge and an error edge out of the same step executes **exactly once** (skipped edges are keyed by `(from, to, when)`, and a step is skipped only when every one of its incoming edges is skipped). A run whose error branch completes ends `status: "succeeded"` with the failed step's `StepExecution` retained (`status: "failed"`, `error` populated).
