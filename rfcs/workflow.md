@@ -723,3 +723,29 @@ A host that implements the multipart expression envelope MUST:
   emit the literal text `null`.
 - Make `documents.<key>` reachable through the generic data root like any other data, populated
   under the run's own project.
+
+### An absent or empty `ref` names nothing
+
+A `var`, `secret` or `render` part's `ref` is **required** (stated above). This clause says what
+follows when one is absent or empty anyway, because "required" on its own leaves the case to each
+host — and the reading a host is most likely to reach for is the dangerous one.
+
+**An absent or empty `ref` names nothing. It MUST NOT resolve the data root.** The equivalence the
+kinds table draws between a `var` part and `{ "$": … }` is narrowed here to exactly this extent: a
+`var` part whose `ref` is absent or `""` contributes the **empty string**, not the run scope and not
+a stringification of it. This is deliberate divergence from the JSONLogic identity `{ "var": "" }`,
+which returns the whole data root — that production is reachable through `expr` parts and
+`{ "$expr": … }`, where the author has written the empty path on purpose; it is not reachable
+through the *absence* of a value the model already declared required.
+
+The other two kinds inherit their existing consequences unchanged, because "names nothing" is
+already the input those rules take: a `secret` part with an absent or empty `ref` names no available
+secret and so **fails the step**, per the `secret` rule above; a `render` part with an absent or
+empty `ref` has no resolved content and so fails the step with `render_ref_unresolved`, per
+[The `render` part kind](#the-render-part-kind).
+
+**Conformance (additive).** A host that implements the multipart expression envelope MUST NOT expose
+the run scope, or any root of it, through an empty path in an envelope part. Testably: for every run
+scope **S**, resolving a `with` block whose only part is `{ "kind": "var" }` or
+`{ "kind": "var", "ref": "" }` MUST produce the empty string — it MUST NOT produce a serialization
+of **S**, and in particular MUST NOT surface anything from [`secrets`](#run-scope-roots).
