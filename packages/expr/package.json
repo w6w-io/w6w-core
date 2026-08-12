@@ -1,7 +1,7 @@
 {
   "name": "@w6w/expr",
   "version": "0.0.0",
-  "description": "The w6w platform's expression engine — a JSONLogic evaluator. Pure, dependency-free TypeScript.",
+  "description": "The w6w platform's expression engine \u2014 a JSONLogic evaluator. Pure, dependency-free TypeScript.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,7 +18,11 @@
       "default": "./mod.ts"
     }
   },
-  "files": ["mod.ts", "src"],
+  "files": [
+    "mod.ts",
+    "src",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "publishConfig": {
     "access": "public"

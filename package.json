@@ -3,7 +3,7 @@
   "version": "0.0.4",
   "private": true,
   "description": "Core monorepo for the w6w workflow platform.",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "test": "deno test -A --unstable-worker-options packages/",
     "check": "deno check packages/",
