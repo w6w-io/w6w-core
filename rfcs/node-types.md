@@ -337,3 +337,93 @@ A host that implements `@w6w/call` MUST:
   cross-project target (HITL-D).
 - Honor the per-node `wait` flag: on `wait: true`, await the sub-run and expose its output as the
   node's `output`; on `wait: false`, return `{ runId }` without awaiting.
+
+## Amendment — 2026-08-11: the `@w6w/document` host node (F-3)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change. It reserves one more id in the `@w6w/*` namespace and routes it
+> through the existing single invoke seam — it adds **no** new host capability, so unlike the
+> 2026-07-23 triple it has no companion amendment in [`invocation.md`](./invocation.md). It is a
+> self-contained addition alongside
+> [Amendment — 2026-07-23: the `@w6w/call` host node](#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+> — the two reserve independent ids and amend nothing of each other.
+
+`@w6w/document` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself
+to **read one document, by key, from the run's own document store**. It is the in-graph way to pick a
+document *at run time*: its `key` is an ordinary expression-capable `with` value, so it can come from
+a trigger input or an upstream step's output — which the static `documents.<key>` path in the run
+scope (see the [Workflow RFC](./workflow.md#run-scope-roots)) cannot express. Like `@w6w/control`,
+`@w6w/script`, `@w6w/data`, `@w6w/trigger` and `@w6w/call`, it is a **host** node with host
+capabilities — **not** a sandboxed `packages/apps` app. No registered app id may begin with `@w6w/`,
+so `@w6w/document` can never collide with a catalog app.
+
+Its output is data like any other step's, and its usual companion is a `render` part in a downstream
+step's `with` pointing at `steps.<id>.output.content` — the document's `{{ }}` placeholders are
+rendered by the engine's expression pass, not by this node (see [Workflow RFC — the multipart
+expression envelope and the `render` part
+kind](./workflow.md#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)).
+`@w6w/document` is **read-only in v1**: `get` is its only action, and there is no `set` or `upsert`.
+
+### Kind & routing
+
+`@w6w/document` slots into the existing tables as an **internal** kind that routes through the one
+invoke seam — there is no parallel code path:
+
+| Kind       | `uses.app`      | Executed by                 | Examples              |
+| ---------- | --------------- | --------------------------- | --------------------- |
+| `internal` | `@w6w/document` | the **host's internal API** | read a document by key |
+
+Routing is unchanged: `isInternalApp("@w6w/document")` is `true` (the reserved `@w6w/` prefix), so
+`ctx.invoke` / `invokeAction` dispatches it to the **host's internal node processor** — the same
+processor that runs `@w6w/script` and `@w6w/data` — rather than to the registry. The engine never
+reads the document store itself; it asks the host through the seam it already uses for every node.
+
+### Reserved internal pseudo-app
+
+| Id              | Action(s) | Input (`with`) | Output                     | Processor |
+| --------------- | --------- | -------------- | -------------------------- | --------- |
+| `@w6w/document` | `get`     | `{ key }`      | `{ key, format, content }` | host      |
+
+- `key` is an ordinary **expression-capable** string: it resolves against the run scope exactly like
+  any other `with` value, so `{ "$": "steps.start.output.template" }` and a multipart `ExprValue` are
+  both valid and a literal string is the degenerate case. The resolved string names the document's
+  `key` — not its id.
+- **There is no `project` param.** The document is resolved under the run's own
+  `(tenant, subject, project)` — the workflow's own project — never a caller-supplied one. A run-time
+  string naming a project would arrive at the store as data and let one run read another project of
+  the same tenant; the run's own project is the only scope this node needs.
+- The output is `{ key, format, content }`: `key` echoes the resolved key, `format` is the stored
+  document's format, and `content` is the document's body — the **parsed JSON** when `format` is
+  `"json"`, the raw string otherwise. Downstream reads it as
+  `{ "$": "steps.<id>.output.content.body" }`, or `{ "$": "steps.<id>.output.content" }` for a
+  non-JSON document. The parsed content is deliberately **not** spread at the top level: a document
+  whose own JSON carries a `key` or a `format` field would collide with the envelope if it were.
+
+### Open/closed seam
+
+`@w6w/document` sits on the same open/closed boundary as `@w6w/call` and `ctx.invoke`
+(STRATEGY §5.1). The **contract** — the `@w6w/document` node kind and its reserved id constant — is
+declared in the open `@w6w/workflow-types` and surfaced by `@w6w/ui`; the **implementation**
+(document-store access, project scoping, entitlement) is provided by the **closed server host**. No
+capability implementation crosses the seam: the engine holds only the reserved id and routes to the
+host, so the OSS engine stays host-free while the private host owns how a document is actually found
+— the identical split already used for `ctx.invoke`, `ctx.invokeFunction` and
+[`ctx.invokeCallable`](./invocation.md#amendment--2026-07-23-the-ctxinvokecallable-seam-f-3).
+
+### Conformance (additive)
+
+A host that implements `@w6w/document` MUST:
+
+- Classify a node whose `uses.app === "@w6w/document"` as an **internal** kind and route it through
+  the one invoke seam to the host's internal node processor — never by reading the document store
+  inside the engine.
+- Resolve `with.key` against the run scope before the node runs, exactly as it resolves any other
+  `with` value, and treat the resolved string as the document's `key`.
+- Resolve the document under the **run's own** `(tenant, subject, project)`, and accept no
+  caller-supplied project.
+- Return `{ key, format, content }` on success, with `content` the parsed JSON when `format` is
+  `"json"` and the raw string otherwise.
+- **Fail the step** when no document matches the resolved key, with an error whose message
+  **contains that key** — never a success carrying an empty or null output.
+- Reject a `@w6w/document` node naming any action other than `get`. The node is read-only in v1; a
+  host MUST NOT add a `set` or `upsert` action under this id.
