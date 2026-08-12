@@ -50,6 +50,16 @@ Each package is transport-free and independently focused; deployment concerns
 here, some in the host platform. Run `deno task test` (or `npm test`) to exercise
 the whole workspace.
 
+## Licensing — this repo is deliberately split
+
+| | Licence | Why |
+|---|---|---|
+| `@w6w/types`, `@w6w/expr` | **MIT** (each carries its own `LICENSE`) | The *format*. Anything that reads or writes a w6w manifest, expression or `{{ }}` template must be able to do so without asking — a spec nobody may reimplement is not a spec. |
+| everything else, incl. `@w6w/runtime` | **FSL-1.1-ALv2** (repo [`LICENSE`](./LICENSE)) | The *implementation*, including the sandbox. Readable and usable for any purpose except Competing Use; converts to Apache 2.0 two years after each version ships. |
+
+So: build apps, tools, importers and integrations freely. The one thing withheld
+is standing up a competing hosted w6w out of this implementation.
+
 ## Primitives
 
 The platform is built from a small set of primitives. Each one has (or will have) a dedicated RFC defining its logical schema, a reference serializer/validator, and a reference implementation.
