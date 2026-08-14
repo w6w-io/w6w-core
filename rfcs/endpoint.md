@@ -643,21 +643,26 @@ was already a permitted value and remains one, only no longer a required one.
 
 ## Amendment — 2026-08-14b: explicit completion `status`, and a draft answers 404
 
-> This section is the reconciling authority over two passages of the
+> This section is the reconciling authority over three passages of the
 > [prior draft-state amendment](#amendment--2026-08-14-an-endpoint-with-no-target-the-draft-state)
 > (dated 2026-08-14, no letter suffix):
 > [`### Presence of \`target\` is the whole distinction`](#presence-of-target-is-the-whole-distinction) —
 > **superseded on both of its claims**, that there is no `status` field and that presence of `target`
-> is the draft/ready distinction in full — and the first bullet of
+> is the draft/ready distinction in full — the first bullet of
 > [`### Conformance for a draft`](#conformance-for-a-draft) — **superseded on the status code only**:
 > `422` becomes `404`. That bullet's "never a 5xx", its list of address forms, and its reasoning for
-> refusing before dispatch all stand unedited. Where either superseded passage and this section
-> disagree, **this section governs**. The one pre-existing line this amendment rewrites is the
-> field-reference `target` row under [Field reference](#field-reference) (`#### Endpoint`): it stands
-> as read — an absent `target` still means a draft — and is only re-pointed at this section, because a
-> *present* `target` is no longer sufficient on its own to make an Endpoint invocable. Every other
-> amendment, and every other passage of the 2026-08-14 amendment, stands unedited — see *Unchanged by
-> this amendment* below.
+> refusing before dispatch all stand unedited — and the third bullet of the same section (beginning
+> "Not advertise a draft…") — **superseded on the status code only**: its illustrative sentence "An
+> entry that answers every call with `422 endpoint_incomplete` is worse than an absent one" now reads
+> under `404`, per [the refusal-status rule](#the-refusal-is-404-not-422-and-still-never-a-5xx) below;
+> that bullet's scope to derived, machine-facing surfaces and its operator-facing exception stand
+> unedited. Where any superseded passage and this section disagree, **this section governs**. The one
+> pre-existing line this amendment rewrites is the field-reference `target` row under
+> [Field reference](#field-reference) (`#### Endpoint`): it stands as read — an absent `target` still
+> means a draft — and is only re-pointed at this section, because a *present* `target` is no longer
+> sufficient on its own to make an Endpoint invocable. Every other amendment, and every other passage
+> of the 2026-08-14 amendment besides the three named above, stands unedited — see *Unchanged by this
+> amendment* below.
 
 ### `status` is host state, and the vocabulary is closed
 
