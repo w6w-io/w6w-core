@@ -563,14 +563,16 @@ invalid after it.
 
 ## Amendment — 2026-08-14: an Endpoint with no target (the draft state)
 
-> This section is **additive**, and it is the reconciling authority over three earlier passages that
+> This section is **additive**, and it is the reconciling authority over four earlier passages that
 > read as if `target` is always present: the field-reference `target` row ([`#endpoint`](#endpoint)),
-> the Conformance bullet *"Dispatch on `target.kind`"* ([Conformance](#conformance)), and the
+> the Conformance bullet *"Dispatch on `target.kind`"* ([Conformance](#conformance)), the
 > Summary/Concept phrasing that an Endpoint "dispatches to exactly one Callable" ([Summary](#summary))
-> and "hold[s] one Callable reference" ([Concept](#concept)). Where any of those and this section
-> disagree about whether `target` must be present, **this section governs**. The field-reference row
-> is the one pre-existing line this amendment rewrites (below); the Conformance and Summary/Concept
-> passages stand unedited and are read as describing an Endpoint that already has a `target` — this
+> and "hold[s] one Callable reference" ([Concept](#concept)), and the Goals bullet that defines the
+> Endpoint shape as carrying one Callable `target` without the `?` this document uses to mark an
+> optional field ([Goals](#goals)). Where any of those and this section disagree about whether
+> `target` must be present, **this section governs**. The field-reference row is the one pre-existing
+> line this amendment rewrites (below); the Conformance, Summary/Concept, and Goals passages stand
+> unedited and are read as describing an Endpoint that already has a `target` — this
 > section is what now says a `target` need not be there yet. Nothing else moves: dispatch, the
 > [Callable](#callable) union, the `action` target arm, the result envelope, the inbound `security`
 > model, and the addressing rules of the preceding amendments are all unchanged, and every rule of
