@@ -184,7 +184,7 @@ to handle both.
 | `key` | string | ✅ | Machine name. Unique per project/tenant. Lowercase, kebab-case. |
 | `displayName` | string | ⬜ | Human-facing name. Falls back to `key`. |
 | `description` | string | ⬜ | One-line summary. |
-| `target` | [`Callable`](#callable) | ⬜ | The Function or Workflow this Endpoint dispatches to. Optional — an absent `target` is a **draft**; see [Amendment — 2026-08-14](#amendment--2026-08-14-an-endpoint-with-no-target-the-draft-state). |
+| `target` | [`Callable`](#callable) | ⬜ | The Function or Workflow this Endpoint dispatches to. Optional — an absent `target` is a **draft**; whether a draft is invocable is governed by the host-maintained `status` field, not by `target`'s presence alone — see [Amendment — 2026-08-14b](#amendment--2026-08-14b-explicit-completion-status-and-a-draft-answers-404). |
 | `input` | [`Param`](./param.md)`[]` | ⬜ | The declared inbound contract. Reuses the Param RFC verbatim. Omitted ⇒ the raw payload is passed through to the target unchanged. |
 | `exposure` | [`Exposure`](#exposure-descriptor) | ⬜ | **Declarative only in v0.** Describes an intended outward HTTP surface; no v0 route reads it (see [Exposure](#exposure)). |
 
@@ -640,6 +640,129 @@ their stability; the exposure fence (HITL-1); and every rule governing an Endpoi
 `target` — this amendment reaches only the state before one is saved. No field is removed, no field
 retyped, and every Endpoint that was valid before this amendment is still valid after it: `target`
 was already a permitted value and remains one, only no longer a required one.
+
+## Amendment — 2026-08-14b: explicit completion `status`, and a draft answers 404
+
+> This section is the reconciling authority over two passages of the
+> [prior draft-state amendment](#amendment--2026-08-14-an-endpoint-with-no-target-the-draft-state)
+> (dated 2026-08-14, no letter suffix):
+> [`### Presence of \`target\` is the whole distinction`](#presence-of-target-is-the-whole-distinction) —
+> **superseded on both of its claims**, that there is no `status` field and that presence of `target`
+> is the draft/ready distinction in full — and the first bullet of
+> [`### Conformance for a draft`](#conformance-for-a-draft) — **superseded on the status code only**:
+> `422` becomes `404`. That bullet's "never a 5xx", its list of address forms, and its reasoning for
+> refusing before dispatch all stand unedited. Where either superseded passage and this section
+> disagree, **this section governs**. The one pre-existing line this amendment rewrites is the
+> field-reference `target` row under [Field reference](#field-reference) (`#### Endpoint`): it stands
+> as read — an absent `target` still means a draft — and is only re-pointed at this section, because a
+> *present* `target` is no longer sufficient on its own to make an Endpoint invocable. Every other
+> amendment, and every other passage of the 2026-08-14 amendment, stands unedited — see *Unchanged by
+> this amendment* below.
+
+### `status` is host state, and the vocabulary is closed
+
+An Endpoint carries a **`status`**, host-maintained, whose normative vocabulary is a **closed set of
+exactly two values**:
+
+| `status` | Meaning |
+|---|---|
+| `draft` | not invocable |
+| `ready` | authorises dispatch |
+
+There is no third value in v0. Completion is binary — the question `status` answers is "can this
+run?", which has exactly two answers — and every additional value this section could have introduced
+(`disabled`, `archived`, `published`, `error`, …) would be a new arm the invoke sink has to decide
+refuse-or-run for, corresponding to no product concept that exists today. A value can be added later
+without breaking a caller; none can be removed later, which is reason enough to keep the set to the
+two the product actually needs. Consequently **`ready` is the only value that authorises dispatch**,
+stated that way on purpose so the refusal predicate stays **total**: anything that is not exactly
+`ready` refuses — including a value a future version of this spec introduces that a given host does
+not yet recognize. A host MUST treat an unrecognized `status` as refuse, never as run.
+
+`status` is **host state, not an authored manifest field**:
+
+- it is **never accepted from a caller's request body** — a create or update payload that includes a
+  `status` key has that key ignored, not honoured;
+- a host **MUST derive it from the stored definition on every write**: `target` present ⇒ `ready`,
+  `target` absent ⇒ `draft`;
+- it does **not** appear as a row in the Endpoint shape in [Field reference](#field-reference) — the
+  manifest a caller authors is unchanged by this amendment.
+
+Two consequences follow directly. A caller cannot arm or brick an Endpoint by posting a `status`
+value, because the host recomputes it from `target` on every write regardless of what was sent. And
+the field-reference `#### Endpoint` table gains no new row for it: `status` lives beside the stored
+Endpoint the host keeps, not inside the shape a caller writes.
+
+### The disagreement rule — `status` and `target`, refusal wins
+
+Two sources of truth now exist, by the same instruction that added `status`, so this section states
+which wins:
+
+> An Endpoint is invocable **iff** `status` is exactly `ready` **and** `target` is present. Where the
+> two disagree — in either direction — the Endpoint is **not** invocable, and the host answers the
+> same 404 it answers for any other draft.
+
+This is the sentence that answers the objection the superseded section raised when it rejected a
+`status` enum — that a second field is "a second place to record the same fact, one that can drift…
+and leave a host trusting the wrong one." Under an AND, drift can only ever **withhold** a dispatch,
+never **authorise** one: a `status` that wrongly reads `ready` while `target` is absent still cannot
+make the Endpoint run, because there is still no `target.kind` to dispatch on; a `status` that
+wrongly reads `draft` while a valid `target` is present costs a visible, correctable 404, never a
+silent wrong dispatch. The failure mode is bounded on the safe side by construction — that is what
+makes a second source of truth admissible at all.
+
+### The refusal is `404`, not `422`, and still never a 5xx
+
+Where the superseded [`### Conformance for a draft`](#conformance-for-a-draft) required **422**
+`endpoint_incomplete`, a host MUST now answer **404** — at every address form that section already
+enumerates: `POST /endpoints/:id/invoke` ([Exposure](#exposure)),
+`POST <PUBLIC_BASE_URL>/invoke/<urn>` ([the universal invoke URL](#one-url-for-everything-runnable)),
+and `POST <TENANT_DOMAIN>/invoke/{account_slug}/{key}`
+([the account-key address](#two-address-forms-and-which-of-them-is-stable)) — with a machine-readable
+body, and **never a 5xx on any door**. The reason to refuse before dispatch is unchanged from the
+superseded section: there is no `target.kind` to dispatch on for a non-invocable Endpoint, so reaching
+the dispatch table would be a host bug, and refusing first is what keeps that bug from ever surfacing
+as a caller-visible server fault.
+
+One clause is new, because 404 collides with a rule the superseded 422 never touched. On the
+`{account_slug}/{key}` address, the refusal MUST be **the same generic body every other miss on that
+address already returns** — [The host may narrow, never widen](#the-host-may-narrow-never-widen)
+already requires one byte-identical body for every miss on that address (unknown slug, unknown key,
+wrong tenant, no entitlement), precisely because the address is short and human-guessable. A
+not-ready Endpoint joins that same undifferentiated set; it does not get a body of its own. On the
+id/URN forms, which are opaque, the body MAY name the condition (e.g. `endpoint_incomplete`), exactly
+as the superseded section allowed.
+
+The consequence is stated once, because it is the human's call and not an oversight: **a caller
+cannot distinguish "no such Endpoint" from "exists but unfinished."**
+
+### What still governs, restated as this section's own rules
+
+Three things the superseded section established are not merely left un-contradicted by this one —
+they govern under this section exactly as they did under the last:
+
+- A draft is a real stored Endpoint that **holds its `(account, key)`**:
+  [`(account, key)` uniqueness](#an-endpoint-belongs-to-the-account) applies to it exactly as to a
+  complete Endpoint, regardless of `status`.
+- A draft is **not invocable** — `status: "draft"` is definitionally the non-invocable state under
+  [the disagreement rule](#the-disagreement-rule--status-and-target-refusal-wins) above.
+- A draft is **not advertised on any derived, machine-facing surface** a host generates by enumerating
+  Endpoints — a generated tool list, a generated catalog, a generated API document, or any other
+  surface built for a consumer that is not a human operator — while an **operator-facing** surface,
+  such as the studio's own Endpoint list, still shows it, marked unfinished, to the whole owning
+  account.
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the [Callable](#callable) union and
+the `action` target arm; the inbound `security` model; `(account, key)` uniqueness and `key`
+immutability for an Endpoint that already has a `target`; the URN and account-key address forms and
+their stability; the exposure fence (HITL-1); the address forms and the "never a 5xx" and
+machine-readable-body requirements the superseded [`### Conformance for a draft`](#conformance-for-a-draft)
+bullet already established; and every rule governing an Endpoint whose `status` is `ready`. This
+amendment reaches only the refusal status code (`422` → `404`) and the signal a host derives
+completion from (`status`, computed from `target` on every write, in place of `target`'s presence
+alone). No field is removed, no field retyped, and every Endpoint that was invocable before this
+amendment is invocable after it, under an unchanged underlying condition now expressed through
+`status` as well as `target`.
 
 ## Status ladder
 
