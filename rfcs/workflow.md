@@ -241,7 +241,7 @@ Values in a step's `with` block, and by extension anywhere the model accepts exp
 | `{ "$": "steps.fetch.output.items.0.title" }` | Path lookup sugar over the run scope. |
 | `{ "$expr": <JSONLogic> }` | Full JSONLogic evaluation over the run scope. |
 | plain object / array | Resolved recursively — nested markers evaluated in place. |
-| anything else | Literal passthrough. |
+| anything else | Literal passthrough — **except** a string every one of whose `{{ … }}` markers names a run-scope root, which resolves; see [Amendment — 2026-08-14](#amendment--2026-08-14-root-anchored-template-strings-in-with-values). |
 
 The two-marker form keeps a literal object unambiguous from an expression — the engine never has to guess whether `{ "==": [...] }` is data or logic.
 
@@ -257,6 +257,7 @@ interface RunScope {
 
 Expression semantics — operators, coercion, error handling — are specified by `@w6w/expr` (JSONLogic-based). This RFC only pins the marker convention and the scope shape.
 See [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3), which specifies the multipart envelope and declares two further run-scope roots (`secrets`, `documents`) — the `RunScope` block above is incomplete rather than exhaustive, and that section governs where the two disagree.
+See [Amendment — 2026-08-14: root-anchored template strings in `with` values](#amendment--2026-08-14-root-anchored-template-strings-in-with-values), which specifies when a **string** `with` value resolves against the run scope — the marker table's `anything else` row above is incomplete rather than exhaustive, and that section governs where the two disagree.
 
 ## Host contract — `WorkflowContext`
 
@@ -749,3 +750,152 @@ the run scope, or any root of it, through an empty path in an envelope part. Tes
 scope **S**, resolving a `with` block whose only part is `{ "kind": "var" }` or
 `{ "kind": "var", "ref": "" }` MUST produce the empty string — it MUST NOT produce a serialization
 of **S**, and in particular MUST NOT surface anything from [`secrets`](#run-scope-roots).
+
+## Amendment — 2026-08-14: root-anchored template strings in `with` values
+
+> This section is **additive** to [Expression markers](#expression-markers) above, and it is the
+> reconciling authority over four earlier passages that read as if a plain string `with` value never
+> resolves: the marker table's `| anything else |` row ([Expression markers](#expression-markers)),
+> the [`Step.with`](#step) field row ("a literal, an object, an array, or an expression marker"), the
+> [Non-Goals](#non-goals) bullet on the expression language and the [Resolved questions](#resolved-questions)
+> "Expression language" row — each of which names only the two pre-existing markers — and the
+> [Conformance](#conformance) "Expression scope" bullet. Where any of those and this section disagree
+> about whether a plain string resolves, **this section governs**. The marker-table row is the one
+> pre-existing line this amendment rewrites (below); the `Step.with` field row, the Non-Goals bullet,
+> and the Resolved-questions row stand **unedited** and are read as **incomplete rather than
+> exhaustive** — they enumerate the markers that existed before this amendment, not every value form a
+> `with` value now takes. The Conformance "Expression scope" bullet is **unaffected**: it states which
+> roots the engine populates in every evaluation, not which value *forms* resolve, and this amendment
+> declares no new root. It is independent of, and does not interact with,
+> [Amendment — 2026-07-29: failure-conditioned edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen)
+> and
+> [Amendment — 2026-07-29: authoring presentation](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings)
+> — neither changes what a `with` value resolves to. Its relationship to
+> [Amendment — 2026-08-11: the multipart expression envelope and the `render` part kind (F-3)](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)
+> is narrower than independence: this section **builds on** it — reusing the `secrets` and `documents`
+> roots it declares — and **narrows** one of its sentences (below), without editing that amendment's
+> text or changing anything it specifies about the multipart envelope, `render` parts, or the two
+> secret barriers.
+
+Before this amendment, a plain **string** `with` value was pinned as unconditional literal
+passthrough — the marker table's `anything else` row. That is wrong the moment a host resolves
+`{{ … }}` markers embedded in a plain string rather than only inside the two bracketed marker forms:
+a workflow author who types `"Bearer {{ vars.token }}"` as a step's `with` value expects the token
+substituted, not the literal braces sent to the app. This section specifies exactly when that
+substitution happens and when it does not.
+
+**§ The rule.**
+
+1. A **string** `with` value resolves **iff** it contains at least one `{{ … }}` marker **and every
+   one** of its markers names a run-scope root. Otherwise the string is passed through **unchanged**.
+2. **All-or-nothing.** A string mixing rooted and unrooted markers (`"Hi {{ name }}, {{ vars.c }}"`)
+   is passed through **whole and unchanged** — the rooted marker `{{ vars.c }}` is *not* resolved on
+   its own. Partial resolution would silently delete the unrooted `{{ name }}` marker from the
+   output, and the grammar has no escape sequence an author could use to get it back; leaving the
+   whole string alone is the only reading that never destroys characters the author wrote.
+3. **The root set is CLOSED and fixed** — it is not "whatever roots the host happens to have
+   populated for this pass". This is load-bearing: an open set makes which vendor placeholders
+   survive depend on the host running the workflow, not on the workflow's own text. The closed set is
+   exactly the eight members of the exported `RunScope` type, which this RFC and its companions
+   declare across three files and which this section gathers into one list:
+   - `vars`, `steps`, `trigger` — [Expression markers](#expression-markers) of this RFC;
+   - `secrets`, `documents` — [Amendment — 2026-08-11](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)
+     § [Run-scope roots](#run-scope-roots), whose closing sentence — *"Any further root a host
+     populates for a particular pass is neither declared nor forbidden here; it remains unspecified
+     by this RFC"* — is narrowed **here**: an unspecified root is **not** a resolvable root for the
+     rule in this section, whatever else it may be for a particular host's pass;
+   - `inputs`, `output` — the Function RFC's widened `RunScope` (`rfcs/function.md:226-243`);
+   - `foreach` — the Engine RFC's `@w6w/control` · `foreach` control, which adds `foreach.item` and
+     `foreach.index` to the sub-block's run scope (`rfcs/engine.md:210`), and its Conformance item 6
+     (`rfcs/engine.md:288`).
+
+   The exported `RunScope` type in `@w6w/workflow` is **canonical** for this list: it is the single
+   source of truth for which roots exist, and a future member added to it extends this rule's root
+   set automatically — no separate list to keep in step.
+4. **Marker-kind handling**, per the shared `{{ }}` grammar of [Render mode, and why rendered content
+   cannot reach a secret](#render-mode-and-why-rendered-content-cannot-reach-a-secret): `{{
+   =<JSONLogic> }}` and `{{ secrets.<name> }}` are always ours, and a **path** marker qualifies as
+   rooted **iff its first dot-segment** is one of the eight names above. Parsing runs in **editor
+   mode** — the same mode an authoring tool round-trips an `ExprValue` through — so a typed `{{
+   secrets.API_KEY }}` inside a plain string behaves identically to the same reference expressed as
+   an inserted secret chip in an `ExprValue`.
+
+**§ Why root-anchored — the constraint, stated in the spec.** Root-anchoring is not a simplification the engine happens to make; it is what keeps this rule from
+silently corrupting data that has nothing to do with `@w6w/workflow`'s own expression grammar. Of the
+**121** distinct `{{ … }}` spellings measured across the first-party app pack, **116 are vendor-side
+placeholders that must reach the vendor verbatim** — Mailjet's `{{var:name}}`, Mandrill's Handlebars
+merge tags, Metabase's SQL `{{tag}}` filters, Google Slides' template placeholders, Apify's actor
+input templates, and lemlist's personalization tags, among others. None of those names a run-scope
+root. An unconditional string arm — resolve every `{{ … }}` it finds — would evaluate each of the 116
+against a scope that has no matching key and **silently delete it**, and the grammar defines no
+escape sequence an author could use to opt a vendor placeholder back out. Under the rule in this
+section, every one of the 116 stays literal, because none of them is rooted; only the small set of
+markers an author actually wrote against `vars`, `steps`, `trigger`, and the other five roots
+resolves.
+
+**§ Resolved semantics.** One normative clause each:
+
+- **Interpolation inside a larger string is allowed** — `"Bearer {{ vars.token }}"` is a valid,
+  resolving `with` value; the rule does not require the marker to be the whole string.
+- **The result is always a single string**, inheriting [An `ExprValue` always resolves to a single
+  string](#an-exprvalue-always-resolves-to-a-single-string): `"{{ vars.count }}"` with `count: 5`
+  resolves to `"5"`, not the number `5`. An author who needs the typed value rather than its string
+  form uses the `ExprValue` envelope's `var` part, `{ "$": … }`, or `{ "$expr": … }` instead.
+- **A reference that resolves to nothing contributes the empty string**, exactly as a `var` part
+  does — an absent or unresolved path is not an error here.
+- **A `{{ secrets.<name> }}` naming no available secret fails the step**, exactly as a `secret` part
+  does — this is the one marker kind for which "resolves to nothing" is a failure, not an empty
+  string.
+- **An unterminated `{{`** — no matching `}}` before the string ends — makes the whole string
+  literal, and it is returned **byte-identical** to what was written, not re-concatenated to the same
+  characters through a resolve-and-rejoin path that happens to reproduce them.
+- **`{{ }}`** (an empty marker, naming no path) names no root, so the string carrying it is literal
+  under the iff rule in clause 1 above — an empty marker is not itself a "root-anchored" marker.
+- **There is no escape mechanism, and none is added by this amendment.** A string that must deliver a
+  literal `{{ vars.x }}` to an app — as opposed to having it resolved — is expressible only through
+  the `ExprValue` envelope's `text` part, which never parses its content for markers. This is a
+  **known gap of the grammar**, deliberately left open rather than an oversight: inventing an escape
+  syntax such as `\{{` is itself a grammar change, tracked separately.
+
+**§ Reach beyond this RFC.** This rule governs every `with` value the shared `resolveWith` walks, and several of those clauses live
+in RFCs this section may not edit; each is read as **incomplete rather than exhaustive**, governed
+here, exactly as the passages reconciled above:
+
+- the Function RFC's `impl.with` field row (*"Each value is a literal or an expression marker"*,
+  `rfcs/function.md:206`) and `outputMap` row (`rfcs/function.md:207`) — both resolved by the same
+  `resolveWith` the Function RFC's own Adapter section names;
+- the Endpoint RFC's `action` arm `with` (`rfcs/endpoint.md:358`, same `resolveWith`) — its
+  *"`with` omitted ⇒ the inbound payload is passed to the action as its params unchanged"* rule is
+  about an **absent `with` block** and is **unaffected** by this section, which only governs a string
+  value that is present;
+- the Node Types RFC's *"literals pass through"* clause (`rfcs/node-types.md:215`) and its
+  `@w6w/document` `key` param, *"a literal string is the degenerate case"* (`rfcs/node-types.md:388`);
+- the Auth RFC's `connectionLabel: "{{user.name}} — {{team.name}}"` (`rfcs/auth.md:83`) is
+  **unaffected, and named as such so it is not mistaken for a case this rule reaches**: it is a
+  connection-label template, never a `with` value, and `user`/`team` are not run-scope roots — it
+  stays literal under this rule twice over, once because it is not a `with` value and once because
+  neither of its markers names a root.
+
+**§ Conformance (additive).** A host that implements this rule MUST:
+
+- Resolve a **string** `with` value **iff** it contains at least one `{{ … }}` marker and every one of
+  its markers names one of the eight run-scope roots; otherwise pass it through unchanged. Testably:
+  for every string containing only rooted markers, resolving it MUST differ from the input; for every
+  string containing no marker, or containing at least one unrooted marker, resolving it MUST produce
+  the **byte-identical** input string.
+- Treat a mix of rooted and unrooted markers as **all-or-nothing**. Testably: a string containing both
+  a rooted and an unrooted marker MUST resolve to the byte-identical input — the rooted marker MUST
+  NOT be substituted while the unrooted one is left as literal text.
+- Pass a string through **byte-identical** when it carries no `{{ … }}` marker, an unterminated `{{`,
+  or an empty `{{ }}` marker. Testably: each of these three inputs, resolved, MUST equal itself.
+- Resolve a rooted string to a **single string** result. Testably: a string whose sole marker resolves
+  to a non-string value (number, boolean, object, array) MUST resolve to that value's string form, not
+  the structured value.
+- Contribute the **empty string** for a rooted path marker that resolves to nothing. Testably: a
+  rooted marker naming a path absent from the run scope MUST resolve to `""`, not fail the step.
+- **Fail the step** for a `{{ secrets.<name> }}` marker naming no available secret. Testably: such a
+  marker MUST NOT resolve to the empty string or to the literal text.
+- Treat the **eight-member `RunScope` root set** as closed for this rule: `vars`, `steps`, `trigger`,
+  `secrets`, `documents`, `inputs`, `output`, `foreach`. Testably: a marker whose first dot-segment is
+  none of the eight MUST leave the whole string unresolved, whatever else the host's ambient scope for
+  that pass happens to carry.
