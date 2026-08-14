@@ -184,7 +184,7 @@ to handle both.
 | `key` | string | ✅ | Machine name. Unique per project/tenant. Lowercase, kebab-case. |
 | `displayName` | string | ⬜ | Human-facing name. Falls back to `key`. |
 | `description` | string | ⬜ | One-line summary. |
-| `target` | [`Callable`](#callable) | ✅ | The Function or Workflow this Endpoint dispatches to. |
+| `target` | [`Callable`](#callable) | ⬜ | The Function or Workflow this Endpoint dispatches to. Optional — an absent `target` is a **draft**; see [Amendment — 2026-08-14](#amendment--2026-08-14-an-endpoint-with-no-target-the-draft-state). |
 | `input` | [`Param`](./param.md)`[]` | ⬜ | The declared inbound contract. Reuses the Param RFC verbatim. Omitted ⇒ the raw payload is passed through to the target unchanged. |
 | `exposure` | [`Exposure`](#exposure-descriptor) | ⬜ | **Declarative only in v0.** Describes an intended outward HTTP surface; no v0 route reads it (see [Exposure](#exposure)). |
 
@@ -560,6 +560,86 @@ its conformance rules; the fence on custom public paths; `id` as the caller's st
 and the URN as the stable address; and the requirement that callable URLs be rendered host-side. No
 field is removed, no field changes type, and no Endpoint that was valid before this section is
 invalid after it.
+
+## Amendment — 2026-08-14: an Endpoint with no target (the draft state)
+
+> This section is **additive**, and it is the reconciling authority over four earlier passages that
+> read as if `target` is always present: the field-reference `target` row ([`#endpoint`](#endpoint)),
+> the Conformance bullet *"Dispatch on `target.kind`"* ([Conformance](#conformance)), the
+> Summary/Concept phrasing that an Endpoint "dispatches to exactly one Callable" ([Summary](#summary))
+> and "hold[s] one Callable reference" ([Concept](#concept)), and the Goals bullet that defines the
+> Endpoint shape as carrying one Callable `target` without the `?` this document uses to mark an
+> optional field ([Goals](#goals)). Where any of those and this section disagree about whether
+> `target` must be present, **this section governs**. The field-reference row is the one pre-existing
+> line this amendment rewrites (below); the Conformance, Summary/Concept, and Goals passages stand
+> unedited and are read as describing an Endpoint that already has a `target` — this
+> section is what now says a `target` need not be there yet. Nothing else moves: dispatch, the
+> [Callable](#callable) union, the `action` target arm, the result envelope, the inbound `security`
+> model, and the addressing rules of the preceding amendments are all unchanged, and every rule of
+> theirs applies unmodified the moment an Endpoint's `target` is present.
+
+### An Endpoint with no `target` is a draft
+
+An Endpoint's `target` MAY be absent. A target-less Endpoint is not a placeholder or a client-side
+form state — it is a **real, stored Endpoint**: it carries `id` and `key`, MAY carry `displayName`
+and `description`, and MAY declare its `input` contract, exactly as a complete Endpoint does. What it
+does not yet say is what it dispatches to. This is a **draft** — the state a host holds while an
+operator names an entry point and shapes its inbound contract before wiring it to a Callable or an
+`action`. Nothing about how a draft is stored, owned, or keyed differs from a complete Endpoint; only
+`target` is missing.
+
+### Presence of `target` is the whole distinction
+
+There is no `status` field and no separate partial-create route. **Whether `target` is present is
+the draft/ready distinction, in full** — a draft becomes ready the instant a valid `target` is saved
+onto it, and nothing else about the Endpoint changes when it does. A `status` enum and a dedicated
+partial-create endpoint were both weighed and rejected: either introduces a second place to record
+the same fact, one that can drift from what `target` itself says and leave a host trusting the wrong
+one.
+
+**Optional is not unvalidated.** A `target` that is present but malformed is still rejected exactly
+as [Conformance](#conformance) already requires. This amendment only adds one new valid state — total
+absence — it does not relax validation of a `target` that is there.
+
+### Conformance for a draft
+
+A host that implements the draft state MUST:
+
+- **Refuse to invoke a draft before dispatch**, at every address form this RFC defines —
+  `POST /endpoints/:id/invoke` ([Exposure](#exposure)),
+  `POST <PUBLIC_BASE_URL>/invoke/<urn>` ([the universal invoke URL](#one-url-for-everything-runnable)),
+  and `POST <TENANT_DOMAIN>/invoke/{account_slug}/{key}` ([the account-key address](#two-address-forms-and-which-of-them-is-stable))
+  — answering **422** with the machine-readable code **`endpoint_incomplete`**, never a 5xx. There is
+  no `target.kind` to dispatch on, so reaching the dispatch table with a draft would be a host bug;
+  refusing first, before any dispatch attempt, is what keeps that bug from ever surfacing as a
+  caller-visible server fault. This is the same discipline the addressing rules already commit to —
+  *"Every failure on this path… MUST be reported as a 4xx with a machine-readable body"*
+  ([The host may narrow, never widen](#the-host-may-narrow-never-widen)) — applied to the one failure
+  that can occur before any tenant or credential check runs at all.
+- **Hold the draft's key.** `(account, key)` uniqueness
+  ([An Endpoint belongs to the account](#an-endpoint-belongs-to-the-account)) applies to a draft
+  exactly as it applies to a complete Endpoint: saving a draft under a `key` claims that name in the
+  account, and a second member who tries to claim the same `key` is told it is taken. The alternative
+  — a draft that does not yet hold its own name — would let a colleague finish theirs first and take
+  the key out from under the operator who is still building the Endpoint. A draft is not less real
+  for lacking a `target`; `(account, key)` uniqueness exists to make a `key` mean one Endpoint, and a
+  draft is one.
+- **Not advertise a draft on any derived, machine-facing surface it generates from Endpoints** — a
+  generated tool list, a generated catalog, a generated API document, or any other surface a host
+  builds by enumerating Endpoints for a consumer that is not a human operator. An entry that answers
+  every call with `422 endpoint_incomplete` is worse than an absent one: it costs a machine caller a
+  round trip a filtered list would have spared it for free. This is scoped to **derived,
+  machine-facing** surfaces only — an operator-facing surface, such as the studio's own Endpoint list
+  for a human still building the thing, is unaffected: a draft stays visible to the whole owning
+  account and marked unfinished there, which is exactly what lets that operator find it again.
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the [Callable](#callable) union
+and the `action` target arm; the inbound `security` model; `(account, key)` uniqueness and `key`
+immutability for an Endpoint that already has a `target`; the URN and account-key address forms and
+their stability; the exposure fence (HITL-1); and every rule governing an Endpoint that already has a
+`target` — this amendment reaches only the state before one is saved. No field is removed, no field
+retyped, and every Endpoint that was valid before this amendment is still valid after it: `target`
+was already a permitted value and remains one, only no longer a required one.
 
 ## Status ladder
 
