@@ -11,6 +11,10 @@
  */
 export { evaluate, ExprError, isTruthy, showIf } from "./src/jsonlogic.ts";
 export {
+  type CoalesceChain,
+  coalesceOperandRefs,
+  hasRefusedChainToken,
+  parseCoalesceChain,
   parseRenderTemplate,
   parseTemplate,
   serializeTemplate,
