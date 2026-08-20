@@ -776,3 +776,36 @@ amendment is invocable after it, under an unchanged underlying condition now exp
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-08-20: `retry`, `onError`, and `reroute`
+
+> The [Field reference](#field-reference) `Endpoint` table above is **silent** on failure handling —
+> no row states what a caller sees when `target` fails. This section fills that gap, additively:
+> three new optional fields on `Endpoint`, none of them removing or retyping a row already in that
+> table. The companion [Function RFC amendment of the same date](./function.md#amendment--2026-08-20b-retry-onerror-and-reroute)
+> adds the identical shape to `Fn`, since an Endpoint has the same no-graph constraint on `reroute`
+> a Function does.
+
+`Endpoint` gains:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `retry` | `RetryPolicy` | ⬜ | Attempt policy for this call. Absent ⇒ one attempt. Reuses the workflow [Step](./workflow.md#step)'s `RetryPolicy` verbatim (`maxAttempts`, `backoff?`, `delayMs?`). |
+| `onError` | `"fail" \| "continue"` | ⬜ | Applied only after `retry` and `reroute` are exhausted. Absent ⇒ `"fail"`. Deliberately **narrower** than a workflow step's `OnError`: `continue-record` has no meaning without a run's `stepErrors` state. |
+| `reroute` | `ErrorReroute` | ⬜ | Failure re-dispatch: `{ target: Callable, with? }`. Absent ⇒ none. `target` is a [`Callable`](#callable) reference — never an `Edge.when: "error"`, because an Endpoint has no graph to carry an edge on. |
+
+**Execution order**, the sequence a conforming host implements — identical to the Function RFC's:
+
+1. Attempt the call, up to `retry.maxAttempts` times (default `1` — no retry).
+2. On final failure, if `reroute` is present: invoke `reroute.target` — mapping `{ inputs, error }`
+   onto its inputs through `reroute.with` if given, or passing `inputs` through unchanged otherwise
+   — and return **that** target's dispatch result as this Endpoint's own result. `retry` is not
+   re-applied to the reroute target itself.
+3. Otherwise, apply `onError`: `"fail"` (the default) propagates the error, exactly as today;
+   `"continue"` resolves the invocation with a `null` output instead of throwing.
+
+**Unchanged by this amendment.** `target`, the [Callable](#callable) union and the `action` target
+arm, [Dispatch and the result envelope](#dispatch-and-the-result-envelope), the inbound `security`
+model, and every other field in the [Field reference](#field-reference) table above. No field is
+removed, no field retyped, and an Endpoint with no `retry`/`onError`/`reroute` behaves exactly as it
+did before this amendment.

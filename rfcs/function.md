@@ -63,6 +63,10 @@ change.
 - **Function-run history.** There is **no `function_runs` record** in v0. A Function invocation is a
   single Action call already metered and logged by the host's `invokeAction` choke point; Function-
   level replay/observability parity with workflow runs is deferred.
+  This description is the **action arm**'s metering path (see the
+  [Amendment — 2026-08-20](#amendment--2026-08-20-impl-may-target-a-function-or-a-workflow-d-8)
+  below). A callable arm's invocation is metered by whatever choke point the invoked Function or
+  Workflow itself already goes through — no separate `function_runs` record is added for either arm.
 - **Execution runtime, credentials, and the sandbox** — owned by the [Invocation](./invocation.md) /
   runtime path the adapter funnels into. A Function never sees raw credentials.
 - **The expression language itself** — operators, coercion, path semantics — is specified by
@@ -104,6 +108,10 @@ provider migration only ever rewrites `impl`.
 
 ### Invocation
 
+*(This section describes the **action arm**'s invocation flow. See
+["Invocation — the callable arm"](#invocation--the-callable-arm) below for the Function/Workflow
+arms added by [Amendment — 2026-08-20](#amendment--2026-08-20-impl-may-target-a-function-or-a-workflow-d-8).)*
+
 A Function invocation is a **single Action call** wrapped by two expression adapters — inbound
 (`impl.with`) and outbound (`impl.outputMap`). The host resolves the definition, maps the caller's
 canonical `inputs` to the action's params, calls the existing single-Action invoke path, then maps the
@@ -126,6 +134,21 @@ No credentials, source refs, or sandbox are touched here — the underlying sing
 already owns connection resolution, entitlement, credential injection ([Auth](./auth.md) `sign`),
 metering, and the runtime sandbox (see the [Invocation RFC](./invocation.md)). A Function is
 **composition, not a new engine**.
+
+### Invocation — the callable arm
+
+*(Added by [Amendment — 2026-08-20](#amendment--2026-08-20-impl-may-target-a-function-or-a-workflow-d-8);
+the action-arm flow above is unchanged.)*
+
+When `impl` is a callable arm (`kind: "function"` or `"workflow"`; `isCallableImpl(fn.impl)` is
+`true`), invocation never calls `invokeAction`. Instead the host invokes the referenced Callable
+through the same machinery
+[`ctx.invokeCallable`](./invocation.md#amendment--2026-07-23-the-ctxinvokecallable-seam-f-3) funnels
+into for the [`@w6w/call` node](./node-types.md#amendment--2026-07-23-the-w6wcall-host-node-f-3): a
+`{kind:"function"}` target resolves synchronously via a nested `invokeFunction` call; a
+`{kind:"workflow"}` target is driven to a terminal result via the Workflow run path. That result
+becomes this Function's raw `output`, passed through `impl.outputMap` (when present) exactly as the
+action arm's raw Action output is. See [Conformance](#conformance) for the binding MUST.
 
 ## Shape
 
@@ -291,6 +314,15 @@ A host that implements Functions MUST:
   whose `inputs` and `output` roots are the canonical inputs and the bound action's raw output.
 - Route the resolved params through the same single-Action invoke path used for ad-hoc Action calls —
   no parallel credential, source, or sandbox path.
+- **The bullet above is scoped to the action arm** (`kind` absent or `"action"`; `FnActionImpl`) —
+  see [Amendment — 2026-08-20](#amendment--2026-08-20-impl-may-target-a-function-or-a-workflow-d-8).
+  For a callable arm (`kind: "function"` or `"workflow"`; `FnCallableImpl`), a host MUST instead
+  invoke the referenced Callable through the machinery
+  [`ctx.invokeCallable`](./invocation.md#amendment--2026-07-23-the-ctxinvokecallable-seam-f-3) funnels
+  into — a nested `invokeFunction` call for a `{kind:"function"}` target, or a Workflow run driven to
+  a terminal result for a `{kind:"workflow"}` target — and MUST NOT call `invokeAction` for this arm.
+  No parallel credential, source, or sandbox path for the callable arm either; see
+  ["Invocation — the callable arm"](#invocation--the-callable-arm).
 - Classify a `Step` whose `uses` is `{ function }` as `NodeKind: "function"` and execute it via
   `ctx.invokeFunction`, never by loading the Function inside the engine.
 
@@ -313,3 +345,149 @@ A host that implements Functions MUST:
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-08-20: `impl` may target a Function or a Workflow (D-8)
+
+> **This section REVERSES two passages of this RFC, by name: Non-Goal "Nesting" (`:61-62`) and
+> Open question 4 "Nesting" (`:338-339`). Both said `impl` targets an app Action only — never
+> another Function or a Workflow — and that v0's answer to nesting was no. D-8 changes that answer:
+> `impl` may now target a Function or a Workflow, exactly as `Endpoint.target` already does, via the
+> same [`Callable`](./endpoint.md#callable) union.**
+>
+> **Round 2 addendum.** Three further passages stated the reversed rule **as fact**, not merely
+> descriptively, and are RECONCILED below (each per-arm, by appending — no deletion): the
+> Function-run-history Non-Goal's justification clause (`:63-64`), the "Invocation" section's topic
+> sentence (`:115`, originally `:107` before this addendum's own insertions shifted it), and the
+> Conformance section's "Route the resolved params…" MUST bullet (`:315-316`, originally `:292-293`
+> — the most severe, being normative). Each is marked RECONCILED in the list below, distinct from
+> the DESCRIPTIVE entries, which needed no change because they never asserted the rule as
+> universally true — see each entry for what was added and where.
+>
+> The enumeration is a grep, not memory:
+> `/usr/bin/grep -n -i "app Action only\|never another Function\|Nesting\|only an app Action\|one
+> concrete app Action" rfcs/function.md` finds exactly three hits **on the base tree / pre-amendment
+> text**: `:61` (the Non-Goal reversed above), `:83` (Concept item 2, "names one concrete app Action"
+> — descriptive, see below), and `:306` (the Open question reversed above — now at `:338` in the
+> current file, shifted by this amendment's own prior insertions; see the Round 2 addendum above).
+> Every other passage that still *reads* action-only, but wasn't caught by that literal-phrase grep,
+> is enumerated here too. Most are
+> **descriptive of the action arm**, not a rule this amendment repeals — before this amendment there
+> was only one arm, so a sentence describing "the implementation" was necessarily describing the
+> action arm; it was never a statement that ruled out other arms, because at the time there were
+> none to rule out. Three (marked RECONCILED) stated it as an unconditional fact and needed an
+> explicit per-arm qualification, appended below their original text:
+> - `:11-12` — DESCRIPTIVE. Summary: "binds to **one concrete app [Action]** … through a swappable
+>   implementation."
+> - `:34` — DESCRIPTIVE. Motivation: the provider-swap sentence ("the operator swaps `impl`…").
+> - `:42-44` — DESCRIPTIVE. Goals: "Bind that interface to **one** concrete app Action via a
+>   swappable `impl`…"
+> - `:63-64` — **RECONCILED.** Non-Goals, "Function-run history": "A Function invocation is a
+>   single Action call already metered…" A qualifying continuation is appended directly below
+>   (`:66-69`): the action arm's metering path is unchanged; a callable arm is metered by whatever
+>   choke point the invoked Function or Workflow already goes through.
+> - `:87-89` (originally `:83-85`) — DESCRIPTIVE. Concept item 2: "names one concrete app
+>   Action (`impl.uses`)…"
+> - `:92-107` (originally `:91-103`) — DESCRIPTIVE. the composition diagram and "The vendor-swap
+>   invariant" section (both talk in terms of `uses`/`with`/`outputMap`, the action arm's own
+>   field names).
+> - `:115` (originally `:107`) — **RECONCILED.** "Invocation"'s topic sentence: "A Function
+>   invocation is a **single Action call**…" A scoping note is appended immediately above it
+>   (`:111-113`) pointing at the new ["Invocation — the callable arm"](#invocation--the-callable-arm)
+>   subsection appended after the pseudocode, which states the callable arm's own flow.
+> - `:116-136` (originally `:108-121`, extended) — DESCRIPTIVE. "Invocation"'s pseudocode (which
+>   calls `invokeAction` unconditionally) plus its trailing "No credentials, source refs, or sandbox
+>   are touched here — the underlying single-Action invoke path…" paragraph (`:133-136`, also
+>   hyphenated `single-Action` at `:117`/`:127`/`:133`, same grep family). Both remain the action
+>   arm's own flow, unedited — covered end-to-end by the `:111-113` scoping note above the whole
+>   "### Invocation" section, not individually qualified line-by-line.
+> - `:173-189` (originally `:150-166`) — DESCRIPTIVE. the Shape example's
+>   `"impl": { "uses": …, "with": …, "outputMap": … }` block.
+> - `:215` (originally `:192`) — DESCRIPTIVE. the `Fn` field-reference table's `impl` row.
+> - `:221-236` (originally `:198-213`) — DESCRIPTIVE. the `FnImpl` field-reference table (now
+>   `FnActionImpl`'s table — see below).
+> - `:272-273` (originally `:249-250`) — DESCRIPTIVE. the adapter-pass table (`impl.with` /
+>   `impl.outputMap`).
+> - `:308-314` (originally `:285-291`) — DESCRIPTIVE. Conformance's `impl.with`/`impl.outputMap`
+>   bullets (the `id`/`key`/`inputs`-preservation and `resolveWith`-resolution bullets).
+> - `:315-316` (originally `:292-293`) — **RECONCILED, most severe (normative).** Conformance:
+>   "Route the resolved params through the same single-Action invoke path… no parallel credential,
+>   source, or sandbox path." A new bullet is appended directly below (`:317-325`) scoping this one
+>   to the action arm by name and stating the callable arm's own MUST: invoke the referenced
+>   Callable through the `ctx.invokeCallable` machinery, never `invokeAction`.
+>
+> Every DESCRIPTIVE entry continues to hold **for the action arm**, unedited, and none is excluded
+> from that reading. Every RECONCILED entry keeps its original text byte-for-byte (0 deletions) and
+> gains an adjacent per-arm qualification. The rest of this RFC, outside the passages enumerated
+> above and this amendment, stands unedited.
+
+### The reversal
+
+`impl` is no longer bound to a single arm. It becomes a **`kind`-discriminated union** with three
+arms: the historical app-Action arm (now named `FnActionImpl`), plus two new arms reusing the
+[Endpoint RFC's `Callable`](./endpoint.md#callable) union **verbatim** — the same reference
+`Endpoint.target` and [`@w6w/call`'s `target`](./node-types.md#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+already use:
+
+```ts
+/** The app-Action arm — the historical shape. `kind` is ABSENT on every Function stored before
+ *  this union existed, and absent MEANS "action". */
+interface FnActionImpl {
+  kind?: "action";
+  uses: { app: string; action: string; connection?: string | null };
+  with?: Record<string, unknown>;
+  outputMap?: Record<string, unknown>;
+}
+
+/** The Function / Workflow arms — `Callable` reused verbatim, carrying the same two adapter maps
+ *  the action arm has. */
+type FnCallableImpl = Callable & {
+  with?: Record<string, unknown>;
+  outputMap?: Record<string, unknown>;
+};
+
+type FnImpl = FnActionImpl | FnCallableImpl;
+```
+
+- **`kind` is optional on the action arm, and its absence MEANS `"action"`.** Every Function stored
+  before this union existed has `impl: { uses: {...} }` with no `kind` at all. Making `kind`
+  required on that arm would need a data migration over every stored `definition` blob; this
+  amendment ships without one, so `kind` stays optional and absence resolves to `"action"`.
+- **`outputMap` survives on the action arm, unchanged.** `FnImpl` is deliberately NOT written as
+  `Callable | ActionTarget`: `Callable` (the union `Endpoint.target`'s Function/Workflow arms use)
+  never carried `outputMap`, so folding the action arm into it verbatim would drop the field. The
+  historical `uses`/`with`/`outputMap` shape stays its own arm, `FnActionImpl`.
+- **A Function arm resolves synchronously; a Workflow arm is driven to a terminal result.** A
+  Function's contract is "always returns a value" (see [Concept](#concept)), so there is no `wait`
+  toggle here the way `@w6w/call`'s `target` has one — the invocation mode is fixed by `kind`, not
+  chosen per-call.
+- The discriminator every consumer branches on is one helper, `isCallableImpl(impl): impl is
+  FnCallableImpl`, returning `true` iff `impl.kind === "function" || impl.kind === "workflow"` —
+  never a hand re-derived check.
+
+## Amendment — 2026-08-20b: `retry`, `onError`, and `reroute`
+
+> The [Field reference](#field-reference) `Fn` table above is **silent** on failure handling — no
+> row states what a caller sees when the bound implementation throws. This section fills that gap,
+> additively: three new optional fields on `Fn`, none of them removing or retyping a row already in
+> that table.
+
+`Fn` gains:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `retry` | `RetryPolicy` | ⬜ | Attempt policy for this call. Absent ⇒ one attempt. Reuses the workflow [Step](./workflow.md#step)'s `RetryPolicy` verbatim (`maxAttempts`, `backoff?`, `delayMs?`). |
+| `onError` | `"fail" \| "continue"` | ⬜ | Applied only after `retry` and `reroute` are exhausted. Absent ⇒ `"fail"`. Deliberately **narrower** than a workflow step's `OnError`: `continue-record` has no meaning without a run's `stepErrors` state. |
+| `reroute` | `ErrorReroute` | ⬜ | Failure re-dispatch: `{ target: Callable, with? }`. Absent ⇒ none. `target` is a [`Callable`](./endpoint.md#callable) reference — never an `Edge.when: "error"`, because a Function has no graph to carry an edge on. |
+
+**Execution order**, the sequence a conforming host (and the engine, T1.x) implements:
+
+1. Attempt the call, up to `retry.maxAttempts` times (default `1` — no retry).
+2. On final failure, if `reroute` is present: invoke `reroute.target` — mapping `{ inputs, error }`
+   onto its inputs through `reroute.with` if given, or passing `inputs` through unchanged otherwise
+   — and return **that** target's output as the call's own output. `retry` is not re-applied to the
+   reroute target itself.
+3. Otherwise, apply `onError`: `"fail"` (the default) propagates the error, exactly as today;
+   `"continue"` resolves the call with a `null` output instead of throwing.
+
+This same shape and order is added to [`Endpoint`](./endpoint.md#field-reference) by the companion
+amendment there, since an Endpoint has the identical no-graph constraint on `reroute`.

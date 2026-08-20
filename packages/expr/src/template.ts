@@ -46,6 +46,106 @@ const SECRET_PREFIX = "secrets.";
  */
 export type TemplateMode = "editor" | "render";
 
+/** A `||`/`??` chain's JSONLogic key, and the infix token that spells it. */
+type ChainOp = "or" | "??";
+const CHAIN_TOKEN: Record<ChainOp, string> = { or: "||", "??": "??" };
+
+interface ChainToken {
+  index: number;
+  /** The literal infix token found (`"||"` or `"??"`). */
+  token: "||" | "??";
+}
+
+/**
+ * Find every top-level `||`/`??` in `s`, skipping the contents of a double-quoted JSON
+ * string — the same `inString` bookkeeping idiom as {@link findBalancedClose} (including the
+ * `\` escape skip), so `"a||b"` is opaque to this scan even though it contains the token text.
+ */
+function findTopLevelChainTokens(s: string): ChainToken[] {
+  const tokens: ChainToken[] = [];
+  let inString = false;
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (inString) {
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      i += 1;
+      continue;
+    }
+    if (s.startsWith("||", i)) {
+      tokens.push({ index: i, token: "||" });
+      i += 2;
+      continue;
+    }
+    if (s.startsWith("??", i)) {
+      tokens.push({ index: i, token: "??" });
+      i += 2;
+      continue;
+    }
+    i += 1;
+  }
+  return tokens;
+}
+
+/** A JSON primitive literal per the chain grammar: a double-quoted string, a number, `true`,
+ * `false`, or `null` — never an object or array. */
+const NUMBER_LITERAL = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+function isJsonPrimitiveLiteral(trimmed: string): boolean {
+  return trimmed === "true" || trimmed === "false" || trimmed === "null" ||
+    NUMBER_LITERAL.test(trimmed) ||
+    (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"'));
+}
+
+/** One chain operand → its JSONLogic value: a parsed literal, or `{ var: <path> }`. */
+function chainOperandValue(trimmed: string): unknown {
+  if (isJsonPrimitiveLiteral(trimmed)) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // Malformed despite looking primitive (e.g. an unterminated quote) — treat as a path.
+    }
+  }
+  return { var: trimmed };
+}
+
+/**
+ * Recognise `inner` as a flat `||`/`??` fallback chain and build its `expr` part, given the
+ * top-level `||`/`??` tokens {@link findTopLevelChainTokens} already found in it (the caller
+ * guarantees at least one). Returns `null` when it is not a well-formed chain — in which case
+ * the caller falls through to today's `var` arm, never the mode-dependent secrets arm. Fires
+ * iff: exactly one of the two operators occurs; every operand is non-empty after trimming; and
+ * no operand begins `secrets.` (see workflow.md's 2026-08-20 amendment for why that refusal is
+ * outright, not a filter).
+ */
+function tryChain(inner: string, tokens: ChainToken[]): ExprPart | null {
+  const distinctOps = new Set(tokens.map((t) => t.token));
+  if (distinctOps.size !== 1) return null;
+
+  const operands: string[] = [];
+  let start = 0;
+  for (const t of tokens) {
+    operands.push(inner.slice(start, t.index));
+    start = t.index + t.token.length;
+  }
+  operands.push(inner.slice(start));
+
+  const trimmedOperands = operands.map((o) => o.trim());
+  if (trimmedOperands.some((o) => o.length === 0)) return null;
+  if (trimmedOperands.some((o) => o.startsWith(SECRET_PREFIX))) return null;
+
+  const op: ChainOp = tokens[0].token === "||" ? "or" : "??";
+  return { kind: "expr", expr: { [op]: trimmedOperands.map(chainOperandValue) } };
+}
+
 /** Map the trimmed inner text of one `{{ … }}` to a part, per {@link TemplateMode}. */
 function innerToPart(inner: string, mode: TemplateMode): ExprPart {
   if (inner.startsWith("=")) {
@@ -56,6 +156,16 @@ function innerToPart(inner: string, mode: TemplateMode): ExprPart {
       // Not valid JSON — keep the raw authored string; the engine parses it later.
       return { kind: "expr", expr: raw };
     }
+  }
+  const chainTokens = findTopLevelChainTokens(inner);
+  if (chainTokens.length > 0) {
+    const chain = tryChain(inner, chainTokens);
+    if (chain) return chain;
+    // A chain-shaped input the grammar refused (mixed operators, an empty operand, a
+    // `secrets.` operand, …) falls through to today's `var` arm — never to the mode-dependent
+    // secrets arm below, since text carrying a top-level `||`/`??` was never a bare secret
+    // name. `hasRefusedChainToken` is what a consumer uses to recognise this refusal.
+    return { kind: "var", ref: inner };
   }
   if (mode === "editor" && inner.startsWith(SECRET_PREFIX)) {
     return { kind: "secret", ref: inner.slice(SECRET_PREFIX.length) };
@@ -128,6 +238,16 @@ export function parseTemplate(input: string, mode: TemplateMode = "editor"): Exp
       const exprArm = isExprOpen(input, innerStart);
       let end = exprArm ? findBalancedClose(input, innerStart) : input.indexOf(CLOSE, innerStart);
       if (end === -1 && exprArm) end = input.indexOf(CLOSE, innerStart);
+      // Widen the close scan, conservatively: only when the naive first-`}}` inner carries a
+      // top-level `||`/`??` token do we re-scan depth/string-aware — every marker with no such
+      // token (every vendor spelling, `{{ vars.a }}`, `{{name}}`, …) keeps byte-identical
+      // close-finding, per out_of_scope: this is not a second `}}` scanner.
+      if (
+        !exprArm && end !== -1 && findTopLevelChainTokens(input.slice(innerStart, end)).length > 0
+      ) {
+        const balanced = findBalancedClose(input, innerStart);
+        if (balanced >= 0) end = balanced;
+      }
       if (end === -1) {
         text += input.slice(i); // unterminated → literal
         break;
@@ -158,6 +278,57 @@ export function parseRenderTemplate(input: string): ExprPart[] {
   return parseTemplate(input, "render");
 }
 
+function isJsonPrimitiveValue(v: unknown): v is string | number | boolean | null {
+  return v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean";
+}
+
+/** `v`'s `var` ref if `v` is a single-key `{ var: <string> }` object, else `undefined`. */
+function asVarOperand(v: unknown): string | undefined {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const keys = Object.keys(v as Record<string, unknown>);
+  if (keys.length !== 1 || keys[0] !== "var") return undefined;
+  const ref = (v as Record<string, unknown>).var;
+  return typeof ref === "string" ? ref : undefined;
+}
+
+/** A flat `||`/`??` fallback chain recognised from a JSONLogic payload. */
+export interface CoalesceChain {
+  op: "or" | "??";
+  operands: unknown[];
+}
+
+/** A flat fallback chain, else null (every other JSONLogic shape stays opaque). */
+export function parseCoalesceChain(expr: unknown): CoalesceChain | null {
+  if (expr === null || typeof expr !== "object" || Array.isArray(expr)) return null;
+  const keys = Object.keys(expr as Record<string, unknown>);
+  if (keys.length !== 1) return null;
+  const key = keys[0];
+  if (key !== "or" && key !== "??") return null;
+  const operands = (expr as Record<string, unknown>)[key];
+  if (!Array.isArray(operands) || operands.length < 2) return null;
+  for (const operand of operands) {
+    if (!isJsonPrimitiveValue(operand) && asVarOperand(operand) === undefined) return null;
+  }
+  return { op: key, operands };
+}
+
+/** The `var` refs of a recognised chain's operands, in order; null when not a chain. */
+export function coalesceOperandRefs(expr: unknown): string[] | null {
+  const chain = parseCoalesceChain(expr);
+  if (!chain) return null;
+  const refs: string[] = [];
+  for (const operand of chain.operands) {
+    const ref = asVarOperand(operand);
+    if (ref !== undefined) refs.push(ref);
+  }
+  return refs;
+}
+
+/** True when a `var` ref still carries a top-level `||`/`??` — a chain the grammar REFUSED. */
+export function hasRefusedChainToken(ref: string): boolean {
+  return findTopLevelChainTokens(ref).length > 0;
+}
+
 /** Serialize parts back to a `{{ }}` template string (inverse of {@link parseTemplate}). */
 export function serializeTemplate(parts: ExprPart[]): string {
   let out = "";
@@ -173,6 +344,18 @@ export function serializeTemplate(parts: ExprPart[]): string {
         out += `${OPEN} ${SECRET_PREFIX}${p.ref ?? ""} ${CLOSE}`;
         break;
       case "expr": {
+        const chain = parseCoalesceChain(p.expr);
+        if (chain) {
+          const token = CHAIN_TOKEN[chain.op];
+          const rendered = chain.operands
+            .map((operand) => {
+              const ref = asVarOperand(operand);
+              return ref !== undefined ? ref : JSON.stringify(operand);
+            })
+            .join(` ${token} `);
+          out += `${OPEN} ${rendered} ${CLOSE}`;
+          break;
+        }
         const raw = typeof p.expr === "string" ? p.expr : JSON.stringify(p.expr ?? "");
         out += `${OPEN} =${raw} ${CLOSE}`;
         break;

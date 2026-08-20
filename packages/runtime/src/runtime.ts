@@ -266,6 +266,99 @@ async function resolveConnection(
 }
 
 /**
+ * The Auth hooks whose declared input is exactly `{ credential: unknown }`.
+ * `sign` is excluded (network-less by RFC); `preflight` (input `unknown`) and
+ * `exchange` (input `{fields?, code?, redirectUri?}`) take other shapes.
+ */
+export type CredentialHookKind = "test" | "afterConnect" | "refresh" | "revoke";
+
+const CREDENTIAL_HOOK_KINDS: readonly CredentialHookKind[] = [
+  "test",
+  "afterConnect",
+  "refresh",
+  "revoke",
+];
+
+export interface RunAuthHookOptions {
+  timeoutMs?: number;
+  onLog?: (level: string, message: string, data?: unknown) => void;
+}
+
+/**
+ * Run one of an Auth method's credential-bearing lifecycle hooks — `test`,
+ * `afterConnect`, `refresh` or `revoke` — in the same least-privilege sandbox
+ * `invoke` uses, with host-mediated, allowlist-enforced egress. This is the
+ * `resolveConnection` `needs_refresh` branch's mechanism, generalized by hook
+ * name so `afterConnect` and `test` don't need their own copy.
+ *
+ * `sign` is refused, at runtime as well as in the `CredentialHookKind` type: it
+ * is the one Auth hook whose `ctx.fetch` is removed entirely (credential
+ * isolation, see rfcs/hook-runtime.md "Credential isolation") — routing it
+ * through here would hand it the host-mediated egress the spec forbids it.
+ */
+export async function runAuthHook<T = unknown>(
+  app: LoadedApp,
+  auth: LoadedAuth,
+  hook: CredentialHookKind,
+  credential: unknown,
+  opts: RunAuthHookOptions = {},
+): Promise<T> {
+  // Runtime guard, not just a type: a JS caller (or a TS caller casting past
+  // the type) must still be refused. `sign` is network-less by RFC.
+  if (!CREDENTIAL_HOOK_KINDS.includes(hook)) {
+    throw new W6WError(
+      "invalid_credential_hook",
+      "auth",
+      `Auth "${auth.auth.key}" hook "${hook}" is not a credential-bearing hook ` +
+        `runAuthHook can run — "sign" is network-less by RFC and never routes through here.`,
+    );
+  }
+  if (!auth.hooks.has(hook)) {
+    throw new W6WError(
+      "hook_not_declared",
+      "auth",
+      `Auth "${auth.auth.key}" does not declare hook "${hook}".`,
+    );
+  }
+  // Set from INSIDE our own `onFetch`, on the host side of the worker
+  // boundary — the moment we observe hostFetch itself deny the request, not
+  // by matching text after the fact. `runHook`'s worker boundary
+  // (sandbox/run-hook.ts + worker.ts, out of scope here) forwards only an
+  // Error's `.message` across `postMessage`, dropping `.code`, so a denied
+  // fetch would otherwise come back re-wrapped as a generic `hook_failed`
+  // indistinguishable from any other hook failure. This flag is set by code
+  // we wrote, observing our own call to `hostFetch`, so it can never be
+  // tripped by a hook's own unrelated error — including one that merely
+  // happens to end with the same wording `hostFetch` uses.
+  let deniedByAllowlist = false;
+  try {
+    return await runHook<T>({
+      entryPath: app.entryPath,
+      selector: { kind: "auth", key: auth.auth.key, hook },
+      input: { credential },
+      readScope: app.dir,
+      timeoutMs: opts.timeoutMs,
+      onLog: opts.onLog,
+      onFetch: async (req) => {
+        try {
+          return await hostFetch(app.netAllowlist, req);
+        } catch (fetchErr) {
+          if (fetchErr instanceof W6WError && fetchErr.code === "egress_denied") {
+            deniedByAllowlist = true;
+          }
+          throw fetchErr;
+        }
+      },
+    });
+  } catch (err) {
+    if (deniedByAllowlist && err instanceof W6WError && err.code === "hook_failed") {
+      throw new W6WError("egress_denied", "auth", err.message, err.details);
+    }
+    throw err;
+  }
+}
+
+/**
  * Execute an Action, following the Invocation RFC's resolution sequence:
  * resolve action -> resolve connection (lifecycle gates + refresh) -> resolve
  * params -> invoke `execute` in the sandbox, signing outbound requests.
