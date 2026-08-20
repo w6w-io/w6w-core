@@ -111,6 +111,13 @@ export function hostAllowed(allowlist: readonly string[], host: string): boolean
   return false;
 }
 
+/**
+ * The exact suffix `hostFetch` throws its `egress_denied` message with.
+ * Shared with `runAuthHook`'s reclassification below — see the comment there
+ * for why the worker boundary needs it.
+ */
+const EGRESS_DENIED_SUFFIX = "is not in the app's network allowlist.";
+
 /** Perform a request on the host: enforce the allowlist, then fetch. */
 async function hostFetch(allowlist: string[], req: SignableRequest): Promise<WireResponse> {
   let host: string;
@@ -127,7 +134,7 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
     throw new W6WError(
       "egress_denied",
       "execute",
-      `Request to "${host}" is not in the app's network allowlist.`,
+      `Request to "${host}" ${EGRESS_DENIED_SUFFIX}`,
     );
   }
   const res = await fetch(req.url, {
@@ -262,6 +269,89 @@ async function resolveConnection(
         "auth",
         `Unknown connection state "${(conn as Connection).state}".`,
       );
+  }
+}
+
+/**
+ * The Auth hooks whose declared input is exactly `{ credential: unknown }`.
+ * `sign` is excluded (network-less by RFC); `preflight` (input `unknown`) and
+ * `exchange` (input `{fields?, code?, redirectUri?}`) take other shapes.
+ */
+export type CredentialHookKind = "test" | "afterConnect" | "refresh" | "revoke";
+
+const CREDENTIAL_HOOK_KINDS: readonly CredentialHookKind[] = [
+  "test",
+  "afterConnect",
+  "refresh",
+  "revoke",
+];
+
+export interface RunAuthHookOptions {
+  timeoutMs?: number;
+  onLog?: (level: string, message: string, data?: unknown) => void;
+}
+
+/**
+ * Run one of an Auth method's credential-bearing lifecycle hooks — `test`,
+ * `afterConnect`, `refresh` or `revoke` — in the same least-privilege sandbox
+ * `invoke` uses, with host-mediated, allowlist-enforced egress. This is the
+ * `resolveConnection` `needs_refresh` branch's mechanism, generalized by hook
+ * name so `afterConnect` and `test` don't need their own copy.
+ *
+ * `sign` is refused, at runtime as well as in the `CredentialHookKind` type: it
+ * is the one Auth hook whose `ctx.fetch` is removed entirely (credential
+ * isolation, see rfcs/hook-runtime.md "Credential isolation") — routing it
+ * through here would hand it the host-mediated egress the spec forbids it.
+ */
+export async function runAuthHook<T = unknown>(
+  app: LoadedApp,
+  auth: LoadedAuth,
+  hook: CredentialHookKind,
+  credential: unknown,
+  opts: RunAuthHookOptions = {},
+): Promise<T> {
+  // Runtime guard, not just a type: a JS caller (or a TS caller casting past
+  // the type) must still be refused. `sign` is network-less by RFC.
+  if (!CREDENTIAL_HOOK_KINDS.includes(hook)) {
+    throw new W6WError(
+      "invalid_credential_hook",
+      "auth",
+      `Auth "${auth.auth.key}" hook "${hook}" is not a credential-bearing hook ` +
+        `runAuthHook can run — "sign" is network-less by RFC and never routes through here.`,
+    );
+  }
+  if (!auth.hooks.has(hook)) {
+    throw new W6WError(
+      "hook_not_declared",
+      "auth",
+      `Auth "${auth.auth.key}" does not declare hook "${hook}".`,
+    );
+  }
+  try {
+    return await runHook<T>({
+      entryPath: app.entryPath,
+      selector: { kind: "auth", key: auth.auth.key, hook },
+      input: { credential },
+      readScope: app.dir,
+      timeoutMs: opts.timeoutMs,
+      onLog: opts.onLog,
+      onFetch: (req) => hostFetch(app.netAllowlist, req),
+    });
+  } catch (err) {
+    // `runHook`'s worker boundary (sandbox/run-hook.ts + worker.ts, out of
+    // scope here) forwards only an Error's `.message` across `postMessage`,
+    // so `hostFetch`'s `egress_denied` W6WError arrives back re-wrapped as a
+    // generic `hook_failed` — its message is untouched, though. Recognize
+    // hostFetch's own wording (nothing else in this hook's failure surface
+    // produces it) and restore the code a caller of an allowlist-enforcing
+    // wrapper is entitled to rely on.
+    if (
+      err instanceof W6WError && err.code === "hook_failed" &&
+      err.message.endsWith(EGRESS_DENIED_SUFFIX)
+    ) {
+      throw new W6WError("egress_denied", "auth", err.message, err.details);
+    }
+    throw err;
   }
 }
 

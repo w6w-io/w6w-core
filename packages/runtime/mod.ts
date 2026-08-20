@@ -8,8 +8,15 @@
 export { loadApp } from "./src/loader.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
 
-export { describe, hostAllowed, invoke } from "./src/runtime.ts";
-export type { AppDescription, EgressInfo, InvokeOptions, InvokeResult } from "./src/runtime.ts";
+export { describe, hostAllowed, invoke, runAuthHook } from "./src/runtime.ts";
+export type {
+  AppDescription,
+  CredentialHookKind,
+  EgressInfo,
+  InvokeOptions,
+  InvokeResult,
+  RunAuthHookOptions,
+} from "./src/runtime.ts";
 
 export {
   appScopedChecks,
