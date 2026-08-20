@@ -28,14 +28,26 @@ const apiKey: AuthDefinition = {
   /**
    * Display metadata for the connection label. Its shape is picked by the
    * credential it's given (never a constant), so one hook can exercise all
-   * three of `runAuthHook`'s egress cases:
-   *   - no `probeUrl` -> pure, label derived straight from the credential;
+   * three of `runAuthHook`'s egress cases, plus a regression case:
+   *   - no `probeUrl`/`throwMessage` -> pure, label derived straight from the
+   *     credential;
    *   - `probeUrl` set -> calls it via `ctx.fetch`, letting the caller choose
    *     an allowed host (the request succeeds and the response is used) or a
-   *     denied one (the request is rejected before it leaves the host).
+   *     denied one (the request is rejected before it leaves the host);
+   *   - `throwMessage` set -> throws a plain business-logic error and NEVER
+   *     calls `ctx.fetch` at all — even when that message happens to end in
+   *     the exact wording `hostFetch` uses for a real denial, this must not
+   *     be mistaken for one (round-2 regression: see `runAuthHook`).
    */
   async afterConnect({ credential }, ctx) {
-    const { apiKey, probeUrl } = credential as { apiKey: string; probeUrl?: string };
+    const { apiKey, probeUrl, throwMessage } = credential as {
+      apiKey: string;
+      probeUrl?: string;
+      throwMessage?: string;
+    };
+    if (throwMessage) {
+      throw new Error(throwMessage);
+    }
     if (!probeUrl) {
       return { label: `SendGrid (${apiKey})` };
     }

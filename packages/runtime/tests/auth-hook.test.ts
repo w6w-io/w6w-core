@@ -79,6 +79,31 @@ Deno.test("a hook's ctx.fetch against a host off the allowlist is denied with eg
   assertEquals(err.code, "egress_denied");
 });
 
+Deno.test(
+  "ROUND 2 REGRESSION: a hook's own thrown error is never reclassified as egress_denied, " +
+    "even when its message happens to end with hostFetch's exact wording, when ctx.fetch was " +
+    "never called",
+  async () => {
+    const app = await loadApp(SENDGRID_DIR);
+    const auth = app.auths[0];
+
+    const err = await assertRejects(
+      () =>
+        runAuthHook(app, auth, "afterConnect", {
+          apiKey: "key-A",
+          // Deliberately ends with hostFetch's exact `egress_denied` wording,
+          // but `afterConnect` throws this directly — it never touches
+          // ctx.fetch. A string-matching reclassification would misfire on
+          // this; the closure-flag mechanism must not.
+          throwMessage: `Vendor account "acme" is not in the app's network allowlist.`,
+        }),
+      W6WError,
+    );
+    assertNotEquals(err.code, "egress_denied");
+    assertEquals(err.code, "hook_failed");
+  },
+);
+
 Deno.test("sign is refused at runtime, not only by the type — no network-capable sign runs", async () => {
   const app = await loadApp(SENDGRID_DIR);
   const auth = app.auths[0];

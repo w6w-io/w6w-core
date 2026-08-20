@@ -111,13 +111,6 @@ export function hostAllowed(allowlist: readonly string[], host: string): boolean
   return false;
 }
 
-/**
- * The exact suffix `hostFetch` throws its `egress_denied` message with.
- * Shared with `runAuthHook`'s reclassification below — see the comment there
- * for why the worker boundary needs it.
- */
-const EGRESS_DENIED_SUFFIX = "is not in the app's network allowlist.";
-
 /** Perform a request on the host: enforce the allowlist, then fetch. */
 async function hostFetch(allowlist: string[], req: SignableRequest): Promise<WireResponse> {
   let host: string;
@@ -134,7 +127,7 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
     throw new W6WError(
       "egress_denied",
       "execute",
-      `Request to "${host}" ${EGRESS_DENIED_SUFFIX}`,
+      `Request to "${host}" is not in the app's network allowlist.`,
     );
   }
   const res = await fetch(req.url, {
@@ -327,6 +320,17 @@ export async function runAuthHook<T = unknown>(
       `Auth "${auth.auth.key}" does not declare hook "${hook}".`,
     );
   }
+  // Set from INSIDE our own `onFetch`, on the host side of the worker
+  // boundary — the moment we observe hostFetch itself deny the request, not
+  // by matching text after the fact. `runHook`'s worker boundary
+  // (sandbox/run-hook.ts + worker.ts, out of scope here) forwards only an
+  // Error's `.message` across `postMessage`, dropping `.code`, so a denied
+  // fetch would otherwise come back re-wrapped as a generic `hook_failed`
+  // indistinguishable from any other hook failure. This flag is set by code
+  // we wrote, observing our own call to `hostFetch`, so it can never be
+  // tripped by a hook's own unrelated error — including one that merely
+  // happens to end with the same wording `hostFetch` uses.
+  let deniedByAllowlist = false;
   try {
     return await runHook<T>({
       entryPath: app.entryPath,
@@ -335,20 +339,19 @@ export async function runAuthHook<T = unknown>(
       readScope: app.dir,
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
-      onFetch: (req) => hostFetch(app.netAllowlist, req),
+      onFetch: async (req) => {
+        try {
+          return await hostFetch(app.netAllowlist, req);
+        } catch (fetchErr) {
+          if (fetchErr instanceof W6WError && fetchErr.code === "egress_denied") {
+            deniedByAllowlist = true;
+          }
+          throw fetchErr;
+        }
+      },
     });
   } catch (err) {
-    // `runHook`'s worker boundary (sandbox/run-hook.ts + worker.ts, out of
-    // scope here) forwards only an Error's `.message` across `postMessage`,
-    // so `hostFetch`'s `egress_denied` W6WError arrives back re-wrapped as a
-    // generic `hook_failed` — its message is untouched, though. Recognize
-    // hostFetch's own wording (nothing else in this hook's failure surface
-    // produces it) and restore the code a caller of an allowlist-enforcing
-    // wrapper is entitled to rely on.
-    if (
-      err instanceof W6WError && err.code === "hook_failed" &&
-      err.message.endsWith(EGRESS_DENIED_SUFFIX)
-    ) {
+    if (deniedByAllowlist && err instanceof W6WError && err.code === "hook_failed") {
       throw new W6WError("egress_denied", "auth", err.message, err.details);
     }
     throw err;
