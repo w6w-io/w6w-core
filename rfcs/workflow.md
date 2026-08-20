@@ -899,3 +899,127 @@ here, exactly as the passages reconciled above:
   `secrets`, `documents`, `inputs`, `output`, `foreach`. Testably: a marker whose first dot-segment is
   none of the eight MUST leave the whole string unresolved, whatever else the host's ambient scope for
   that pass happens to carry.
+
+## Amendment — 2026-08-20: infix fallback operators in `{{ }}`
+
+> This section is **additive** to [Render mode, and why rendered content cannot reach a
+> secret](#render-mode-and-why-rendered-content-cannot-reach-a-secret) and to [Amendment — 2026-08-14:
+> root-anchored template strings in `with`
+> values](#amendment--2026-08-14-root-anchored-template-strings-in-with-values). It adds **one** new
+> production to the `{{ }}` grammar — a flat fallback chain spelled with the infix operators `||` and
+> `??` — and that production exists in **editor mode only**. It changes no existing production, no
+> field, and no run-scope root, and **0 lines are deleted** from this file.
+>
+> Reconciled by grep, not memory (`/usr/bin/grep -n '=<JSONLogic>\|two productions\|Productions'
+> rfcs/workflow.md`, run against the pre-amendment text): the Mode/Productions table header (:634) and
+> its two rows (:636 editor, :637 render); the sentence *"Render mode's grammar has exactly two
+> productions, and neither one is a secret reference"* (:639); and root-anchoring's marker-kind
+> handling, item 4 (:815-817). Every one of those five hits is addressed below, and **none is edited
+> or deleted**. The table header (:634) and the editor row (:636) are read, from this amendment
+> forward, as **incomplete rather than exhaustive** — they enumerate the two productions that predate
+> this amendment, not the third this section adds — exactly the reading every prior amendment in this
+> RFC gives the passages it extends. The render row (:637) and the two-productions sentence (:639)
+> receive **no such reading**: they stand **exactly as written, unweakened and exhaustive**, because
+> the new production is deliberately absent from render mode — see below. The marker-kind list
+> (:815-817) is reconciled in full in its own section below. Where this section and any of the
+> reconciled passages disagree about the *editor-mode* grammar, this section governs.
+
+### The production — editor mode only
+
+Editor mode gains a third production, alongside the two the [Mode/Productions
+table](#render-mode-and-why-rendered-content-cannot-reach-a-secret) already names:
+
+| Marker | Meaning |
+|---|---|
+| `{{ A \|\| B \|\| … }}` | A flat fallback chain, left-to-right, JSONLogic `or` semantics (truthy short-circuit). |
+| `{{ A ?? B ?? … }}` | A flat fallback chain, left-to-right, **absent-only** semantics — `null`/`undefined` short-circuit; `0`, `""`, `false`, `[]` are kept, never treated as absent. |
+
+Both parse to the **existing** `expr` part kind that [Amendment —
+2026-08-11](#amendment--2026-08-11-the-multipart-expression-envelope-exprvalue-and-the-render-part-kind-f-3)
+already declares — `{ "kind": "expr", "expr": { "or": [...] } }` for `||`, `{ "kind": "expr", "expr":
+{ "??": [...] } }` for `??`. No new part kind and no `@w6w/types` change. `||` reuses JSONLogic's
+existing `or` operator unchanged; `??` is a new `@w6w/expr` evaluator operator. Operator semantics —
+per [Expression markers](#expression-markers)'s own governing sentence, *"Expression semantics …
+are specified by `@w6w/expr`"* — are specified there, not by this RFC; this section pins the marker
+grammar and the part shape only.
+
+**The arm fires only for a genuinely flat chain**, and refuses outright — falling through to the
+ordinary `<path>` production instead of building an `expr` part — the moment any operand begins
+`secrets.`, or the chain mixes `||` and `??`, or any operand is empty. That refusal is a property of
+the parser, not a filter: a chain naming a secret operand is never *built*, so there is no `expr` part
+in existence for a downstream evaluator to mishandle. This matters for the reason [Run-scope
+roots](#run-scope-roots) already gives for the ordinary `secret` part production: `expr` parts
+evaluate against the run scope with `secrets` **removed**, so a hypothetical
+`{"or":[{"var":"secrets.K"},"x"]}` would not throw or leak — it would silently resolve `secrets.K` to
+nothing and take the fallback branch, the same invisible-failure shape this RFC elsewhere closes by
+construction rather than by filter. Refusing to build the chain at all is that same discipline applied
+here.
+
+### Render mode: still exactly two productions
+
+**The new production does not exist in render mode.** The Productions table's render row (:637) and
+its governing sentence — *"Render mode's grammar has exactly two productions, and neither one is a
+secret reference"* (:639) — stand **exactly as written, unweakened, and exhaustive**: render mode
+still has only the `=<JSONLogic>` production and the `<path>` production. `parseTemplate` dispatches
+the chain arm **mode-independently** — exactly like the `=` arm — but the arm only ever builds an
+`expr` part carrying ordinary JSONLogic, a payload render mode's existing `expr` row already covers;
+nothing new is added to render mode's own table. A rendered `{{ secrets.K || "x" }}` is refused by the
+operand rule above before it ever becomes a chain, and falls back to the ordinary `<path>` production,
+which in render mode resolves against the secrets-free root exactly as every other path does.
+**Render mode's "yields zero parts of kind `secret`" guarantee (:715) therefore continues to hold by
+construction, over one more editor-mode production than existed when that guarantee was written — not
+by a filter over the chain's output.**
+
+### Root-anchoring: a chain is validated per operand, all-or-nothing
+
+[Amendment — 2026-08-14](#amendment--2026-08-14-root-anchored-template-strings-in-with-values)'s
+root-anchoring rule, item 4 (:815-817), enumerates marker-kind handling for the two productions that
+existed when it was written: `{{ =<JSONLogic> }}` and `{{ secrets.<name> }}` are **always ours**, and
+a **path** marker is rooted iff its first dot-segment is one of the eight run-scope roots. That list
+did not, and could not, know about the chain production added here; it is read, from this amendment
+forward, as **incomplete rather than exhaustive** on that point, for the same reason the Productions
+table is.
+
+A `||`/`??` chain is **always ours**, in the sense item 4 already uses for `=<JSONLogic>` — an author
+who typed one of these operators wrote it against this grammar deliberately, and root-anchoring does
+not reject the marker *kind*. But unlike `=<JSONLogic>`, whose payload is opaque and wholly exempt
+from root-anchoring, a chain's operands are var paths written inline, in the same syntactic position
+an ordinary root-anchored `<path>` marker occupies. So: **a chain resolves under the root-anchoring
+rule iff every one of its operands that is a `{ "var": … }` reference names a rooted path** (its first
+dot-segment one of the eight names item 3 lists) — literal operands impose no constraint of their own
+— **otherwise the whole chain is refused**, mirroring clause 2's all-or-nothing treatment of a plain
+string that mixes rooted and unrooted markers. Testably: `{{ vars.a || badroot.x }}` is refused in
+full, not just at its second operand — a check that only inspects the first operand under-enforces
+this rule the same way a check that only inspected a string's first marker would under-enforce clause
+2.
+
+`@w6w/expr` exports three pure predicates that make this rule mechanically checkable without a
+consumer re-implementing the chain-shape walk: `parseCoalesceChain` (recognises the flat-chain shape
+of a JSONLogic payload), `coalesceOperandRefs` (the `var` refs of a recognised chain's operands, in
+order — the set a consumer root-checks), and `hasRefusedChainToken` (true when a `var` ref still
+carries a top-level `||`/`??` token — i.e. a chain the parser itself refused to build, which a
+consumer's existing path-rootedness check must also refuse, not silently pass as an ordinary unrooted
+path).
+
+### Conformance (additive)
+
+A host that implements the `{{ }}` grammar MUST:
+
+- Build the chain production **only** in editor mode, and only for a marker containing **exactly
+  one** of `||`/`??` at the top level (not inside a JSON string operand), **two or more** non-empty
+  operands, and **no** operand beginning `secrets.`. Testably: `{{ vars.a || vars.b ?? vars.c }}`,
+  `{{ secrets.K || "x" }}`, and `{{ vars.a || }}` each parse to a single **`var`** part carrying the
+  original text, never an `expr` part.
+- Parse the identical marker text **the same way in render mode as in editor mode** — the arm is
+  mode-independent — while never causing render mode to gain a production it did not have before this
+  amendment: the result is always an `expr` part, the one production render mode already has a row
+  for. Testably: parsing any content string **T** in render mode continues to yield **zero** parts of
+  kind `secret`, exactly as [Conformance](#conformance-additive) already requires.
+- Serialize a recognised flat-chain `expr` payload back to its infix `{{ A || B }}` / `{{ A ?? B }}`
+  form — a `{ "var": … }` operand as its bare path, any other operand as its JSON text — and fall back
+  to the existing `{{ =<raw> }}` form for every other JSONLogic payload. Testably: round-tripping a
+  hand-written `{{ ={"or":[{"var":"vars.a"},"x"]} }}` **promotes** to `{{ vars.a || "x" }}`, the same
+  class of promotion this RFC already documents for a `var` ref that happens to start `secrets.`.
+- Treat a chain as **always ours** for root-anchoring purposes, but resolve it under that rule **iff
+  every** `{ "var": … }` operand names a rooted path; refuse the **whole** chain, all-or-nothing,
+  otherwise. Testably: `{{ vars.a || badroot.x }}` is refused in full.

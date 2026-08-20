@@ -108,6 +108,16 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
       }
       return cur;
     }
+    case "??": {
+      // Mirrors "or" verbatim except the predicate: keeps 0/""/false/[] — only null/undefined
+      // are treated as absent. Never isTruthy.
+      let cur: unknown;
+      for (const a of args) {
+        cur = evaluate(a, data);
+        if (cur !== null && cur !== undefined) return cur;
+      }
+      return cur;
+    }
 
     case "if":
     case "?:": {

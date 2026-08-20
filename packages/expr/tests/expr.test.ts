@@ -25,6 +25,21 @@ Deno.test("boolean and/or short-circuit to the deciding value", () => {
   assertEquals(evaluate({ "!!": [""] }), false);
 });
 
+Deno.test("?? coalesces only null/undefined — never isTruthy, unlike or", () => {
+  // The wrong-thing-tree-A fixture: `??` implemented with isTruthy would keep 0's fallback
+  // ("10"); the correct predicate keeps 0 itself.
+  assertEquals(evaluate({ "??": [{ var: "inputs.count" }, "10"] }, { inputs: { count: 0 } }), 0);
+  assertEquals(evaluate({ or: [{ var: "inputs.count" }, "10"] }, { inputs: { count: 0 } }), "10");
+  // 0, "", false, [] are all KEPT by `??` — none of them is null/undefined.
+  assertEquals(evaluate({ "??": [0, "x"] }), 0);
+  assertEquals(evaluate({ "??": ["", "x"] }), "");
+  assertEquals(evaluate({ "??": [false, "x"] }), false);
+  assertEquals(evaluate({ "??": [[], "x"] }), []);
+  // null and undefined (a missing `var`) fall through to the next operand.
+  assertEquals(evaluate({ "??": [null, "x"] }), "x");
+  assertEquals(evaluate({ "??": [{ var: "missing.path" }, "x"] }, {}), "x");
+});
+
 Deno.test("if / elseif chains", () => {
   const rule = {
     if: [{ "==": [{ var: "t" }, "a"] }, "A", { "==": [{ var: "t" }, "b"] }, "B", "Z"],
