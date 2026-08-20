@@ -12,6 +12,21 @@
     "action": { "type": "string", "pattern": "^[a-z0-9-]+$" },
     "connection": { "type": "string", "minLength": 1 },
     "params": { "type": "object" },
+    "overrides": {
+      "description": "Caller-supplied overrides applied to the outbound HTTP request, merged at the wire just before the Auth `sign` hook runs. Reaches vendor fields the Action does not declare, named the way the vendor documents them; never enters param resolution.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "description": "Merged over the request body, enhancing rather than negating: objects deep-merge and arrays merge index-wise, so a value the Action built is never lost to an override beside it. A key containing an unescaped `.` or `[n]` is a path naming one leaf; a trailing `!` replaces instead of merging.",
+          "type": "object"
+        },
+        "query": { "type": "object" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "target": { "type": "string", "enum": ["first", "first-write", "all"] },
+        "match": { "type": "string", "minLength": 1 }
+      }
+    },
     "context": {
       "type": "object",
       "additionalProperties": false,

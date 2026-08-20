@@ -19,12 +19,14 @@ import type {
   HealthCheck,
   Invocation,
   RedactedConnection,
+  RequestOverrides,
   SignableRequest,
   Trigger,
   TriggerHookKind,
 } from "@w6w/types";
 import { redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
+import { applyOverrides, selectsRequest } from "./overrides.ts";
 import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
@@ -164,17 +166,34 @@ export function signingFetch(
   credential: unknown,
   opts: InvokeOptions,
   allowlist: string[] = app.netAllowlist,
+  overrides?: RequestOverrides,
 ): (request: SignableRequest) => Promise<WireResponse> {
   const canSign = !!auth?.hooks.has("sign");
+  // Per-invocation counters, closed over so `target: "first"` / `"first-write"`
+  // mean the first request of THIS invocation — the handler is built fresh for
+  // each `invoke()`, so there is no state to leak between runs.
+  let index = 0;
+  let writeIndex = 0;
   return async (request: SignableRequest): Promise<WireResponse> => {
-    let signed = request;
+    // Caller overrides are merged BEFORE `sign` runs, and that ordering is the
+    // security property: whatever header the app's auth injects overwrites one
+    // supplied here, so an override can add a header but never hijack
+    // authentication.
+    let outgoing = request;
+    if (overrides && selectsRequest(overrides, request, { index, writeIndex })) {
+      outgoing = applyOverrides(request, overrides);
+    }
+    index++;
+    if (!["GET", "HEAD"].includes(request.method.toUpperCase())) writeIndex++;
+
+    let signed = outgoing;
     if (canSign && auth) {
       // `sign` runs in its own worker with NO network, and is the only code
       // given the (live, post-refresh) credential. It injects auth.
       signed = await runHook<SignableRequest>({
         entryPath: app.entryPath,
         selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
-        input: { request, credential },
+        input: { request: outgoing, credential },
         readScope: app.dir,
         timeoutMs: opts.timeoutMs,
         // no onFetch -> the sign worker cannot make network calls.
@@ -311,7 +330,7 @@ export async function invoke(
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
-  const onFetch = signingFetch(app, auth, credential, opts);
+  const onFetch = signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides);
 
   // 5. Invoke the action's `execute` in the sandbox.
   const value = await runHook({
