@@ -427,3 +427,68 @@ A host that implements `@w6w/document` MUST:
   **contains that key** — never a success carrying an empty or null output.
 - Reject a `@w6w/document` node naming any action other than `get`. The node is read-only in v1; a
   host MUST NOT add a `set` or `upsert` action under this id.
+
+## Amendment — 2026-08-20: the call-depth bound on `@w6w/call` (F-3)
+
+> This section is **additive** to the [`@w6w/call` amendment](#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+> above; it introduces no breaking change and reserves no new id. It narrows one thing that
+> amendment left open: nothing in it bounds how deep a `@w6w/call` chain — or a Function-arm
+> step, which shares the same `ctx.invokeFunction` seam — may go. Grepping this file
+> (`grep -n "@w6w/call\|invokeCallable\|sub-run" core/rfcs/node-types.md | awk -F: '$1>=276 &&
+> $1<=340'`) surfaces every line of that section touching the mechanism; of those, the following
+> state or imply an unbounded chain because they describe a hop being dispatched without ever
+> naming a limit on how many may compose:
+> - `:286` — "the in-graph caller for **one workflow calling another workflow**" describes
+>   composition with no stated bound on how many hops may chain.
+> - `:310` — the request-shape row (`{ target: Callable, input?, wait: boolean }`) carries no
+>   depth or fuel field of any kind.
+> - `:319` — `wait: true` "**block[s] until the sub-run … completes**" with no stated ceiling on
+>   how many nested `wait: true` hops that block may stack.
+> - `:323-324` — `wait: false` "**return[s] a run handle … immediately**" and the parent
+>   "**continue[s] … without blocking**" — the exact shape that lets a self-referencing no-wait
+>   chain flood the run queue silently, unbounded, rather than blow a stack.
+> - `:332-339` — the full conformance MUST list obligates routing, project-scoping, and the
+>   `wait` contract, but states no obligation to bound composition depth at all.
+>
+> The remaining grep hits (`:276`, `:283-285`, `:289`, `:293`, `:298`, `:300`, `:303`, `:312`,
+> `:327`) are structural — a title, a table header, a routing statement, or the boundary-owner
+> paragraph — and neither state nor imply a bound one way or the other; they are listed here for
+> completeness of the grep, not because they assert anything about depth.
+
+A host that implements `@w6w/call` — and, identically, a Function-arm step (`ctx.invokeFunction`,
+the same seam a plain `{ uses: { function } }` step and a `@w6w/call` function target both
+dispatch through) — MUST bound the **composition depth** of a chain:
+
+- Every hop increments a `callDepth` counter by exactly one: a `@w6w/call` step dispatching to
+  either a Workflow or a Function target, and a Function-arm step, are each one hop. The counter is
+  **not** part of the node's own `with`/`input` — it travels with the dispatch, not with
+  author-supplied, forgeable data.
+- A hop whose depth would exceed the bound is **refused before dispatch** — no Function runs, no
+  run is enqueued, no sub-run executes — with a distinct, recognisable error (host-side:
+  `call_depth_exceeded`). The refusal MUST map to a 4xx status, never 5xx: an intermediary that
+  replaces an origin 5xx with an opaque error page (e.g. Cloudflare's CORS-less HTML substitution)
+  would otherwise turn a deliberate, bounded refusal into an unexplained "failed to fetch".
+- The bound is **host-configurable** with a default of **16** (the reference implementation reads
+  `W6W_MAX_CALL_DEPTH`, falling back to 16 when absent, unparseable, or less than 1).
+- The bound MUST be enforced identically whether the hop that reaches the limit is a `wait: true`
+  (synchronous, in-process) or `wait: false` (enqueue-and-return) `@w6w/call` dispatch — the depth
+  MUST survive an enqueue hop, not just an in-process call stack. Without that, a self-referencing
+  `wait: false` chain never blows a stack; it floods the run queue silently until resources are
+  exhausted, which is the dangerous shape this bound exists to catch.
+- This bound is orthogonal to, and does not replace, a host's own static cycle detection over a
+  **single** workflow's own graph (e.g. a topological-sort check over one workflow's declared node
+  edges): that check cannot see a `@w6w/call` target named as a string inside a node's `with`
+  payload, so it catches a different class of mistake than this bound does.
+
+**Deliberately out of scope for this amendment — a per-root-run fuel budget.** A depth counter
+bounds how DEEP a chain nests; it does not bound how WIDE a shallow chain fans out — sixteen
+sibling `wait: false` calls at depth 1, each fanning out sixteen more at depth 2, is still only
+depth 2 and produces 256+ enqueued runs. Closing that residue needs a shared budget threaded
+across the whole call tree (e.g. a `root_run_id` and a per-root counter), which is a materially
+larger change (a new identity column, a shared/atomic counter, and a decision about where that
+counter lives and how it is charged) than the in-process, per-hop counter this amendment
+specifies. It is deliberately deferred rather than built speculatively alongside this bound.
+
+The rest of this RFC — including every line the blockquote above enumerates — stands unedited:
+this amendment adds a bound: it does not withdraw, contradict, or need any prior line to be
+rewritten, because none of them claimed a chain was unbounded; they simply predated the question.
