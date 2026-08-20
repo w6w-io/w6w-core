@@ -313,3 +313,110 @@ A host that implements Functions MUST:
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-08-20: `impl` may target a Function or a Workflow (D-8)
+
+> **This section REVERSES two passages of this RFC, by name: Non-Goal "Nesting" (`:61-62`) and
+> Open question 4 "Nesting" (`:306-307`). Both said `impl` targets an app Action only — never
+> another Function or a Workflow — and that v0's answer to nesting was no. D-8 changes that answer:
+> `impl` may now target a Function or a Workflow, exactly as `Endpoint.target` already does, via the
+> same [`Callable`](./endpoint.md#callable) union.**
+>
+> The enumeration is a grep, not memory:
+> `/usr/bin/grep -n -i "app Action only\|never another Function\|Nesting\|only an app Action\|one
+> concrete app Action" rfcs/function.md` finds exactly three hits on the pre-amendment text — `:61`
+> (the Non-Goal reversed above), `:83` (Concept item 2, "names one concrete app Action" — descriptive,
+> see below), and `:306` (the Open question reversed above). Every other passage that still *reads*
+> action-only, but wasn't caught by that literal-phrase grep, is enumerated here too and is
+> **descriptive of the action arm**, not a rule this amendment repeals — before this amendment there
+> was only one arm, so a sentence describing "the implementation" was necessarily describing the
+> action arm; it was never a statement that ruled out other arms, because at the time there were
+> none to rule out:
+> - `:11-12` — Summary: "binds to **one concrete app [Action]** … through a swappable implementation."
+> - `:34` — Motivation: the provider-swap sentence ("the operator swaps `impl`…").
+> - `:42-44` — Goals: "Bind that interface to **one** concrete app Action via a swappable `impl`…"
+> - `:83-85` — Concept item 2: "names one concrete app Action (`impl.uses`)…"
+> - `:91-103` — the composition diagram and "The vendor-swap invariant" section (both talk in terms
+>   of `uses`/`with`/`outputMap`, the action arm's own field names).
+> - `:108-121` — "Invocation"'s pseudocode, which calls `invokeAction` unconditionally.
+> - `:150-166` — the Shape example's `"impl": { "uses": …, "with": …, "outputMap": … }` block.
+> - `:192` — the `Fn` field-reference table's `impl` row.
+> - `:198-213` — the `FnImpl` field-reference table (now `FnActionImpl`'s table — see below).
+> - `:249-250` — the adapter-pass table (`impl.with` / `impl.outputMap`).
+> - `:285-291` — Conformance's `impl.with`/`impl.outputMap` bullets.
+>
+> Every one of these continues to hold **for the action arm**, unedited, and none is excluded from
+> that reading. The rest of this RFC, outside the passages enumerated above and this amendment,
+> stands unedited.
+
+### The reversal
+
+`impl` is no longer bound to a single arm. It becomes a **`kind`-discriminated union** with three
+arms: the historical app-Action arm (now named `FnActionImpl`), plus two new arms reusing the
+[Endpoint RFC's `Callable`](./endpoint.md#callable) union **verbatim** — the same reference
+`Endpoint.target` and [`@w6w/call`'s `target`](./node-types.md#amendment--2026-07-23-the-w6wcall-host-node-f-3)
+already use:
+
+```ts
+/** The app-Action arm — the historical shape. `kind` is ABSENT on every Function stored before
+ *  this union existed, and absent MEANS "action". */
+interface FnActionImpl {
+  kind?: "action";
+  uses: { app: string; action: string; connection?: string | null };
+  with?: Record<string, unknown>;
+  outputMap?: Record<string, unknown>;
+}
+
+/** The Function / Workflow arms — `Callable` reused verbatim, carrying the same two adapter maps
+ *  the action arm has. */
+type FnCallableImpl = Callable & {
+  with?: Record<string, unknown>;
+  outputMap?: Record<string, unknown>;
+};
+
+type FnImpl = FnActionImpl | FnCallableImpl;
+```
+
+- **`kind` is optional on the action arm, and its absence MEANS `"action"`.** Every Function stored
+  before this union existed has `impl: { uses: {...} }` with no `kind` at all. Making `kind`
+  required on that arm would need a data migration over every stored `definition` blob; this
+  amendment ships without one, so `kind` stays optional and absence resolves to `"action"`.
+- **`outputMap` survives on the action arm, unchanged.** `FnImpl` is deliberately NOT written as
+  `Callable | ActionTarget`: `Callable` (the union `Endpoint.target`'s Function/Workflow arms use)
+  never carried `outputMap`, so folding the action arm into it verbatim would drop the field. The
+  historical `uses`/`with`/`outputMap` shape stays its own arm, `FnActionImpl`.
+- **A Function arm resolves synchronously; a Workflow arm is driven to a terminal result.** A
+  Function's contract is "always returns a value" (see [Concept](#concept)), so there is no `wait`
+  toggle here the way `@w6w/call`'s `target` has one — the invocation mode is fixed by `kind`, not
+  chosen per-call.
+- The discriminator every consumer branches on is one helper, `isCallableImpl(impl): impl is
+  FnCallableImpl`, returning `true` iff `impl.kind === "function" || impl.kind === "workflow"` —
+  never a hand re-derived check.
+
+## Amendment — 2026-08-20b: `retry`, `onError`, and `reroute`
+
+> The [Field reference](#field-reference) `Fn` table above is **silent** on failure handling — no
+> row states what a caller sees when the bound implementation throws. This section fills that gap,
+> additively: three new optional fields on `Fn`, none of them removing or retyping a row already in
+> that table.
+
+`Fn` gains:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `retry` | `RetryPolicy` | ⬜ | Attempt policy for this call. Absent ⇒ one attempt. Reuses the workflow [Step](./workflow.md#step)'s `RetryPolicy` verbatim (`maxAttempts`, `backoff?`, `delayMs?`). |
+| `onError` | `"fail" \| "continue"` | ⬜ | Applied only after `retry` and `reroute` are exhausted. Absent ⇒ `"fail"`. Deliberately **narrower** than a workflow step's `OnError`: `continue-record` has no meaning without a run's `stepErrors` state. |
+| `reroute` | `ErrorReroute` | ⬜ | Failure re-dispatch: `{ target: Callable, with? }`. Absent ⇒ none. `target` is a [`Callable`](./endpoint.md#callable) reference — never an `Edge.when: "error"`, because a Function has no graph to carry an edge on. |
+
+**Execution order**, the sequence a conforming host (and the engine, T1.x) implements:
+
+1. Attempt the call, up to `retry.maxAttempts` times (default `1` — no retry).
+2. On final failure, if `reroute` is present: invoke `reroute.target` — mapping `{ inputs, error }`
+   onto its inputs through `reroute.with` if given, or passing `inputs` through unchanged otherwise
+   — and return **that** target's output as the call's own output. `retry` is not re-applied to the
+   reroute target itself.
+3. Otherwise, apply `onError`: `"fail"` (the default) propagates the error, exactly as today;
+   `"continue"` resolves the call with a `null` output instead of throwing.
+
+This same shape and order is added to [`Endpoint`](./endpoint.md#field-reference) by the companion
+amendment there, since an Endpoint has the identical no-graph constraint on `reroute`.
