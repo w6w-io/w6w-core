@@ -1023,3 +1023,76 @@ A host that implements the `{{ }}` grammar MUST:
 - Treat a chain as **always ours** for root-anchoring purposes, but resolve it under that rule **iff
   every** `{ "var": … }` operand names a rooted path; refuse the **whole** chain, all-or-nothing,
   otherwise. Testably: `{{ vars.a || badroot.x }}` is refused in full.
+
+## Amendment — 2026-08-21: the run-level error handler (`Workflow.retry`/`onError`/`reroute`)
+
+A Workflow gains the same three optional fields a `Fn` and an `Endpoint` already carry
+(`RetryPolicy`, `CallableOnError`, `ErrorReroute` — see [rfcs/function.md](function.md) and
+[rfcs/endpoint.md](endpoint.md)), read once a **run** reaches a terminal `failed` status:
+
+```ts
+interface Workflow {
+  // …
+  retry?: RetryPolicy;
+  onError?: CallableOnError;
+  reroute?: ErrorReroute;
+}
+```
+
+**Why the workflow needed one at all.** The graph already has two failure mechanisms, and neither
+is about the run: `Step.retry`/`Step.onError` decide the fate of ONE step, and `Edge.when: "error"`
+routes to another step. Both live *inside* a run and both are spent by the time the run itself
+fails. Nothing answered "and what if the whole thing fails?" — which is the question the other two
+runnable resources had already answered, in a form authors had already learned.
+
+**Additive by construction.** All three fields absent — which every workflow written before this
+amendment is — reproduces today's behaviour exactly: one attempt, no re-dispatch, the run keeps its
+failed status. `manifestVersion` is unchanged and no migration exists.
+
+### Semantics
+
+- **`retry`** re-runs the **whole graph**, from the top, up to `maxAttempts` total, with the same
+  backoff `Step.retry` uses. It is not a resume: steps that already SUCCEEDED on the previous
+  attempt run again. That is the honest reading of "retry the run", and it is why the field is
+  documented as the wrong tool for a non-idempotent workflow — `Step.retry` is the right one there.
+- **`reroute`** is consulted after `retry` is exhausted, dispatched **exactly once**, through the
+  same call-depth-bounded seam a `@w6w/call` step uses, so a reroute chain is bounded like any other
+  composition hop. Its `with` resolves against `{ inputs, error, trigger }`, where `inputs` is the
+  run's own variables seed. The target's output becomes the run's output.
+- **`onError`** is consulted last. `"fail"` (and absent) leaves the run failed. `"continue"`
+  resolves the run with a `null` output.
+- Either handled outcome flips the run to `succeeded` **and appends the original failure to
+  `RunState.stepErrors`** — the same channel a step-level `onError: "continue-record"` already
+  surfaces a swallowed failure through. A handled run is therefore never a silent one.
+- A **`queued`** run (a `wait` suspend) and a **`canceled`** run are not failures: neither is
+  retried and neither reads the policy.
+
+### Where it is read
+
+At the host's single run choke point, not at any caller. A run may be started by HTTP, the
+scheduler, the event dispatcher, a `@w6w/call` step, or the queue worker; the author asked for the
+policy to hold for the RUN, so reading it at any one entry point would leave the others unhandled.
+
+This is the one place the workflow's policy differs from a Function's in shape rather than in
+spelling: a Function's policy is read by its **caller**, because a Function call IS the caller's
+frame.
+
+**A queue reclaim is not an authored retry.** A host that redelivers a crashed run (its own
+dead-letter bound) MUST NOT also run the authored `retry` ladder on that resumed execution, or the
+two multiply.
+
+### Conformance (additive)
+
+A host that implements this amendment MUST:
+
+- Reproduce pre-amendment behaviour **byte-for-byte** when all three fields are absent. Testably: a
+  failing run with no policy drives the graph exactly **once** and returns `status: "failed"`.
+- Drive the graph `maxAttempts` times, and no more, for a run that fails every attempt. Testably:
+  `retry: { maxAttempts: 3 }` produces exactly **three** run-level `status: "running"` transitions.
+- Resolve the run's seed **once** for the whole ladder, not per attempt — an attempt re-runs the
+  graph, it does not re-resolve the world around it.
+- Never run the authored ladder on a **resumed** execution.
+- Leave the persisted run row **agreeing** with the result the caller was handed: a handled failure
+  is `succeeded` in both, with the original error in `stepErrors` and the run-level `error` cleared.
+- Leave the run **failed**, and propagate, when the reroute target itself fails. Reporting
+  `succeeded` because the failure handler also failed is the one outcome no author could have meant.
