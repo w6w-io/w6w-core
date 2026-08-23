@@ -58,6 +58,37 @@ export interface HealthQuota {
 }
 
 /**
+ * One entry in a vendor's own structured incident history — populated only
+ * when a check reads that history from an API that states it, never from a
+ * status feed's prose. See `resolvedAt` below for why that distinction is a
+ * hard rule rather than a preference.
+ */
+export interface HealthTimelineEntry {
+  /** Stable identity, when the source states one — an incident id, not a title. */
+  id?: string;
+  title: string;
+  state: HealthState;
+  /** Component ids (matching `HealthReport.components`) this entry is about. */
+  components?: string[];
+  /** ISO 8601 — when the incident began. */
+  startedAt?: string;
+  /** ISO 8601 — when the incident was last updated. */
+  updatedAt?: string;
+  /**
+   * ISO 8601 — when the incident was resolved. MUST be set only from a field
+   * the source states STRUCTURALLY (a vendor API's own `resolved_at`, a
+   * machine-readable status code) — never inferred by sniffing an entry's
+   * prose for words like "resolved". Absence means "not stated", not "still
+   * open": a check that cannot tell the difference must not guess either way,
+   * the same discipline `HealthState.unknown` already applies to a whole
+   * report.
+   */
+  resolvedAt?: string;
+  /** Link to the vendor's own incident/status page entry, when it has one. */
+  link?: string;
+}
+
+/**
  * What a check hook returns. A report, not a boolean — one call to a vendor's
  * status API can light up several components, which is how those APIs are
  * actually shaped.
@@ -73,6 +104,18 @@ export interface HealthReport {
   ttlSeconds?: number;
   /** Host-stamped when the hook omits it. */
   latencyMs?: number;
+  /**
+   * A structured incident history, when the vendor's own status API exposes
+   * one directly (a JSON `/incidents` or `/history` endpoint) rather than
+   * only a prose feed. This is a SEPARATE surface from a declared `feed`
+   * (`HealthCheckInput.feed`): a feed is host-parsed, generic Atom/RSS,
+   * useful when that is all a vendor publishes; `timeline` is vendor-specific
+   * structured history the App itself reads and reports back, because only
+   * the App knows the shape of that response. A hook returning this is
+   * responsible for `resolvedAt`'s structural-only rule above — the field
+   * merely gives a report somewhere to put the answer.
+   */
+  timeline?: HealthTimelineEntry[];
 }
 
 /** Declares that no check exists — a positive fact, not an omission. */
@@ -188,6 +231,16 @@ export interface HealthFeedInput {
    * entry overall says nothing about whether its incident is still open.
    */
   latest: HealthFeedEntry[];
+  /**
+   * The feed's own channel-level link — Atom's `<link rel="alternate">`, RSS's
+   * `<channel><link>` — i.e. the vendor's status PAGE, distinct from this
+   * feed document's own URL. A host assembling a check's status-page link
+   * tries this FIRST, ahead of `check.network.allow[0]` (rfcs/healthcheck.md
+   * § "Feed-backed checks"). Absent when the document states none.
+   */
+  channelLink?: string;
+  /** The feed/channel-level title — Atom's `<title>`, RSS's `<channel><title>`. */
+  channelTitle?: string;
   /** ISO 8601 — when the host fetched it. */
   fetchedAt: string;
   /**

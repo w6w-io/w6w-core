@@ -6,6 +6,7 @@ import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
 import type { Connection, HealthCheck } from "@w6w/types";
 import { checkHealth, describe, healthAllowlist, loadApp } from "../mod.ts";
+import type { LoadedApp } from "../mod.ts";
 import { type HealthResult, rollUpHealth } from "../src/health.ts";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
@@ -331,4 +332,65 @@ Deno.test("health: an unreachable feed reports unknown, never down", async () =>
   // The check echoes `feed.error` into `message` (the RFC's own worked pattern),
   // so that string is user-facing by construction — rule 9 binds it too.
   assertEquals(result.report.message, "The status feed could not be read.");
+  // (E3) A fetch failure gets NO feedChannel — absent, not `{}`. This is the
+  // case an implementation that stamps `feedChannel` unconditionally fails.
+  assertEquals(result.feedChannel, undefined);
+});
+
+// --- feedChannel wiring (E): fetchFeed -> checkHealth -> HealthResult ------
+
+/** One-shot local server serving a fixed Atom/RSS body, for feed wiring tests. */
+function feedServer(body: string) {
+  const server = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", onListen: () => {} },
+    () => new Response(body, { status: 200, headers: { "content-type": "application/atom+xml" } }),
+  );
+  return { server, port: (server.addr as Deno.NetAddr).port };
+}
+
+/**
+ * The fixture's `feed` check, redirected at a local server. `127.0.0.1` is
+ * already in the sendgrid fixture's `network.allow` (see `connectionAt`
+ * above), so only the check's declared `feed.url` needs to change — nothing
+ * about posture or allowlisting does.
+ */
+function withLocalFeed(app: LoadedApp, url: string): LoadedApp {
+  const feed = app.healthChecks.get("feed")!;
+  return {
+    ...app,
+    healthChecks: new Map(app.healthChecks).set("feed", {
+      ...feed,
+      check: { ...feed.check, feed: { ...feed.check.feed!, url } },
+    }),
+  };
+}
+
+Deno.test("health: a feed's channel link reaches HealthResult.feedChannel", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const atomWithChannel = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Status</title>
+  <link rel="alternate" type="text/html" href="https://status.example.test/history" />
+  <entry>
+    <id>1</id>
+    <title>All good</title>
+    <summary>Status: Resolved</summary>
+  </entry>
+</feed>`;
+  const { server, port } = feedServer(atomWithChannel);
+  try {
+    const local = withLocalFeed(app, `http://127.0.0.1:${port}/feed.rss`);
+    const result = await checkHealth(local, "feed", { timeoutMs: 5000 });
+    // Written by hand, not derived from the fixture — the literal URL the
+    // response body declared as its channel link.
+    assertEquals(result.feedChannel?.link, "https://status.example.test/history");
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test("health: a check declaring no feed gets no feedChannel (absent, not {})", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const result = await checkHealth(app, "webhooks");
+  assertEquals(result.feedChannel, undefined);
 });

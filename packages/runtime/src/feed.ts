@@ -175,6 +175,51 @@ export function latestPerId(entries: readonly HealthFeedEntry[]): HealthFeedEntr
 }
 
 /**
+ * Channel-level metadata a status feed states about itself — Atom's `<link
+ * rel="alternate">`/`<title>` at the feed root, RSS's `<channel><link>`/
+ * `<channel><title>` — i.e. the vendor's own status PAGE, distinct from this
+ * feed document's own URL. This exists because `HealthFeedInput.channelLink`
+ * is the FIRST source a host tries when assembling a check's status-page
+ * link, ahead of `check.network.allow[0]` (rfcs/healthcheck.md § "Feed-backed
+ * checks").
+ *
+ * Scoped to the document's PREAMBLE — everything before the first `<entry>`
+ * (Atom) or `<item>` (RSS). This is the whole correctness content of the
+ * function: an entry carries its own per-incident `<link>`/`<title>` in
+ * exactly the shape the channel's does, so a whole-document scan would
+ * silently return the newest INCIDENT's link instead of the channel's — the
+ * same "log of updates, not current state" trap `latestPerId` exists to
+ * resolve one level up, except here there is no fold to fall back on: a wrong
+ * channel link is just wrong.
+ *
+ * Reuses `pick`/`pickAttr` against the preamble slice rather than a bespoke
+ * scan — the slice is what makes that reuse safe (the first `<link>`/
+ * `<title>` found in it IS the channel's, never an entry's).
+ *
+ * Never throws, matching `parseFeed`'s own contract: a document stating
+ * neither element yields `{}`.
+ */
+export function parseChannelMeta(xml: string): { link?: string; title?: string } {
+  const cut = xml.search(/<(?:entry|item)\b/i);
+  const head = cut === -1 ? xml : xml.slice(0, cut);
+  const isAtom = /<feed\b/i.test(head);
+
+  // Atom: prefer the alternate-relation link's href — the same element the
+  // per-entry reader in `parseFeed` favours; falling back to any `<link
+  // href=…>`, then a text body, covers the minimal feeds that carry only one.
+  // RSS has no `href` attribute at all, so its channel link is always text.
+  const link = isAtom
+    ? pickAttr(head, "link", "href") ?? text(pick(head, "link"))
+    : text(pick(head, "link"));
+  const title = text(pick(head, "title"));
+
+  return {
+    ...(link ? { link } : {}),
+    ...(title ? { title } : {}),
+  };
+}
+
+/**
  * Text of every `<li>` in a fragment — how feeds list affected components.
  * Exposed because it operates on `summaryHtml`, which only the App knows how to
  * interpret.

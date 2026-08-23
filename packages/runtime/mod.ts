@@ -29,7 +29,7 @@ export type { CheckHealthOptions, HealthResult, HealthVerdict } from "./src/heal
 export { healthAllowlist } from "./src/loader.ts";
 // Feed parsing lives in the runtime so a publisher never reimplements it; a
 // feed-backed check receives the parsed entries as `input.feed`.
-export { feedListItems, latestPerId, parseFeed } from "./src/feed.ts";
+export { feedListItems, latestPerId, parseChannelMeta, parseFeed } from "./src/feed.ts";
 export type { LoadedHealthCheck } from "./src/loader.ts";
 
 export { resolveParams } from "./src/resolve.ts";
