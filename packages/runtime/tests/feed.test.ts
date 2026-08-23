@@ -189,3 +189,106 @@ Deno.test("parseChannelMeta: a document with no channel elements returns {} with
   );
   assertEquals(parseChannelMeta(""), {});
 });
+
+// --- ROUND 2: Atom `rel="alternate"` selection, order-independent --------
+//
+// Round 1's `parseChannelMeta` picked whichever `<link>` came first in the
+// preamble, unconditionally. A preamble commonly carries a `rel="self"`
+// link (the feed document's own URL — self-referencing is conventional)
+// alongside the true `rel="alternate"` status page, in either order. These
+// fixtures pin that the selection is driven by `rel`, not position.
+
+/**
+ * `rel="self"` FIRST, `rel="alternate"` SECOND — round 1's bug returns the
+ * self href here.
+ */
+const ATOM_SELF_THEN_ALTERNATE = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xml:lang="en-US" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://status.slack.com</id>
+  <title>Slack System Status</title>
+  <link rel="self" href="https://slack-status.com/feed/atom" />
+  <link rel="alternate" type="text/html" href="https://slack-status.com" />
+  <entry>
+    <id>https://slack-status.com/2026-01/6f029c99f2b77bcd</id>
+    <link rel="alternate" type="text/html" href="https://slack-status.com/2026-01/6f029c99f2b77bcd" />
+    <title>Incident: Trouble connecting to Salesforce Channels</title>
+  </entry>
+</feed>`;
+
+/**
+ * Same two `<link>`s, reordered — `rel="alternate"` FIRST, `rel="self"`
+ * SECOND. Proves the preference is genuinely `rel`-driven rather than a
+ * first-wins accident that happens to look right on the fixture above.
+ */
+const ATOM_ALTERNATE_THEN_SELF = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xml:lang="en-US" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://status.slack.com</id>
+  <title>Slack System Status</title>
+  <link rel="alternate" type="text/html" href="https://slack-status.com" />
+  <link rel="self" href="https://slack-status.com/feed/atom" />
+  <entry>
+    <id>https://slack-status.com/2026-01/6f029c99f2b77bcd</id>
+    <link rel="alternate" type="text/html" href="https://slack-status.com/2026-01/6f029c99f2b77bcd" />
+    <title>Incident: Trouble connecting to Salesforce Channels</title>
+  </entry>
+</feed>`;
+
+/**
+ * A preamble carrying only ONE `<link>`, and it is not `rel="alternate"` —
+ * the pre-round-2 fallback ("first `<link href=…>`, whatever its `rel`")
+ * must still fire when no alternate-rel element exists at all.
+ */
+const ATOM_SINGLE_NON_ALTERNATE_LINK = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xml:lang="en-US" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://status.slack.com</id>
+  <title>Slack System Status</title>
+  <link rel="self" href="https://slack-status.com/feed/atom" />
+  <entry>
+    <id>https://slack-status.com/2026-01/6f029c99f2b77bcd</id>
+    <title>Incident: Trouble connecting to Salesforce Channels</title>
+  </entry>
+</feed>`;
+
+/**
+ * THREE `<link>`s, TWO of them `rel="alternate"` with different hrefs —
+ * breaks the tie between "prefer the FIRST rel=alternate" and "prefer the
+ * LAST rel=alternate". None of the two-link fixtures above can tell those
+ * two implementations apart (each has only one alternate-rel link), so a
+ * mutant that matches by `rel` correctly but picks the wrong one of several
+ * would otherwise pass every case above undetected.
+ */
+const ATOM_TWO_ALTERNATES = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xml:lang="en-US" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://status.slack.com</id>
+  <title>Slack System Status</title>
+  <link rel="self" href="https://slack-status.com/feed/atom" />
+  <link rel="alternate" type="text/html" href="https://slack-status.com/first-alt" />
+  <link rel="alternate" type="text/html" href="https://slack-status.com/second-alt" />
+  <entry>
+    <id>https://slack-status.com/2026-01/6f029c99f2b77bcd</id>
+    <title>Incident: Trouble connecting to Salesforce Channels</title>
+  </entry>
+</feed>`;
+
+Deno.test("parseChannelMeta: prefers rel=alternate over a preceding rel=self", () => {
+  const channel = parseChannelMeta(ATOM_SELF_THEN_ALTERNATE);
+  assertEquals(channel.link, "https://slack-status.com");
+  assertNotEquals(channel.link, "https://slack-status.com/feed/atom");
+});
+
+Deno.test("parseChannelMeta: rel=alternate preference is order-independent", () => {
+  const channel = parseChannelMeta(ATOM_ALTERNATE_THEN_SELF);
+  assertEquals(channel.link, "https://slack-status.com");
+  assertNotEquals(channel.link, "https://slack-status.com/feed/atom");
+});
+
+Deno.test("parseChannelMeta: falls back to the only <link> when no rel=alternate exists", () => {
+  const channel = parseChannelMeta(ATOM_SINGLE_NON_ALTERNATE_LINK);
+  assertEquals(channel.link, "https://slack-status.com/feed/atom");
+});
+
+Deno.test("parseChannelMeta: among two rel=alternate links, the first wins", () => {
+  const channel = parseChannelMeta(ATOM_TWO_ALTERNATES);
+  assertEquals(channel.link, "https://slack-status.com/first-alt");
+  assertNotEquals(channel.link, "https://slack-status.com/second-alt");
+});
