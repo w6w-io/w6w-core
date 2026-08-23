@@ -20,6 +20,7 @@ import type {
 } from "@w6w/types";
 import { healthCredential, healthScope, healthSeverity, redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
+import { W6WError } from "./errors.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import { signingFetch } from "./runtime.ts";
 import { latestPerId, parseFeed } from "./feed.ts";
@@ -67,6 +68,12 @@ export async function checkHealth(
   const now = opts.now ?? (() => new Date());
   const startedAt = now();
 
+  // The operator-facing half of every failure below. Nothing a probe failure
+  // reveals is fit for `report.message`, and nothing it reveals should be thrown
+  // away either — this is where the difference goes.
+  const diagnose = (message: string, data?: unknown) =>
+    opts.onLog?.("error", `health: ${app.manifest.id}: ${message}`, data);
+
   const stamp = (report: HealthReport): HealthResult => {
     const finishedAt = now();
     const durationMs = finishedAt.getTime() - startedAt.getTime();
@@ -100,27 +107,62 @@ export async function checkHealth(
     // A declared feed is fetched and parsed HOST-side, before the hook runs, so
     // the App receives entries rather than XML. See `fetchFeed`.
     const input: HealthCheckInput = check.feed
-      ? { feed: await fetchFeed(app, loaded, opts, now) }
+      ? { feed: await fetchFeed(app, loaded, opts, now, diagnose) }
       : {};
     const report = await runHealthHook(app, loaded, posture, opts, input);
-    return stamp(normalizeReport(report));
+    return stamp(normalizeReport(report, diagnose));
   } catch (err) {
-    return stamp({
-      state: "unknown",
-      message: `probe failed: ${(err as Error).message}`,
-    });
+    diagnose(`check "${key}" failed`, { error: (err as Error)?.message ?? String(err) });
+    return stamp({ state: "unknown", message: probeFailureMessage(err) });
   }
 }
 
-/** A hook may return anything; keep only what the report contract allows. */
-function normalizeReport(value: unknown): HealthReport {
+/**
+ * What a reader is told when a probe could not complete.
+ *
+ * `report.message` is rendered VERBATIM to end users (rfcs/healthcheck.md), so
+ * nothing that was not written FOR an end user may land in it. A transport error
+ * is the clearest violation: `invalid peer certificate: certificate is only valid
+ * for DnsName("*.statuspage.io")` is a true fact about a vendor's TLS config and
+ * a useless one to the person reading a status pill — it names a host they never
+ * asked about, cannot be acted on, and reads like OUR failure rather than a gap
+ * in what the vendor publishes.
+ *
+ * Two sentences, because a reader can act on the difference: a source that did
+ * not answer in time may well answer on the next run, while one that could not be
+ * read at all usually means it moved and the App needs updating. Neither names a
+ * host, a certificate, or a status code — `state: "unknown"` already carries "we
+ * could not tell", and the sentence only has to say why in terms the reader
+ * shares. The raw error is not discarded; it goes to `onLog`, where an operator
+ * can still find it.
+ */
+function probeFailureMessage(err: unknown): string {
+  const timedOut = err instanceof W6WError && err.code === "hook_timeout";
+  return timedOut
+    ? "The status check did not complete in time."
+    : "The status check could not be completed.";
+}
+
+/**
+ * A hook may return anything; keep only what the report contract allows.
+ *
+ * A malformed report is an App bug, not a vendor fact, so the offending value is
+ * logged rather than interpolated into the message — same rule as
+ * `probeFailureMessage`: what reaches `message` is written for the reader.
+ */
+function normalizeReport(
+  value: unknown,
+  diagnose: (message: string, data?: unknown) => void,
+): HealthReport {
   if (typeof value !== "object" || value === null) {
-    return { state: "unknown", message: "probe returned no report" };
+    diagnose("check returned no report", { value });
+    return { state: "unknown", message: "The status check returned no result." };
   }
   const r = value as HealthReport;
   const states: HealthState[] = ["ok", "degraded", "down", "unknown"];
   if (!states.includes(r.state)) {
-    return { state: "unknown", message: `probe returned an unrecognised state: ${r.state}` };
+    diagnose("check returned an unrecognised state", { state: r.state });
+    return { state: "unknown", message: "The status check returned an unrecognised result." };
   }
   return r;
 }
@@ -138,21 +180,35 @@ function normalizeReport(value: unknown): HealthReport {
  * Never throws: a feed that cannot be read becomes `error` on the input, and a
  * check that sees it should report `unknown` — a broken feed says nothing about
  * the vendor.
+ *
+ * `error` is a fixed, end-user sentence rather than the underlying reason,
+ * because the RFC's own worked pattern is `if (feed?.error) return { state:
+ * "unknown", message: feed.error }` — so whatever this string holds is rendered
+ * verbatim to a reader by every check that follows the pattern. A host that put
+ * `feed fetch failed: <transport error>` here would be leaking its internals
+ * through App code that did nothing wrong. The reason goes to `diagnose`.
  */
 async function fetchFeed(
   app: LoadedApp,
   loaded: LoadedHealthCheck,
   opts: CheckHealthOptions,
   now: () => Date,
+  diagnose: (message: string, data?: unknown) => void,
 ): Promise<HealthFeedInput> {
   const source = loaded.check.feed!;
   const fetchedAt = now().toISOString();
-  const empty = (error: string): HealthFeedInput => ({
-    entries: [],
-    latest: [],
-    fetchedAt,
-    error,
-  });
+  const empty = (detail: string): HealthFeedInput => {
+    diagnose(`feed for check "${loaded.check.key}" could not be read`, {
+      url: source.url,
+      detail,
+    });
+    return {
+      entries: [],
+      latest: [],
+      fetchedAt,
+      error: "The status feed could not be read.",
+    };
+  };
 
   try {
     // No auth: `feed` is bound to an unsigned posture, so `sign` never runs and

@@ -384,7 +384,7 @@ const siteReachable: HealthCheckDefinition = {
 | `entries` | `HealthFeedEntry[]` | Every entry, newest first, capped at `limit` (default 50). |
 | `latest` | `HealthFeedEntry[]` | Newest entry **per `id`** — updates folded onto their incident. Usually the one to read. |
 | `fetchedAt` | string | ISO 8601, host-stamped. |
-| `error` | string | Set when the feed could not be read; both arrays are then empty. Report `unknown`. |
+| `error` | string | Set when the feed could not be read; both arrays are then empty. Report `unknown`. A fixed, end-user sentence — never the underlying transport reason, since the pattern above renders it verbatim. |
 
 A `HealthFeedEntry` is `{ id?, title, summary, summaryHtml, link?, publishedAt? }`, normalised
 across Atom and RSS. `summary` is plain text; `summaryHtml` keeps markup for when the markup
@@ -481,6 +481,13 @@ A host claiming support MUST:
 8. **Fetch a declared `feed` itself**, unsigned, before invoking the hook, and deliver both
    projections (`entries` and `latest`). A fetch or parse failure MUST become
    `input.feed.error` rather than an exception, so the check can report `unknown`.
+9. **Never put its own internals in `message`.** A host generates a `message` in exactly the
+   cases where the App could not: the probe threw, timed out, or returned something
+   unrecognised. Because `message` is rendered verbatim (see the field reference), whatever the
+   host writes there MUST be prose written for an end user — never a transport error, a
+   certificate mismatch, a stack, a URL, or a status code. Those are real and belong in the
+   host's log, not on a status pill: a broken status page must not read like a broken product.
+   The same rule binds `input.feed.error`, which a conforming check echoes into `message`.
 
 Fixtures: [`fixtures/apps/sendgrid/health/`](../fixtures/apps/sendgrid/health/) declares one
 check of each credential posture plus an `unavailable`; the conformance cases live under

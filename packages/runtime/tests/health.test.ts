@@ -237,9 +237,40 @@ Deno.test("an `unavailable` check reports its reason rather than failing", async
 Deno.test("a probe that throws becomes `unknown`, never an exception", async () => {
   const app = await loadApp(SENDGRID_DIR);
   // `service` calls a host that does not resolve; the check must still report.
-  const result = await checkHealth(app, "service");
+  const logged: { message: string; data?: unknown }[] = [];
+  const result = await checkHealth(app, "service", {
+    onLog: (_level, message, data) => logged.push({ message, data }),
+  });
   assertEquals(result.report.state, "unknown");
-  assert(result.report.message?.startsWith("probe failed:"));
+  // Conformance rule 9: the message is end-user prose, and the transport reason
+  // it replaced went to `onLog` rather than to the reader.
+  assertEquals(result.report.message, "The status check could not be completed.");
+  assert(
+    logged.some((l) => l.message.includes('check "service" failed')),
+    "the underlying reason is still reachable by an operator",
+  );
+});
+
+Deno.test("a probe failure never leaks the transport error into `message`", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const result = await checkHealth(app, "service");
+  const message = result.report.message ?? "";
+  // The concrete regression: a certificate/DNS/connect error reaching a status
+  // pill. Assert on the SHAPE of a leak, not on one vendor's wording.
+  for (
+    const internal of [
+      "probe failed",
+      "error sending request",
+      "certificate",
+      "http://",
+      "https://",
+    ]
+  ) {
+    assert(
+      !message.toLowerCase().includes(internal),
+      `message must not carry "${internal}" — got: ${message}`,
+    );
+  }
 });
 
 // --- feed-backed checks (rfcs/healthcheck.md § "Feed-backed checks") --------
@@ -297,5 +328,7 @@ Deno.test("health: an unreachable feed reports unknown, never down", async () =>
   // hook receives `feed.error` — a broken feed says nothing about the vendor.
   const result = await checkHealth(app, "feed", { timeoutMs: 5000 });
   assertEquals(result.report.state, "unknown");
-  assert(result.report.message, "the reason is carried through to the report");
+  // The check echoes `feed.error` into `message` (the RFC's own worked pattern),
+  // so that string is user-facing by construction — rule 9 binds it too.
+  assertEquals(result.report.message, "The status feed could not be read.");
 });
