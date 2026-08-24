@@ -74,11 +74,31 @@ function pick(block: string, name: string): string | undefined {
   return re.exec(block)?.[1];
 }
 
+/**
+ * An attribute value out of an already-captured attribute string (one element's ` rel="…"
+ * href="…"` span). Factored out of `pickAttr` so a caller that needs to inspect more than one
+ * element of a kind — `parseChannelMeta`'s `rel`-preference among several `<link>`s — reads the
+ * same attribute pattern without re-deriving it.
+ */
+function attrValue(attrs: string, attr: string): string | undefined {
+  return new RegExp(`\\b${attr}\\s*=\\s*["']([^"']*)["']`, "i").exec(attrs)?.[1];
+}
+
 /** An attribute off the first `<name …>` element — Atom's `<link href="…"/>`. */
 function pickAttr(block: string, name: string, attr: string): string | undefined {
   const el = new RegExp(`<(?:[a-z0-9]+:)?${name}\\b([^>]*)>`, "i").exec(block)?.[1];
-  if (!el) return undefined;
-  return new RegExp(`\\b${attr}\\s*=\\s*["']([^"']*)["']`, "i").exec(el)?.[1];
+  return el === undefined ? undefined : attrValue(el, attr);
+}
+
+/**
+ * Attribute strings for EVERY `<name …>` element in `block`, in document order — the same
+ * element-open pattern `pickAttr` matches once, extended to every occurrence via the `g` flag.
+ * Exists so `parseChannelMeta` can choose among several `<link>` elements by their `rel`
+ * attribute instead of only ever seeing the first one `pickAttr` would return.
+ */
+function pickAllAttrs(block: string, name: string): string[] {
+  const re = new RegExp(`<(?:[a-z0-9]+:)?${name}\\b([^>]*)>`, "gi");
+  return [...block.matchAll(re)].map((m) => m[1]);
 }
 
 /** Inner XML → plain text. */
@@ -172,6 +192,61 @@ export function latestPerId(entries: readonly HealthFeedEntry[]): HealthFeedEntr
     if (!seen || ordinal(e) > ordinal(seen)) newest.set(e.id, e);
   }
   return [...newest.values(), ...loose].sort((a, b) => ordinal(b) - ordinal(a));
+}
+
+/**
+ * Channel-level metadata a status feed states about itself — Atom's `<link
+ * rel="alternate">`/`<title>` at the feed root, RSS's `<channel><link>`/
+ * `<channel><title>` — i.e. the vendor's own status PAGE, distinct from this
+ * feed document's own URL. This exists because `HealthFeedInput.channelLink`
+ * is the FIRST source a host tries when assembling a check's status-page
+ * link, ahead of `check.network.allow[0]` (rfcs/healthcheck.md § "Feed-backed
+ * checks").
+ *
+ * Scoped to the document's PREAMBLE — everything before the first `<entry>`
+ * (Atom) or `<item>` (RSS). This is the whole correctness content of the
+ * function: an entry carries its own per-incident `<link>`/`<title>` in
+ * exactly the shape the channel's does, so a whole-document scan would
+ * silently return the newest INCIDENT's link instead of the channel's — the
+ * same "log of updates, not current state" trap `latestPerId` exists to
+ * resolve one level up, except here there is no fold to fall back on: a wrong
+ * channel link is just wrong.
+ *
+ * Reuses `pick`/`pickAttr`/`pickAllAttrs`/`attrValue` against the preamble
+ * slice rather than a bespoke scan — the slice is what makes that reuse safe
+ * (every `<link>`/`<title>` found in it IS the channel's, never an entry's).
+ *
+ * Never throws, matching `parseFeed`'s own contract: a document stating
+ * neither element yields `{}`.
+ */
+export function parseChannelMeta(xml: string): { link?: string; title?: string } {
+  const cut = xml.search(/<(?:entry|item)\b/i);
+  const head = cut === -1 ? xml : xml.slice(0, cut);
+  const isAtom = /<feed\b/i.test(head);
+
+  // Atom: a channel preamble commonly carries MORE than one <link> — a
+  // self-referencing `rel="self"` (the feed document's own URL) is
+  // conventional alongside `rel="alternate"` (the vendor's status PAGE), and
+  // nothing guarantees `alternate` comes first in document order. So this
+  // must select BY `rel`, not by position: scan every <link> in the
+  // preamble for one whose `rel` is exactly "alternate" and prefer ITS href;
+  // only when no such element exists does it fall back to the first <link
+  // href=…> found (whatever its `rel`, or none), then to a text body for the
+  // minimal feeds that carry only one <link>. RSS has no `href` attribute at
+  // all, so its channel link is always text.
+  const alternate = isAtom
+    ? pickAllAttrs(head, "link").find((el) => attrValue(el, "rel") === "alternate")
+    : undefined;
+  const link = isAtom
+    ? (alternate ? attrValue(alternate, "href") : pickAttr(head, "link", "href")) ??
+      text(pick(head, "link"))
+    : text(pick(head, "link"));
+  const title = text(pick(head, "title"));
+
+  return {
+    ...(link ? { link } : {}),
+    ...(title ? { title } : {}),
+  };
 }
 
 /**

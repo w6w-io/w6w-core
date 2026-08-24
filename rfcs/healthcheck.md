@@ -154,9 +154,10 @@ host-supplied (`tenantAuth`). The defaults are conveniences, not a coupling.
 ### One probe, many components
 
 A check returns a **report**, not a boolean. The report carries an overall `state` and,
-optionally, a `components` map. This is what lets one call to Stripe's status API light up
-four components, or one call to GitHub's `/rate_limit` report five quota buckets — without
-declaring four or five separate checks that would each cost a request.
+optionally, a `components` map and a structured `timeline` of the incidents behind that state.
+This is what lets one call to Stripe's status API light up four components, or one call to
+GitHub's `/rate_limit` report five quota buckets — without declaring four or five separate
+checks that would each cost a request.
 
 The rule is: **declare a check per *call* you must make; report a component per *thing* that
 call tells you about.**
@@ -244,6 +245,11 @@ Where a vendor writes a machine-readable status (Mistral prefixes every update b
 `Status: Resolved` / `Status: Investigating`), read it; guessing from prose when a real
 field exists is inexcusable. Where a vendor offers nothing like it, report `unknown` rather
 than inventing a state.
+
+Alongside the two entry projections, the host also supplies `channelLink`/`channelTitle` —
+the feed's own channel-level link and title, not the feed document's own URL (see the
+`input.feed` field reference above). A host assembling a check's vendor status-page link
+tries this first, ahead of the check's own `network.allow[0]`.
 
 #### Egress and posture
 
@@ -383,6 +389,8 @@ const siteReachable: HealthCheckDefinition = {
 |---|---|---|
 | `entries` | `HealthFeedEntry[]` | Every entry, newest first, capped at `limit` (default 50). |
 | `latest` | `HealthFeedEntry[]` | Newest entry **per `id`** — updates folded onto their incident. Usually the one to read. |
+| `channelLink` | string | The feed's own channel-level link — Atom's `<link rel="alternate">`, RSS's `<channel><link>` — i.e. the vendor's status PAGE, not this feed document's URL. Absent when the document states none. |
+| `channelTitle` | string | The feed/channel-level title — Atom's `<title>`, RSS's `<channel><title>`. |
 | `fetchedAt` | string | ISO 8601, host-stamped. |
 | `error` | string | Set when the feed could not be read; both arrays are then empty. Report `unknown`. A fixed, end-user sentence — never the underlying transport reason, since the pattern above renders it verbatim. |
 
@@ -401,9 +409,21 @@ ISO string, not a `Date` — the value crosses the sandbox boundary.
 | `quota` | array | ⬜ | `{ id?, limit?, remaining?, resetAt?, unit? }[]`. Populated by `kind: "quota"` checks. |
 | `ttlSeconds` | number | ⬜ | How long the host may serve this result from cache. |
 | `latencyMs` | number | ⬜ | Host-stamped if the hook omits it. |
+| `timeline` | `HealthTimelineEntry[]` | ⬜ | A structured incident history, when the vendor's own API states one. See below. |
 
 `unknown` is deliberately distinct from `down`: a status API that itself 500s tells you
 nothing about the vendor, and reporting that as an outage would be a lie.
+
+A `HealthTimelineEntry` is `{ id?, title, state, components?, startedAt?, updatedAt?,
+resolvedAt?, link? }`. It is a separate surface from a declared `feed` (`input.feed`): a feed
+is host-parsed, generic Atom/RSS, useful when that is all a vendor publishes; `timeline` is
+vendor-specific structured history the App itself reads from its own status API and reports
+back, because only the App knows the shape of that response. **`resolvedAt` MUST be set only
+from a field the source states structurally** — a vendor API's own `resolved_at`, a
+machine-readable status code — **never inferred by sniffing an entry's prose** for words like
+"resolved". Its absence means "not stated", not "still open": a check that cannot tell the
+difference must not guess either way, the same discipline `state: "unknown"` already applies
+to a whole report.
 
 ## Roll-up algorithm
 
@@ -545,6 +565,17 @@ rather than discovery.
 5. **Cadence for `scope: "app"` checks across tenants** — one result per App globally, or
    per tenant? Globally is cheaper; per tenant matters if a host proxies egress differently
    per tenant.
+6. **Should a check's own `state` be derivable from its `components`, filtered by that
+   check's `component:<id>` `covers` entries, rather than stated directly by the hook?**
+   Today a check returns both `state` and (optionally) `components` as independent facts the
+   hook must keep consistent by convention — nothing stops a hook reporting `state: "ok"`
+   while one of its own `components` reads `down`. Deriving `state` structurally — the worst
+   of the components a check's own `covers` names — would remove that duplication and make
+   the surfaces-a-check-actually-speaks-for constraint structural instead of a per-App
+   convention. Risk: `covers` gains double duty. Today it is purely an *attribution* selector
+   (which target a result speaks for); this would additionally make it a *computation* input
+   (which components roll into `state`), and both the roll-up algorithm and the validator
+   would have to change to enforce the new constraint rather than merely document it.
 
 ## Status ladder
 

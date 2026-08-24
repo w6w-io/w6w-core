@@ -188,3 +188,142 @@ Deno.test("gate: a referenced connection not provided to the runtime is unknown_
   assertEquals(err.code, "unknown_connection");
   assertEquals(err.phase, "auth");
 });
+
+// ── Request overrides ──────────────────────────────────────────────────────
+// The caller's escape hatch for a vendor field the Action does not declare.
+// These are the end-to-end assertions: that it reaches the wire at all, and
+// that it cannot reach past the two boundaries it must not cross.
+
+/** As `captureServer`, but recording the whole request. */
+function fullCaptureServer() {
+  let captured: { url: string; headers: Headers; body: string } | undefined;
+  const server = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", onListen: () => {} },
+    async (req) => {
+      captured = { url: req.url, headers: req.headers, body: await req.text() };
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  );
+  const port = (server.addr as Deno.NetAddr).port;
+  return { server, port, get: () => captured };
+}
+
+Deno.test("overrides reach the wire without the action declaring them", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        ...sendInvocation(`http://127.0.0.1:${port}`),
+        // Nothing in the fixture's params declares any of these — that is the
+        // point. `resolveParams` would have dropped them; the wire merge does not.
+        overrides: {
+          body: { send_at: 1700000000, categories: ["ops"] },
+          query: { verbose: "1" },
+          headers: { "x-trace": "abc" },
+        },
+      },
+      { connection: CONNECTION },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  const captured = get()!;
+  const body = JSON.parse(captured.body);
+  assertEquals(body.send_at, 1700000000);
+  assertEquals(body.categories, ["ops"]);
+  // ...and what the action itself built is still there.
+  assertEquals(body.subject, "s");
+  assertEquals(new URL(captured.url).searchParams.get("verbose"), "1");
+  assertEquals(captured.headers.get("x-trace"), "abc");
+});
+
+Deno.test("a path override sets one leaf of the built body end to end", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        ...sendInvocation(`http://127.0.0.1:${port}`),
+        overrides: { body: { "tracking_settings.open_tracking.enable": false } },
+      },
+      { connection: CONNECTION },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  const body = JSON.parse(get()!.body);
+  assertEquals(body.tracking_settings, { open_tracking: { enable: false } });
+  assertEquals(body.subject, "s", "the action's own fields survive");
+});
+
+Deno.test("overrides cannot hijack the auth header the sign hook owns", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        ...sendInvocation(`http://127.0.0.1:${port}`),
+        overrides: { headers: { authorization: "Bearer attacker-supplied" } },
+      },
+      { connection: CONNECTION },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  // The merge runs BEFORE `sign`, so the app's auth overwrites it. An override
+  // can add a header; it can never replace authentication.
+  assertEquals(get()!.headers.get("authorization"), "Bearer test-key-123");
+});
+
+Deno.test("overrides cannot redirect the request off the allowlisted host", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        ...sendInvocation(`http://127.0.0.1:${port}`),
+        // A `host` header does not move a fetch, and only the query string is
+        // rewritten — host and path stay exactly as the action wrote them.
+        overrides: { headers: { host: "evil.example.com" }, query: { a: "1" } },
+      },
+      { connection: CONNECTION },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  assertEquals(new URL(get()!.url).hostname, "127.0.0.1");
+});
+
+Deno.test("an invocation with no overrides is byte-identical to before", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const runOnce = async (overrides?: Record<string, never>) => {
+    const { server, port, get } = fullCaptureServer();
+    try {
+      await invoke(
+        app,
+        {
+          ...sendInvocation(`http://127.0.0.1:${port}`),
+          ...(overrides ? { overrides } : {}),
+        },
+        { connection: CONNECTION },
+      );
+    } finally {
+      await server.shutdown();
+    }
+    const c = get()!;
+    return { body: c.body, path: new URL(c.url).pathname + new URL(c.url).search };
+  };
+  const plain = await runOnce();
+  // An empty envelope must be a no-op, not "merge nothing but re-serialize".
+  const empty = await runOnce({});
+  assertEquals(empty.body, plain.body);
+  assertEquals(empty.path, plain.path);
+});

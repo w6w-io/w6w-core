@@ -23,7 +23,7 @@ import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
 import { W6WError } from "./errors.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import { signingFetch } from "./runtime.ts";
-import { latestPerId, parseFeed } from "./feed.ts";
+import { latestPerId, parseChannelMeta, parseFeed } from "./feed.ts";
 
 /** Entries handed to a hook when the source names no `limit`. */
 const DEFAULT_FEED_LIMIT = 50;
@@ -36,6 +36,22 @@ export interface HealthResult {
   /** Host-stamped, ISO 8601. */
   checkedAt: string;
   durationMs: number;
+  /**
+   * Host-parsed feed channel provenance — Atom's `<link rel="alternate">`/
+   * `<title>`, RSS's `<channel><link>`/`<title>` — present only for a check
+   * declaring `feed` whose feed actually parsed.
+   *
+   * It lives HERE, not only on the hook's own `input.feed` (see
+   * `HealthFeedInput.channelLink`), because the value is assembled host-side
+   * AFTER the hook already ran: `checkHealth` parses the feed and hands the
+   * App entries, but the App never sees this result object, and it is the
+   * host — not the App — that assembles a check's vendor status-page link
+   * (`vendorStatusFor` in `packages/server`). Rather than make every
+   * `feed:`-declaring App echo the channel link back through its own report,
+   * `checkHealth` stamps what it already parsed onto the result it already
+   * returns — the one hop this needs, for every feed-backed check at once.
+   */
+  feedChannel?: { link?: string; title?: string };
 }
 
 export interface CheckHealthOptions {
@@ -106,11 +122,25 @@ export async function checkHealth(
   try {
     // A declared feed is fetched and parsed HOST-side, before the hook runs, so
     // the App receives entries rather than XML. See `fetchFeed`.
-    const input: HealthCheckInput = check.feed
-      ? { feed: await fetchFeed(app, loaded, opts, now, diagnose) }
-      : {};
+    let feedInput: HealthFeedInput | undefined;
+    const input: HealthCheckInput = {};
+    if (check.feed) {
+      feedInput = await fetchFeed(app, loaded, opts, now, diagnose);
+      input.feed = feedInput;
+    }
     const report = await runHealthHook(app, loaded, posture, opts, input);
-    return stamp(normalizeReport(report, diagnose));
+    const result = stamp(normalizeReport(report, diagnose));
+    // DC6/PD-1: stamp what was already parsed onto the result the host
+    // actually sees, so the App need not echo it back. Present only when the
+    // feed was declared AND actually parsed — absent, not `{}`, for a check
+    // declaring no feed or one whose fetch/parse failed.
+    if (feedInput && !feedInput.error) {
+      result.feedChannel = {
+        ...(feedInput.channelLink ? { link: feedInput.channelLink } : {}),
+        ...(feedInput.channelTitle ? { title: feedInput.channelTitle } : {}),
+      };
+    }
+    return result;
   } catch (err) {
     diagnose(`check "${key}" failed`, { error: (err as Error)?.message ?? String(err) });
     return stamp({ state: "unknown", message: probeFailureMessage(err) });
@@ -224,10 +254,21 @@ async function fetchFeed(
     if (res.status < 200 || res.status >= 300) {
       return empty(`feed returned ${res.status}`);
     }
-    const entries = parseFeed(new TextDecoder().decode(res.body), source.format ?? "auto");
+    const raw = new TextDecoder().decode(res.body);
+    const entries = parseFeed(raw, source.format ?? "auto");
     const limit = source.limit ?? DEFAULT_FEED_LIMIT;
     const capped = entries.slice(0, limit);
-    return { entries: capped, latest: latestPerId(capped), fetchedAt };
+    // Channel-level provenance (E1/E2): the vendor's status PAGE, not this
+    // feed document's URL. See `parseChannelMeta` for why it is scoped to the
+    // document's preamble.
+    const channel = parseChannelMeta(raw);
+    return {
+      entries: capped,
+      latest: latestPerId(capped),
+      fetchedAt,
+      ...(channel.link ? { channelLink: channel.link } : {}),
+      ...(channel.title ? { channelTitle: channel.title } : {}),
+    };
   } catch (err) {
     return empty(`feed fetch failed: ${(err as Error).message}`);
   }
