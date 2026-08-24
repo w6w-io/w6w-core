@@ -31,6 +31,10 @@ defaults:
 
 jobs:
   verify:
+    # Fork guard: this workflow reaches PRODUCTION (see the header) and a personal fork
+    # carries none of the secrets it needs, so on `segevsh/*` it fails on every push instead of
+    # doing nothing. Mirrors `w6w-io/w6w`'s deploy workflows, which have carried this since day one.
+    if: github.repository == 'w6w-io/w6w-core'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
