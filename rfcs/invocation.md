@@ -63,6 +63,7 @@ A single envelope means every caller — interactive, programmatic, scheduled �
 | `action` | string (key) | ✅ | Action `key` within the App. |
 | `connection` | string (connection id) | ⬜ | Connection that supplies credentials. Required for Actions whose App declares Auth, **unless** the Action sets `requiresAuth: false` (see [Action RFC](./action.md)). |
 | `params` | object | ⬜ | Map of param `key` → value. Conforms to the Action's `params` schema after resolution. |
+| `overrides` | object | ⬜ | Caller-supplied overrides applied to the outbound HTTP request, for reaching a vendor field the Action does not declare. See [Overrides](#overrides). |
 | `context` | object | ⬜ | Trace / correlation metadata. Populated by the caller; never required for correctness. |
 | `context.invocationId` | string | ⬜ | Unique per Invocation. Host-issued. |
 | `context.runId` | string | ⬜ | The Workflow Run this Invocation belongs to. |
@@ -81,7 +82,88 @@ Before `execute` runs, the host performs the following in order. Each step is a 
    - `revoked` → reject `connection_revoked`.
    - `connected` → proceed.
 3. **Resolve params.** Run the Action's [Param resolution](./action.md#param-resolution) over the supplied `params`. Reject `param_invalid` on validation failure.
-4. **Invoke `execute`.** Pass the resolved params. The Auth `sign` hook is invoked transparently for any outbound request the Action makes, with the Connection's credential injected. The Action receives only the redacted Connection projection (if any).
+4. **Invoke `execute`.** Pass the resolved params. For each outbound request the Action makes, the host applies `overrides` (see below), then invokes the Auth `sign` hook with the Connection's credential injected. The Action receives only the redacted Connection projection (if any).
+
+## Overrides
+
+`params` is a curated surface: a form the Action's author designed, and — by step 3 above — the only keys that survive resolution. Every other supplied key is dropped. That is correct for the common path and wrong at the edges: a vendor ships a field we have not modelled yet, documents one the author chose not to surface, or accepts an undocumented one a caller needs. Without an escape hatch, reaching such a field means abandoning the App for a raw HTTP call and re-supplying the credential outside the Connection that already holds it — trading a modelled, governed, credential-safe call for an unmodelled one.
+
+`overrides` is that escape hatch, and it operates **at the wire, not at the params**. The Action's `execute` builds the request it always would; these values are then merged over it.
+
+```json
+{
+  "overrides": {
+    "body": {
+      "personalizations[0].cc": [{ "email": "cc@example.com" }],
+      "mail_settings": { "sandbox_mode": { "enable": true } }
+    },
+    "query":   { "include": "metadata", "legacy_flag": null },
+    "headers": { "X-Trace": "abc" },
+    "target":  "first",
+    "match":   "/v3/mail/send"
+  }
+}
+```
+
+Nothing about the Action changes — no opt-in, no declaration, no edit — which is what makes the mechanism universal across every Action in a catalog. The corollary is that **an override names the field the way the VENDOR documents it**, not the way the Action's form does: it is applied to the built request, not to `params`.
+
+| Field | Type | Description |
+|---|---|---|
+| `body` | object | Merged over the request body, whichever encoding it uses — **enhancing, never negating**. See [the merge rules](#the-merge-enhances-it-does-not-negate). A body that is an array, a bare scalar, or an encoding with no field structure is left untouched — there is no key space to merge with, and guessing corrupts a request that was valid. On a body-bearing method with no body at all, the overrides *become* the body. |
+| `query` | object | Merged into the URL's query string. `null` **removes** a parameter the Action set. |
+| `headers` | object | Added to the request headers, replacing case-insensitively so one header never appears under two spellings. |
+| `target` | enum | Which outbound request receives them: `first` (default), `first-write` (the first non-GET/HEAD, for an Action that looks something up before writing), or `all`. |
+| `match` | string | Restrict the merge to requests whose URL contains this substring. |
+
+### The merge enhances; it does not negate
+
+An override lands on top of the request the flow's own configuration built, so the rule is that nothing already there is lost. A value the author deliberately set must not disappear because an override touched its neighbour — that failure is silent, happens at the wire where nobody is looking, and is the one this design exists to prevent.
+
+- Two **objects** deep-merge: keys only in the built body survive.
+- Two **arrays** merge **index-wise**. Indices the base has and the override does not are kept; indices past the base's end are appended.
+- Anything else takes the override's value, there being nothing to merge into.
+
+So adding CC beside a recipient list keeps the recipients:
+
+```jsonc
+// the Action built           the override              the request sent
+// [{ "to": [ … ] }]     +    [{ "cc": [ … ] }]    →    [{ "to": [ … ], "cc": [ … ] }]
+```
+
+### Naming a field precisely
+
+A **path key** — dotted, with `[n]` for an index — names one leaf, for when merging into a whole branch is more than you meant:
+
+```json
+{ "personalizations[0].cc": [{ "email": "cc@example.com" }] }
+```
+
+A key is a path when it contains an unescaped `.` or `[`; escape a literal dot with a backslash (`"a\\.b"`) for the rare vendor field whose own name carries one. A malformed path (`"items["`, `"a..b"`) is an error rather than a literal key — quietly setting a field of that name would produce a request the caller never asked for and cannot see. Paths are applied **after** plain keys, so where both name the same leaf the path wins: a fixed order rather than an object-key-order accident. A path still *merges* into whatever sits at that leaf; naming a place is not the same as replacing what is there.
+
+An index beyond the end of its array is refused rather than padded; setting `[n]` where `n` equals the current length appends, which is the one unambiguous growth.
+
+### Replacing deliberately
+
+Because the merge never negates, a plain override cannot shorten or discard a list: `["a","b"]` overridden with `["c"]` yields `["c","b"]`. A trailing **`!`** is the opt-out, and works on either key form:
+
+```json
+{ "categories!": ["transactional"], "personalizations[0].to!": [{ "email": "only@example.com" }] }
+```
+
+Replacement is therefore always deliberate, always visible in the payload, and impossible to do by accident.
+
+### Form-encoded bodies
+
+A form-encoded body is flat and carries only text, so against one a path key or an object value is refused rather than silently flattened. A list value there becomes **repeated keys**, which is how form encoding expresses a list.
+
+### The two boundaries
+
+Both are structural, not advisory:
+
+1. **Auth wins.** The merge runs **before** the `sign` hook, so any header the App's auth injects overwrites one supplied here. `overrides.headers` can add a header; it can never replace authentication.
+2. **Egress holds.** Only the query string is rewritten. Host, port and path are left exactly as the Action wrote them, so the App's `network.allow` allowlist remains the boundary — no override can redirect a signed, credentialed request at a host of the caller's choosing.
+
+`params` validation is unaffected: `overrides` never enters `resolveParams`, so an Action's declared `required` fields and `validation` rules still hold exactly as before. An absent or empty envelope is a no-op and the request is byte-identical to one made without it.
 
 ## Errors
 
