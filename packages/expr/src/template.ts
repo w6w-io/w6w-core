@@ -25,13 +25,23 @@
  * A sealed at-rest secret ({ type:"secret", ciphertext, iv }) has no text form
  * and is never produced or consumed here — the editor handles it separately.
  *
- * `ExprPart` is imported by RELATIVE path on purpose: this module is loaded by
- * `packages/ui` through a pnpm `link:` dependency, and Node resolves that
- * symlink to its realpath inside `packages/core`, which has no `node_modules`.
- * A bare `@w6w/types` specifier dies there with `ERR_MODULE_NOT_FOUND`.
+ * `ExprPart` is declared locally rather than imported from `@w6w/types`
+ * (structurally identical to the canonical definition in
+ * `packages/types/src/value.ts` — keep the two in sync) because `@w6w/expr` is
+ * "pure, dependency-free TypeScript" (see its `package.json`) and installable
+ * completely on its own: from npm, from JSR, or from a git `path:packages/expr`
+ * subdirectory install, none of which put a sibling `packages/types` — or any
+ * `@w6w/types` install — on disk. A cross-package reference (relative or bare
+ * specifier) only ever resolves in the one setup that happens to keep the full
+ * `w6w-core` tree present, so it silently breaks every other consumer.
  */
 
-import type { ExprPart } from "../../types/mod.ts";
+interface ExprPart {
+  kind: "text" | "var" | "secret" | "expr" | "render";
+  value?: string;
+  ref?: string;
+  expr?: unknown;
+}
 
 const OPEN = "{{";
 const CLOSE = "}}";
