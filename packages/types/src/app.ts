@@ -7,6 +7,7 @@ import type { ActionDefinition } from "./action.ts";
 import type { AuthDefinition } from "./auth.ts";
 import type { TriggerDefinition } from "./trigger.ts";
 import type { HealthCheckDefinition } from "./health.ts";
+import type { InterfaceConformance } from "./interface.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -126,6 +127,12 @@ export interface AppDefinition {
    * health surface. See the Health Check RFC.
    */
   healthChecks?: HealthCheckDefinition[];
+  /**
+   * Optional. This App's assertions that its own Actions satisfy one or more
+   * Interfaces — named, versioned contracts multiple Apps may each implement.
+   * See the Interface RFC.
+   */
+  interfaces?: InterfaceConformance[];
 }
 
 /**

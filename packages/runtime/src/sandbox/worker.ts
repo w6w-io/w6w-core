@@ -166,11 +166,14 @@ async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" 
       hasHook: typeof a.execute === "function",
     }));
 
+  // A conformance is inert data — there is no hook to strip, so the JSON
+  // round-trip here only guards against non-serializable values on interfaces.
   const described: DescribedApp = {
     actions,
     auth,
     triggers,
     healthChecks: [...declared, ...tagged],
+    interfaces: JSON.parse(JSON.stringify(app.interfaces ?? [])),
   };
   post({ type: "result", value: described });
 }
