@@ -12,6 +12,7 @@ import type {
   AuthHookKind,
   Author,
   HealthCheck,
+  InterfaceConformance,
   Trigger,
   TriggerHookKind,
   W6WPackageMetadata,
@@ -61,6 +62,12 @@ export interface LoadedApp {
   triggers: Map<string, LoadedTrigger>;
   /** Declared checks, checks promoted from tagged Actions, and one derived per Auth `test`. */
   healthChecks: Map<string, LoadedHealthCheck>;
+  /**
+   * This app's Interface conformance assertions. Unlike `healthChecks`, this is
+   * a plain array: a conformance carries no hook to resolve, so there is
+   * nothing to key by.
+   */
+  interfaces: InterfaceConformance[];
   /** Hostnames hooks may reach, host-enforced: `manifest.network.allow` plus OAuth endpoint hosts. */
   netAllowlist: string[];
 }
@@ -318,6 +325,7 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     auths,
     triggers,
     healthChecks,
+    interfaces: described.interfaces,
     netAllowlist,
   };
 }

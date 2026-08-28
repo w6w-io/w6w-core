@@ -17,6 +17,7 @@ import type {
   Auth,
   Connection,
   HealthCheck,
+  InterfaceConformance,
   Invocation,
   RedactedConnection,
   RequestOverrides,
@@ -43,6 +44,8 @@ export interface AppDescription {
   triggers: Trigger[];
   /** Declared, promoted and derived checks — the whole health surface. */
   health: HealthCheck[];
+  /** This app's Interface conformance assertions. */
+  interfaces: InterfaceConformance[];
 }
 
 export interface InvokeOptions {
@@ -78,6 +81,7 @@ export function describe(app: LoadedApp): AppDescription {
     auth: app.auths.map((a) => a.auth),
     triggers: [...app.triggers.values()].map((t) => t.trigger),
     health: [...app.healthChecks.values()].map((h) => h.check),
+    interfaces: app.interfaces,
   };
 }
 
