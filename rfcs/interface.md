@@ -259,11 +259,11 @@ Apps grow one new optional field, sibling of `healthChecks` and `triggers`:
 
 ```ts
 export interface AppDefinition {
-  actions:      AnyActionDefinition[];
-  auth?:        AuthDefinition[];
+  actions:       AnyActionDefinition[];
+  auth?:         AuthDefinition[];
+  triggers?:     AnyTriggerDefinition[];
   healthChecks?: HealthCheckDefinition[];
-  triggers?:    AnyTriggerDefinition[];
-  interfaces?:  InterfaceConformance[];       // new
+  interfaces?:   InterfaceConformance[];       // new
 }
 ```
 
