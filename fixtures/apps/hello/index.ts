@@ -5,4 +5,14 @@ import echoContext from "./actions/echo-context.ts";
 
 export default {
   actions: [getGreeting, escapeAttempt, echoContext],
+  interfaces: [{
+    interfaceId: "fixture-greeter@1",
+    methods: {
+      greet: {
+        uses: { action: "get-greeting" },
+        with: { name: { "$": "inputs.name" } },
+        outputMap: { greeting: { "$": "output.greeting" } },
+      },
+    },
+  }],
 } satisfies AppDefinition;

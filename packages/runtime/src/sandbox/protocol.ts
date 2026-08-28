@@ -6,6 +6,7 @@ import type {
   Action,
   AuthHookKind,
   HealthCheck,
+  InterfaceConformance,
   SignableRequest,
   Trigger,
   TriggerHookKind,
@@ -45,6 +46,7 @@ export interface DescribedApp {
   auth: DescribedAuth[];
   triggers: DescribedTrigger[];
   healthChecks: DescribedHealthCheck[];
+  interfaces: InterfaceConformance[];
 }
 
 /** Addresses a callable inside the app object exported by the entry module. */
