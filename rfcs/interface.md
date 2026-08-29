@@ -457,8 +457,8 @@ trigger checks, is named here as follow-up work this run does not build.
 > declaration changes. Grepping every passage in this file that states a `get`/`list` output shape
 > (`grep -n "encoding\|path, sha\|sha, type" rfcs/interface.md`) finds exactly two hits, both edited
 > by this amendment: `:168` (`list` → `[{ path, sha, type, url? }]`) and `:169` (`get` → `{ path,
-> sha, content, encoding, url? }`). The rest of the document, including every passage this blockquote
-> enumerates, stands unedited.
+> sha, content, encoding, url? }`). The rest of the document, apart from the two passages just
+> enumerated, stands unedited.
 
 `url` is **optional** on both `list`'s per-entry shape and `get`'s shape: an implementation with no
 natural web URL for a blob simply omits the field, exactly as vendor-neutrality already required for
@@ -470,4 +470,4 @@ not this Interface's; see T1.1.1 for the one shipped consumer's handling.
 `io.w6w.github` needs **no** change to its conformance declaration (`:183-208`) to supply `url`: it
 maps `url` to GitHub's own `html_url` for free, because `list` and `get` both bind `file-get` with no
 output field-mapping declared — the raw vendor object, `html_url` included, already passes through
-unmapped, exactly as `:178-181`'s prose already explains for the rest of that object's fields.
+unmapped.
