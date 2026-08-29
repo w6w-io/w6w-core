@@ -492,3 +492,85 @@ specifies. It is deliberately deferred rather than built speculatively alongside
 The rest of this RFC — including every line the blockquote above enumerates — stands unedited:
 this amendment adds a bound: it does not withdraw, contradict, or need any prior line to be
 rewritten, because none of them claimed a chain was unbounded; they simply predated the question.
+
+## Amendment — 2026-08-29: the `@w6w/template` host node (F-3)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change. It reserves one more id in the `@w6w/*` namespace and routes it
+> through the existing single invoke seam — it adds no new host capability beyond that one node, and
+> amends nothing any prior amendment in this file states.
+
+`@w6w/template` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself
+to compile a Handlebars `template` string against a bound `values` object and return the rendered
+string. Its purpose is portability: a workflow author writes one template with workflow-agnostic
+placeholder names (`{{customer_name}}`, `{{order_id}}`), then binds each placeholder's *value* per
+use — a trigger's payload in one workflow, an upstream step's output in another — without touching
+the template text itself. Like `@w6w/control`, `@w6w/script`, `@w6w/data`, `@w6w/trigger`,
+`@w6w/call` and `@w6w/document`, it is a **host** node with host capabilities — not a sandboxed
+`packages/apps` app. No registered app id may begin with `@w6w/`, so `@w6w/template` can never
+collide with a catalog app.
+
+### Kind & routing
+
+| Kind       | `uses.app`      | Executed by                  | Examples                     |
+| ---------- | --------------- | ----------------------------- | ----------------------------- |
+| `internal` | `@w6w/template` | the **host's internal API**   | render a Handlebars template |
+
+Routing is unchanged: `isInternalApp("@w6w/template")` is `true` (the reserved `@w6w/` prefix), so
+`ctx.invoke` / `invokeAction` dispatches it to the **host's internal node processor** — the same
+processor that runs `@w6w/script`, `@w6w/data` and `@w6w/document` — rather than to the registry.
+`classifyNode` needs no new arm to recognise it: it already classifies every `@w6w/*`-prefixed id as
+`internal` through `isInternalApp`, and `@w6w/template` is one more id under that same prefix, not a
+new branch in that function.
+
+### Reserved internal pseudo-app
+
+| Id              | Action(s) | Input (`with`)         | Output       | Processor |
+| --------------- | --------- | ----------------------- | ------------ | --------- |
+| `@w6w/template` | `render`  | `{ template, values }` | `{ result }` | host      |
+
+- `template` is a Handlebars template string. Placeholder names are workflow-agnostic — a template
+  is written once and reused across workflows whose upstream shapes differ, which is the property
+  this node exists to give an author.
+- `values` is an ordinary object, resolved against the run scope before the node runs exactly like
+  any other `with` value — a whole upstream step's output, or a trigger's payload, may be bound to it
+  directly. Each top-level key of `values` becomes a top-level placeholder root the template may
+  reference (`{{data.to}}` reads `values.data.to`).
+- The output is `{ result }`, where `result` is the rendered string. Downstream reads it as
+  `{ "$": "steps.<id>.output.result" }`.
+
+### Open/closed seam
+
+`@w6w/template`'s seam argument is `@w6w/script`'s, not `@w6w/document`'s. It needs **no** privileged
+host resource — no database, no tenant/project scope — the `render` action is a pure function of its
+two inputs. It sits on the closed side of STRATEGY §5.1 for a different reason: compiling a
+caller-authored `template` string means compiling a caller-authored **function** (Handlebars'
+`compile()` does `new Function` under the hood), and `values` can carry attacker-influenced run data
+(a webhook payload, bound through the picker). That is a **sandboxing** question, not a data-access
+one — the same risk shape `@w6w/script` already carries, and the reason `@w6w/template` needs its own
+dedicated sandbox rather than running in-process the way `@w6w/data`/`@w6w/http` do. The **contract**
+— the `@w6w/template` node kind and its reserved id constant — is declared in the open
+`@w6w/workflow-types` and surfaced by `@w6w/ui`; the **implementation** (the sandboxed compile/render
+mechanism) is provided by the **closed server host**. No capability implementation crosses the seam:
+the engine holds only the reserved id and routes to the host.
+
+### Conformance (additive)
+
+A host that implements `@w6w/template` MUST:
+
+- Classify a node whose `uses.app === "@w6w/template"` as an **internal** kind and route it through
+  the one invoke seam to the host's internal node processor — never by rendering inside the engine.
+- Resolve `with.values` against the run scope before the node runs, exactly as it resolves any other
+  `with` value, and pass the resolved object as `values`.
+- **Fail the step** when the template references a value that resolves to undefined — never return a
+  success carrying a blank substitution. The error's message MUST contain the missing key's name, so
+  a run's failure names what was missing rather than merely that something was.
+- Render `{{ }}` placeholders **HTML-escaped** and `{{{ }}}` placeholders **raw**. A host MUST NOT
+  ship the opposite default (escaping `{{{ }}}` or leaving `{{ }}` unescaped): a template author
+  relies on `{{ }}` being safe to place inside HTML output without a second thought.
+- Reject a `@w6w/template` node naming any action other than `render`.
+
+This amendment does not specify **how** a host compiles or sandboxes the template — that mechanism
+is host implementation detail, deliberately deferred, and stays out of the conformance list above. A
+conforming host may choose any sandboxing approach, provided it never renders in-process alongside
+live connections and decrypted secrets.
