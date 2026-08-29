@@ -165,8 +165,8 @@ document's own list."
 id: "blob-store@1"
 methods (canonical inputs use the {owner, repository} coordinate shape — GitHub/Gitea's own shape):
   headRef { owner, repository, branch }                          → { sha }
-  list    { owner, repository, path, ref? }                      → [{ path, sha, type }]
-  get     { owner, repository, path, ref? }                      → { path, sha, content, encoding }
+  list    { owner, repository, path, ref? }                      → [{ path, sha, type, url? }]
+  get     { owner, repository, path, ref? }                      → { path, sha, content, encoding, url? }
   put     { owner, repository, path, content, expectedSha? }     → { sha }
   delete  { owner, repository, path, expectedSha }               → { ok }
 ```
@@ -448,3 +448,26 @@ trigger checks, is named here as follow-up work this run does not build.
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-08-29: optional `url` on blob-store@1's `get`/`list` output (D-2)
+
+> This section is **additive** to `blob-store@1`'s worked example above; it introduces no breaking
+> change. It adds one optional field, `url`, to the two output shapes that name a blob's binary
+> content — nothing else about the Interface, the adapter, or `io.w6w.github`'s conformance
+> declaration changes. Grepping every passage in this file that states a `get`/`list` output shape
+> (`grep -n "encoding\|path, sha\|sha, type" rfcs/interface.md`) finds exactly two hits, both edited
+> by this amendment: `:168` (`list` → `[{ path, sha, type, url? }]`) and `:169` (`get` → `{ path,
+> sha, content, encoding, url? }`). The rest of the document, apart from the two passages just
+> enumerated, stands unedited.
+
+`url` is **optional** on both `list`'s per-entry shape and `get`'s shape: an implementation with no
+natural web URL for a blob simply omits the field, exactly as vendor-neutrality already required for
+every other field before this amendment. No App loses conformance by leaving `url` out, and no caller
+may assume its presence. A host consuming either output MUST treat `url` as possibly absent —
+whatever a host does when it is missing (persist it, fall back, drop it) is that host's own concern,
+not this Interface's; see T1.1.1 for the one shipped consumer's handling.
+
+`io.w6w.github` needs **no** change to its conformance declaration (`:183-208`) to supply `url`: it
+maps `url` to GitHub's own `html_url` for free, because `list` and `get` both bind `file-get` with no
+output field-mapping declared — the raw vendor object, `html_url` included, already passes through
+unmapped.
