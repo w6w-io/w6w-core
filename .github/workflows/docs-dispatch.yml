@@ -1,0 +1,61 @@
+name: Docs dispatch
+
+# ---------------------------------------------------------------------------
+# On every push to main that touches this repo's published docs (docs/,
+# rfcs/ — 17 of the 22 sources the aggregator pins are RFCs — or the root
+# README), dispatches a rebuild of docs.w6w.io by triggering w6w-io/docs's
+# own "Build + Deploy" workflow by name. Mirrors
+# packages/apps/.github/workflows/reload-apps.yml:82-94's Mechanism B: a
+# short-lived, per-call GitHub App installation token scoped to ONLY
+# w6w-io/docs, never a stored PAT and never the ambient GITHUB_TOKEN.
+#
+# INERT UNTIL a human installs the w6w-ci-bot GitHub App on w6w-io/docs and
+# sets the APP_ID / APP_PRIVATE_KEY repository secrets on THIS repo — not yet
+# done as of this workflow's addition (already done for w6w-io/w6w-apps, see
+# reload-apps.yml:19-26).
+# ---------------------------------------------------------------------------
+
+on:
+  # Manual re-run — the dispatch is idempotent (the target rebuilds from
+  # scratch), so this is the retry path for a run that failed on something
+  # transient without needing a dummy push.
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "rfcs/**"
+      - "README.md"
+
+# A superseded dispatch is harmless — the target rebuilds from scratch on the
+# next one — so cancel an in-flight run rather than letting a stale push queue
+# behind it (reload-apps.yml uses cancel-in-progress: false because ITS job
+# writes to the production catalog mid-flight; this job never does).
+concurrency:
+  group: docs-dispatch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    # Fork guard: this reaches a sibling repo and a personal fork carries none
+    # of the secrets it needs, so on `segevsh/*` it would fail on every push
+    # instead of doing nothing. Mirrors reload-apps.yml's own guard.
+    if: github.repository == 'w6w-io/w6w-core'
+    name: Dispatch docs rebuild
+    runs-on: ubuntu-latest
+    steps:
+      # Least privilege per call, one shared App registration — mirrors
+      # reload-apps.yml:82-89.
+      - name: Mint a token scoped to w6w-io/docs
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: w6w-io
+          repositories: docs
+
+      - name: Trigger the docs rebuild
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh workflow run "Build + Deploy" --repo w6w-io/docs --ref main
