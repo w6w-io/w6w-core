@@ -492,3 +492,48 @@ specifies. It is deliberately deferred rather than built speculatively alongside
 The rest of this RFC — including every line the blockquote above enumerates — stands unedited:
 this amendment adds a bound: it does not withdraw, contradict, or need any prior line to be
 rewritten, because none of them claimed a chain was unbounded; they simply predated the question.
+
+## Amendment — 2026-08-29: `yaml` documents parse into a document node's `content` (F-3)
+
+> This section is **additive** to the [`@w6w/document` host node
+> amendment](#amendment--2026-08-11-the-w6wdocument-host-node-f-3) above; it introduces no breaking
+> change and reserves no new id. Unlike the 2026-08-20 amendment above, it **does** supersede a claim
+> made twice in that section's own text — found by grep, not memory:
+> `/usr/bin/grep -n 'parsed JSON' rfcs/node-types.md` returns exactly two hits at authoring time,
+> `:396-397` ("the **parsed JSON** when `format` is `"json"`, the raw string otherwise") and
+> `:424-425` ("Return `{ key, format, content }` on success, with `content` the parsed JSON when
+> `format` is `"json"` and the raw string otherwise"). Both said `content` is the raw string for
+> every format other than `json`; that is no longer true for `format: "yaml"`. The rest of the RFC
+> is unaffected, but it does **not** stand unedited in exactly those two places.
+
+A `format: "yaml"` document's `content` is now **parsed YAML** (`@std/yaml`, `{ schema: "core" }`),
+of the identical shape as the pre-existing `json` rule beside it: a successful parse replaces
+`content`; a parse failure falls back to the raw string rather than failing the step.
+`text`/`markdown`/`html` still land verbatim, unconditionally — this amendment narrows only the
+`json`-or-raw-string claim, for the one additional format.
+
+**The empty-document consequence.** `parse("")`, `parse("# comment only")` and `parse("\n")` all
+return `null` under `@std/yaml` (`{ schema: "core" }`), so a blank or comment-only `format: "yaml"`
+document's `content` is now `null` — not the raw (empty or whitespace) string a `text`/`markdown`
+document with the same bytes would still produce. This is a deliberate, fail-loud consequence of
+giving `yaml` the *identical* shape as `json` (an empty or malformed `json` document's degenerate
+cases were never special-cased either): a host MUST NOT add a `null`-guard that falls back to the raw
+string for `yaml` alone, since that would make the two parsed formats disagree on how they handle
+their own degenerate input — precisely the class of silent format-branch drift this amendment exists
+to close off.
+
+### Conformance (additive)
+
+A host that implements `@w6w/document` MUST additionally:
+
+- Return `{ key, format, content }` with `content` the parsed **YAML** when `format` is `"yaml"` and
+  it parses, the raw string on a parse failure — the identical shape as the pre-existing `json` rule,
+  independently implemented rather than through a shared parser module (the host's document-node code
+  and its run-scope seed code sit on either side of the `api`/`bll` layering boundary, ADR-0001).
+- Parse a `format: "yaml"` document under a schema equivalent to `@std/yaml`'s `"core"` schema — one
+  that keeps a top-level YAML merge key (`<<`) literal rather than folding it — so that a host's
+  parsed `content` and any client-side field picker mirroring this gate agree on which keys a `yaml`
+  document declares.
+- Treat a parse that succeeds with the value `null` (a blank or comment-only `format: "yaml"`
+  document) as a successful parse, not a parse failure: `content` is `null`, never the raw string, in
+  that case.
