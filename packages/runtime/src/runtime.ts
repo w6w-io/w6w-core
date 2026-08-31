@@ -117,8 +117,21 @@ export function hostAllowed(allowlist: readonly string[], host: string): boolean
   return false;
 }
 
-/** Perform a request on the host: enforce the allowlist, then fetch. */
-async function hostFetch(allowlist: string[], req: SignableRequest): Promise<WireResponse> {
+/**
+ * Perform a request on the host: enforce the allowlist, then fetch.
+ *
+ * `timeoutMs` mirrors `runHook`'s own default (`sandbox/run-hook.ts`, 30s) —
+ * the sandboxed hook wrapping this call is already bounded, but this bare
+ * `fetch` was not: a stalled third-party host (no error, just silence) hung
+ * the whole invocation forever, with nothing to show for it since no promise
+ * ever settled (surfaced by the repo-sync feature's "Sync now" never
+ * resolving).
+ */
+async function hostFetch(
+  allowlist: string[],
+  req: SignableRequest,
+  timeoutMs = 30_000,
+): Promise<WireResponse> {
   let host: string;
   try {
     host = new URL(req.url).hostname;
@@ -136,11 +149,28 @@ async function hostFetch(allowlist: string[], req: SignableRequest): Promise<Wir
       `Request to "${host}" is not in the app's network allowlist.`,
     );
   }
-  const res = await fetch(req.url, {
-    method: req.method,
-    headers: req.headers,
-    body: req.body ?? undefined,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: req.body ?? undefined,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new W6WError(
+        "fetch_timeout",
+        "execute",
+        `Request to "${host}" timed out after ${timeoutMs}ms.`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const headers: Record<string, string> = {};
   res.headers.forEach((v, k) => (headers[k] = v));
   return {
@@ -206,7 +236,7 @@ export function signingFetch(
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {
-      const res = await hostFetch(allowlist, signed);
+      const res = await hostFetch(allowlist, signed, opts.timeoutMs);
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );
@@ -271,7 +301,7 @@ async function resolveConnection(
           input: { credential: conn.credential },
           readScope: app.dir,
           timeoutMs: opts.timeoutMs,
-          onFetch: (req) => hostFetch(app.netAllowlist, req),
+          onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs),
         });
       } catch (e) {
         throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
@@ -364,7 +394,7 @@ export async function runAuthHook<T = unknown>(
       onLog: opts.onLog,
       onFetch: async (req) => {
         try {
-          return await hostFetch(app.netAllowlist, req);
+          return await hostFetch(app.netAllowlist, req, opts.timeoutMs);
         } catch (fetchErr) {
           if (fetchErr instanceof W6WError && fetchErr.code === "egress_denied") {
             deniedByAllowlist = true;
