@@ -85,6 +85,9 @@ interface PackageJson {
   repository?: string | { url?: string };
   author?: string | Author;
   w6w?: W6WPackageMetadata;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
 }
 
 /** Strip an npm scope: `@acme/slack` -> `slack`. */
@@ -169,6 +172,48 @@ function resolveRef(baseDir: string, ref: string): string {
   return isAbsolute(ref) ? ref : resolve(baseDir, ref);
 }
 
+/** True if a `package.json` dependency field is present with at least one entry. */
+function hasDeclaredDeps(deps: Record<string, string> | undefined): boolean {
+  return deps !== undefined && Object.keys(deps).length > 0;
+}
+
+/**
+ * Refuse an app that ships a vendored `node_modules/` tree or declares npm
+ * dependencies. Both are code that never appears in the app's reviewable
+ * source: `node_modules/` resolution is arbitrated by `read`, which is
+ * necessarily scoped to the app's own directory, so a vendored tree gets a
+ * runtime-computed `npm:` specifier to resolve even with `import:false` and
+ * `net:false` both in effect. Refusing unconditionally (no allow-list, no
+ * opt-in) is a deliberate decision — see HITL-1.
+ */
+async function assertNoNpmDependencies(root: string, pkg: PackageJson): Promise<void> {
+  let nodeModulesStat: Deno.FileInfo | undefined;
+  try {
+    nodeModulesStat = await Deno.stat(join(root, "node_modules"));
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
+  }
+  if (nodeModulesStat?.isDirectory) {
+    throw new LoadError(
+      "npm_dependencies_forbidden",
+      `App at ${root} ships a vendored \`node_modules/\` directory. A vendored dependency ` +
+        "tree is code that does not appear in the app's reviewable source — remove it.",
+      { dir: root, reason: "node_modules" },
+    );
+  }
+
+  const offendingField = (["dependencies", "devDependencies", "optionalDependencies"] as const)
+    .find((field) => hasDeclaredDeps(pkg[field]));
+  if (offendingField) {
+    throw new LoadError(
+      "npm_dependencies_forbidden",
+      `App at ${root} declares \`${offendingField}\` in package.json. npm dependencies are ` +
+        "code that does not appear in the app's reviewable source — remove them.",
+      { dir: root, reason: offendingField },
+    );
+  }
+}
+
 function computeAllowlist(manifest: AppManifest, auths: LoadedAuth[]): string[] {
   const hosts = new Set<string>(manifest.network?.allow ?? []);
   for (const { auth } of auths) {
@@ -251,6 +296,7 @@ export function healthAllowlist(appAllowlist: string[], check: HealthCheck): str
 export async function loadApp(dir: string): Promise<LoadedApp> {
   const root = resolve(dir);
   const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
+  await assertNoNpmDependencies(root, pkg);
 
   let manifest: AppManifest;
   if (pkg.w6w?.manifest) {
