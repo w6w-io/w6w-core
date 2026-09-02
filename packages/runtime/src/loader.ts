@@ -186,14 +186,46 @@ function hasDeclaredDeps(deps: Record<string, string> | undefined): boolean {
  * `net:false` both in effect. Refusing unconditionally (no allow-list, no
  * opt-in) is a deliberate decision — see HITL-1.
  */
-async function assertNoNpmDependencies(root: string, pkg: PackageJson): Promise<void> {
-  let nodeModulesStat: Deno.FileInfo | undefined;
+/**
+ * `node_modules/` is searched at most this many levels below the app root.
+ * 12 is well past any real app's directory depth (`hello`/`sendgrid` are 2-3
+ * levels deep) — it exists only so a pathological tree can't blow the stack
+ * or run unbounded; hitting it without finding `node_modules` is not itself
+ * a refusal.
+ */
+const NODE_MODULES_SEARCH_MAX_DEPTH = 12;
+
+/**
+ * True if a directory literally named `node_modules` exists anywhere under
+ * `dir`, at most `NODE_MODULES_SEARCH_MAX_DEPTH` levels deep. This has to
+ * search the whole app tree, not just the root: `read` is scoped to the
+ * app's whole directory (`read: [opts.readScope]`, `sandbox/run-hook.ts:44`),
+ * so a vendored tree anywhere under the app root sits in the same trust
+ * boundary as one at the root itself — a publisher gains nothing by nesting
+ * it one level down.
+ *
+ * A symlinked directory is never followed (a symlink loop must not hang or
+ * crash the walk — it is treated as a dead end for recursion), but an entry
+ * literally *named* `node_modules` still trips the refusal regardless of its
+ * type, so a symlink can't be used to rename around the check.
+ */
+async function hasVendoredNodeModules(dir: string, depth: number): Promise<boolean> {
+  if (depth > NODE_MODULES_SEARCH_MAX_DEPTH) return false;
   try {
-    nodeModulesStat = await Deno.stat(join(root, "node_modules"));
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.name === "node_modules") return true;
+      if (entry.isDirectory && !entry.isSymlink) {
+        if (await hasVendoredNodeModules(join(dir, entry.name), depth + 1)) return true;
+      }
+    }
   } catch (e) {
     if (!(e instanceof Deno.errors.NotFound)) throw e;
   }
-  if (nodeModulesStat?.isDirectory) {
+  return false;
+}
+
+async function assertNoNpmDependencies(root: string, pkg: PackageJson): Promise<void> {
+  if (await hasVendoredNodeModules(root, 0)) {
     throw new LoadError(
       "npm_dependencies_forbidden",
       `App at ${root} ships a vendored \`node_modules/\` directory. A vendored dependency ` +

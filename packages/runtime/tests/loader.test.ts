@@ -169,3 +169,55 @@ Deno.test("cold remote npm: import is still denied under the sandbox's real perm
   assertEquals(err.code, "hook_failed");
   assertEquals(err.phase, "execute");
 });
+
+// L7 — the nested node_modules/ bypass is closed (round 2, A7). Mirrors the
+// evaluator's own repro shape: a clean root package.json, no declared deps,
+// and node_modules/ vendored two levels deep under actions/.
+Deno.test("loadApp refuses a node_modules/ tree nested under a subdirectory", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(basePackageJson(), null, 2));
+    await Deno.mkdir(join(dir, "actions", "node_modules", "nanoid"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "actions", "node_modules", "nanoid", "package.json"),
+      JSON.stringify({ name: "nanoid", version: "5.0.9", main: "index.js" }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "actions", "node_modules", "nanoid", "index.js"),
+      "module.exports = {};\n",
+    );
+
+    const err = await assertRejects(() => loadApp(dir), LoadError);
+    assertEquals(err.code, "npm_dependencies_forbidden");
+    assertEquals(err.phase, "load");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// L8 — the walk terminates on a symlink cycle (round 2, A8). A symlink under
+// `foo/` points back at an ancestor directory; the walk must never follow it,
+// so loadApp must return well inside a generous 5s bound instead of hanging.
+Deno.test("loadApp's node_modules walk does not hang on a symlink cycle", async () => {
+  const dir = await Deno.makeTempDir();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(basePackageJson(), null, 2));
+    await Deno.writeTextFile(join(dir, "index.ts"), "export default { actions: [] };\n");
+    await Deno.mkdir(join(dir, "foo"));
+    await Deno.symlink(dir, join(dir, "foo", "link"), { type: "dir" });
+
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("loadApp did not return within 5s — symlink cycle hang")),
+        5000,
+      );
+    });
+    const app = await Promise.race([loadApp(dir), timeout]);
+    const desc = describe(app);
+    assertEquals(desc.app.id, "io.w6w.temp");
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
