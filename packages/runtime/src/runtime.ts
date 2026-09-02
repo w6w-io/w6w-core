@@ -358,8 +358,13 @@ export function signingFetch(
  * comes back from `runHook` as a generic `hook_failed`, indistinguishable
  * from the hook's own business-logic failure. Wraps `onFetch` to remember
  * the last `W6WError` it raised, and returns an `unwrap` that restores it in
- * place of that generic wrapper — a no-op for any other error, including one
- * that merely happens to reach `runHook` after a genuine hook failure.
+ * place of that generic wrapper — but only when the incoming `hook_failed`'s
+ * message matches the remembered denial's message (`run-hook.ts` forwards
+ * the underlying error's `.message` faithfully, so a genuine re-surfaced
+ * denial and its remembered copy share the exact string). A no-op for any
+ * other error, including a later, unrelated failure that merely happens to
+ * reach `runHook` after an earlier denial the hook itself caught and
+ * swallowed.
  */
 function withDeniedUnwrap(
   onFetch: (request: SignableRequest) => Promise<WireResponse>,
@@ -378,7 +383,12 @@ function withDeniedUnwrap(
       }
     },
     unwrap: (err: unknown): never => {
-      if (denied && err instanceof W6WError && err.code === "hook_failed") throw denied;
+      if (
+        denied && err instanceof W6WError && err.code === "hook_failed" &&
+        err.message === denied.message
+      ) {
+        throw denied;
+      }
       throw err;
     },
   };

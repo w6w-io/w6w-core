@@ -14,11 +14,11 @@ const CONNECTION_BASE = {
   createdAt: "2026-05-24T00:00:00Z",
 };
 
-function inv(url: string, connection: Connection): Invocation {
+function inv(url: string, connection: Connection, action = "call"): Invocation {
   return {
     manifestVersion: "1",
     app: "io.w6w.egress",
-    action: "call",
+    action,
     connection: connection.id,
     params: { url },
   };
@@ -281,4 +281,37 @@ Deno.test("R6 - post-sign check is retained: sign rewriting off-allowlist is sti
   } finally {
     await B.server.shutdown();
   }
+});
+
+Deno.test("R7 - a swallowed denial does not mask a later, unrelated failure", async () => {
+  const app = await loadApp(EGRESS_DIR);
+  // Nothing needs to actually listen — the fetch is denied by the allowlist
+  // before any connection is attempted, and the action swallows that denial
+  // itself.
+  const connection: Connection = {
+    ...CONNECTION_BASE,
+    auth: "api-key-header",
+    credential: { apiKey: "k-r7" },
+  };
+  const err = await assertRejects(
+    () =>
+      invoke(
+        app,
+        inv("http://localhost:1/not-allowed", connection, "probe-then-fail"),
+        { connection },
+      ),
+    W6WError,
+  );
+  // Round 1's bug: this used to come back `egress_denied`, naming the
+  // swallowed, already-handled "localhost:1" destination instead of the
+  // action's real, uncaught failure.
+  assertEquals(err.code, "hook_failed");
+  assert(
+    err.message.includes("UNRELATED FAILURE"),
+    `expected the unrelated failure's message, got: ${err.message}`,
+  );
+  assert(
+    !err.message.includes("localhost"),
+    `rejection leaked the swallowed denial's destination: ${err.message}`,
+  );
 });
