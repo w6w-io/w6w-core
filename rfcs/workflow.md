@@ -97,7 +97,8 @@ The engine never touches the outside world directly. Every operational effect �
 |---|---|---|---|
 | `manifestVersion` | string | ✅ | Core spec version. `"2"` for the workflow model. |
 | `id` | string | ✅ | Host-issued opaque id. Stable across renames. |
-| `name` | string | ✅ | Machine name. Unique within the host. Lowercase, kebab-case. |
+| `name` | string | ✅ | Machine name. Not enforced unique by the host — `key` (below) is the enforced, unique machine name. Lowercase, kebab-case. See [Amendment — 2026-09-02: the Workflow key field](#amendment--2026-09-02-the-workflow-key-field). |
+| `key` | string | ⬜ | Machine-readable identifier, optional — a Workflow may have none. When set: matches `/^[a-z][a-z0-9-]{2,38}/` (lowercase-first, then lowercase letters/digits/hyphens, no `--` anywhere, no trailing `-`; `_` is illegal), unique per `(account, key)` via a **partial** index (`where key is not null`, since `key` is optional), and validated against the grammar only when first assigned — never re-checked on a later save. See [Amendment — 2026-09-02: the Workflow key field](#amendment--2026-09-02-the-workflow-key-field). |
 | `displayName` | string | ⬜ | Human-facing name. Falls back to `name`. |
 | `description` | string | ⬜ | One-line summary. |
 | `trigger` | [WorkflowTrigger](./trigger.md#workflowtrigger) | ⬜ | How this workflow starts. Absent means manual-only. See [Trigger RFC](./trigger.md). |
@@ -1096,3 +1097,70 @@ A host that implements this amendment MUST:
   is `succeeded` in both, with the original error in `stepErrors` and the run-level `error` cleared.
 - Leave the run **failed**, and propagate, when the reroute target itself fails. Reporting
   `succeeded` because the failure handler also failed is the one outcome no author could have meant.
+
+## Amendment — 2026-09-02: the Workflow key field
+
+> This section is **additive** to the [Workflow](#workflow) field table above; it introduces no
+> breaking change and no new host primitive. It adds one optional field, `key`, and corrects one
+> pre-existing sentence about `name` that was never true of any host. Enumerated by grep, not
+> memory — `/usr/bin/grep -n -i 'machine name\|unique' rfcs/workflow.md`, run against the
+> pre-amendment text, finds exactly three hits: `:100` (the `name` row — **corrected** below, its
+> host-wide-uniqueness claim removed because no host has ever enforced it), `:113` (`Step.id` —
+> **left alone**, because it is a different concept: a step's machine name is unique only *within
+> that workflow*, never account-scoped, and no Step ever claims uniqueness against another
+> Workflow's steps), and `:142` (`WorkflowVariable.key` — **left alone**, because it is also a
+> different concept: a variable's reference name inside `vars.<key>`, scoped to the one workflow
+> that declares it, not an account-wide address). The new `key` row this amendment adds to the
+> [Workflow](#workflow) table is this section's own insertion, not one of the three grep hits above
+> (the grep was run against the pre-amendment text). The rest of this RFC, outside the `name` row
+> and the new `key` row, stands unedited.
+
+A Workflow gains an optional `key` — the same machine-readable identifier a
+[Function](./function.md#field-reference) and an [Endpoint](./endpoint.md#field-reference) already
+carry, minus the two things that make theirs mandatory: neither a Function nor an Endpoint can exist
+without one, because both are addressed by it; a Workflow is addressed by neither `name` nor `key`,
+so nothing forces one to exist.
+
+**Grammar.** When present, `key` matches `/^[a-z][a-z0-9-]{2,38}/` — a lowercase letter first,
+lowercase letters/digits/hyphens after, 3 to 39 characters — plus two rules the regex alone does not
+express: no `--` anywhere, and no trailing `-`. `_` is deliberately illegal; it is not a legal DNS
+label character. This is the same `isAccountSlug` grammar a Function's `key` already uses.
+
+**Uniqueness — `(account, key)`, partial.** A host MUST enforce uniqueness on `(account, key)`,
+exactly as [Endpoint's `(account, key)` rule](./endpoint.md#an-endpoint-belongs-to-the-account)
+does, and refuse a colliding save as a caller-visible conflict. Unlike a Function's and an
+Endpoint's `key`, which are always present, a Workflow's `key` is **optional** (above), so the
+enforcing index is **partial** — `where key is not null` — rather than total: two Workflows with no
+`key` never collide with each other or with anything.
+
+**Validated once, on first assignment.** The grammar is checked only at the moment a `key` moves
+from absent/`null` to present, never again on a later save. A value that is already stored can never
+be made un-saveable by a later tightening of the grammar. A Function gates this on `!previous` — the
+row itself is new, because a Function always has a `key` from creation. A Workflow's `key` is
+optional, so its creation and its first key-assignment are two different moments; the gate here is
+therefore the *stored key being `null`*, not the row being new.
+
+**Endpoint is the contrast, not a case this amendment touches.** An Endpoint's `key` is required and
+[immutable after first save](./endpoint.md#key-is-immutable-after-first-save), because it is baked
+into the address `/invoke/{account_slug}/{key}`. A Workflow has no such address, so this amendment
+pins nothing about whether a Workflow's `key` may change after it is first set — only that the
+grammar is not re-checked when it does. `rfcs/endpoint.md` itself is unedited by this amendment.
+
+### Corrected: `name` is not unique
+
+The `name` row's pre-amendment sentence claiming host-wide uniqueness was never true of any host
+implementation — no uniqueness constraint on `name` exists, and the field that sentence meant to
+describe is `key`, this section's own subject. `name` keeps its pre-existing meaning and requiredness
+unchanged: a required, human-authored, lowercase-kebab-case label. Only its uniqueness claim moves,
+from `name` to `key`.
+
+### Conformance (additive)
+
+A host that implements this amendment MUST:
+
+- Enforce `key`'s grammar — `/^[a-z][a-z0-9-]{2,38}/`, no `--`, no trailing `-` — only at the moment
+  a `null`/absent `key` is first set to a non-null value.
+- Enforce `(account, key)` uniqueness with a **partial** index over non-null `key` values, refusing a
+  colliding save as a caller-visible conflict.
+- Never re-validate a stored `key` against the grammar on a save that does not itself change `key`.
+- Never enforce uniqueness on `name`.
