@@ -117,15 +117,38 @@ export function hostAllowed(allowlist: readonly string[], host: string): boolean
   return false;
 }
 
+/** Redirect statuses `hostFetch` will consider following on the SAME host. */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** Same-host redirects `hostFetch` follows before giving up on a loop. */
+const MAX_SAME_HOST_REDIRECTS = 5;
+
 /**
- * Perform a request on the host: enforce the allowlist, then fetch.
+ * Perform a request on the host: enforce the allowlist, then fetch — with
+ * `redirect: "manual"`, since "follow" cannot be selected per-host (the
+ * option is chosen before the destination is known). Every redirect
+ * therefore surfaces here first:
+ *   - a redirect to a DIFFERENT hostname is refused outright, with the same
+ *     `egress_denied` shape as the initial allowlist check. It is never
+ *     followed and never re-checked against the allowlist — the rule is "the
+ *     host changed", not "the new host happens to also be allowed".
+ *   - a redirect to the SAME hostname is re-issued by this function itself,
+ *     per the Fetch spec's method/body rules (`303`, or `301`/`302` with a
+ *     non-`GET`/`HEAD` method, drop to `GET` with no body; `307`/`308`
+ *     preserve both). Headers carry forward unchanged: same host, so the
+ *     signed credential legitimately travels.
+ * The loop is capped at `MAX_SAME_HOST_REDIRECTS` hops; past that it throws
+ * `too_many_redirects` rather than let a self-redirecting host hang the
+ * invocation until the timeout.
  *
  * `timeoutMs` mirrors `runHook`'s own default (`sandbox/run-hook.ts`, 30s) —
  * the sandboxed hook wrapping this call is already bounded, but this bare
  * `fetch` was not: a stalled third-party host (no error, just silence) hung
  * the whole invocation forever, with nothing to show for it since no promise
  * ever settled (surfaced by the repo-sync feature's "Sync now" never
- * resolving).
+ * resolving). The `AbortController`/timer spans the WHOLE redirect loop, not
+ * one hop, so the 30s bound stays per request, as it was before redirects
+ * were followed here.
  */
 async function hostFetch(
   allowlist: string[],
@@ -151,34 +174,82 @@ async function hostFetch(
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
   try {
-    res = await fetch(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body ?? undefined,
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (controller.signal.aborted) {
-      throw new W6WError(
-        "fetch_timeout",
-        "execute",
-        `Request to "${host}" timed out after ${timeoutMs}ms.`,
-      );
+    let currentUrl = req.url;
+    let method = req.method;
+    let body = req.body ?? undefined;
+    let hop = 0;
+    for (;;) {
+      let res: Response;
+      try {
+        res = await fetch(currentUrl, {
+          method,
+          headers: req.headers,
+          body,
+          redirect: "manual",
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) {
+          throw new W6WError(
+            "fetch_timeout",
+            "execute",
+            `Request to "${host}" timed out after ${timeoutMs}ms.`,
+          );
+        }
+        throw err;
+      }
+      const location = res.headers.get("location");
+      if (!REDIRECT_STATUSES.has(res.status) || !location) {
+        const headers: Record<string, string> = {};
+        res.headers.forEach((v, k) => (headers[k] = v));
+        return {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+          body: new Uint8Array(await res.arrayBuffer()),
+        };
+      }
+      // A redirect response body is never used; drain it before moving on.
+      await res.body?.cancel();
+      let next: URL;
+      try {
+        next = new URL(location, currentUrl);
+      } catch {
+        throw new W6WError(
+          "invalid_request_url",
+          "execute",
+          `Redirect from "${host}" carries an invalid Location: ${location}`,
+        );
+      }
+      if (next.hostname !== host) {
+        throw new W6WError(
+          "egress_denied",
+          "execute",
+          `Redirect from "${host}" to "${next.hostname}" crosses hosts; refused.`,
+        );
+      }
+      hop++;
+      if (hop > MAX_SAME_HOST_REDIRECTS) {
+        throw new W6WError(
+          "too_many_redirects",
+          "execute",
+          `Exceeded ${MAX_SAME_HOST_REDIRECTS} same-host redirects from "${host}".`,
+        );
+      }
+      const methodUpper = method.toUpperCase();
+      const dropsBody = res.status === 303 ||
+        ((res.status === 301 || res.status === 302) && methodUpper !== "GET" &&
+          methodUpper !== "HEAD");
+      if (dropsBody) {
+        method = "GET";
+        body = undefined;
+      }
+      currentUrl = next.toString();
     }
-    throw err;
   } finally {
     clearTimeout(timer);
   }
-  const headers: Record<string, string> = {};
-  res.headers.forEach((v, k) => (headers[k] = v));
-  return {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-    body: new Uint8Array(await res.arrayBuffer()),
-  };
 }
 
 /**
@@ -221,6 +292,33 @@ export function signingFetch(
     if (!["GET", "HEAD"].includes(request.method.toUpperCase())) writeIndex++;
 
     let signed = outgoing;
+    // Pre-sign destination check (rfcs/hook-runtime.md `ctx.fetch` step 1, run
+    // before step 2's signing): checked on `outgoing` — the post-override
+    // request, never the raw `request` and never `signed` — so a `sign` hook
+    // cannot rescue an off-allowlist destination by rewriting it, and its
+    // worker is never even spawned for one. This is ADDITIONAL to, not a
+    // replacement for, `hostFetch`'s own check below: that one still guards
+    // the SIGNED request, in case `sign` itself rewrites the destination off
+    // the allowlist.
+    {
+      let destHost: string;
+      try {
+        destHost = new URL(outgoing.url).hostname;
+      } catch {
+        throw new W6WError(
+          "invalid_request_url",
+          "execute",
+          `Hook produced an invalid URL: ${outgoing.url}`,
+        );
+      }
+      if (!hostAllowed(allowlist, destHost)) {
+        throw new W6WError(
+          "egress_denied",
+          "execute",
+          `Request to "${destHost}" is not in the app's network allowlist.`,
+        );
+      }
+    }
     if (canSign && auth) {
       // `sign` runs in its own worker with NO network, and is the only code
       // given the (live, post-refresh) credential. It injects auth.
@@ -248,6 +346,41 @@ export function signingFetch(
       );
       throw err;
     }
+  };
+}
+
+/**
+ * `runHook`'s worker boundary forwards only an Error's `.message` across
+ * `postMessage`, dropping `.code` (the same problem `runAuthHook`'s
+ * `deniedByAllowlist` flag already solves for the credential-lifecycle
+ * hooks) — so a request this runtime's own `onFetch` denies itself (the
+ * pre-sign check, `hostFetch`'s allowlist/redirect checks, or the hop cap)
+ * comes back from `runHook` as a generic `hook_failed`, indistinguishable
+ * from the hook's own business-logic failure. Wraps `onFetch` to remember
+ * the last `W6WError` it raised, and returns an `unwrap` that restores it in
+ * place of that generic wrapper — a no-op for any other error, including one
+ * that merely happens to reach `runHook` after a genuine hook failure.
+ */
+function withDeniedUnwrap(
+  onFetch: (request: SignableRequest) => Promise<WireResponse>,
+): {
+  onFetch: (request: SignableRequest) => Promise<WireResponse>;
+  unwrap: (err: unknown) => never;
+} {
+  let denied: W6WError | undefined;
+  return {
+    onFetch: async (request: SignableRequest): Promise<WireResponse> => {
+      try {
+        return await onFetch(request);
+      } catch (err) {
+        if (err instanceof W6WError) denied = err;
+        throw err;
+      }
+    },
+    unwrap: (err: unknown): never => {
+      if (denied && err instanceof W6WError && err.code === "hook_failed") throw denied;
+      throw err;
+    },
   };
 }
 
@@ -457,20 +590,27 @@ export async function invoke(
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
-  const onFetch = signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides);
+  const { onFetch, unwrap } = withDeniedUnwrap(
+    signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides),
+  );
 
   // 5. Invoke the action's `execute` in the sandbox.
-  const value = await runHook({
-    entryPath: app.entryPath,
-    selector: { kind: "action", key: loaded.definition.key },
-    input: resolved,
-    readScope: app.dir,
-    connection: redacted,
-    invocation: invocation.context,
-    timeoutMs: opts.timeoutMs,
-    onLog: opts.onLog,
-    onFetch,
-  });
+  let value: unknown;
+  try {
+    value = await runHook({
+      entryPath: app.entryPath,
+      selector: { kind: "action", key: loaded.definition.key },
+      input: resolved,
+      readScope: app.dir,
+      connection: redacted,
+      invocation: invocation.context,
+      timeoutMs: opts.timeoutMs,
+      onLog: opts.onLog,
+      onFetch,
+    });
+  } catch (err) {
+    unwrap(err);
+  }
 
   return { value };
 }
@@ -519,16 +659,20 @@ export async function invokeTriggerHook(
   if (opts.connection) {
     ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
   }
-  const onFetch = signingFetch(app, auth, credential, opts);
+  const { onFetch, unwrap } = withDeniedUnwrap(signingFetch(app, auth, credential, opts));
 
-  return await runHook({
-    entryPath: app.entryPath,
-    selector: { kind: "trigger", key: opts.triggerKey, hook: opts.hook },
-    input: opts.input,
-    readScope: app.dir,
-    connection: redacted,
-    timeoutMs: opts.timeoutMs,
-    onLog: opts.onLog,
-    onFetch,
-  });
+  try {
+    return await runHook({
+      entryPath: app.entryPath,
+      selector: { kind: "trigger", key: opts.triggerKey, hook: opts.hook },
+      input: opts.input,
+      readScope: app.dir,
+      connection: redacted,
+      timeoutMs: opts.timeoutMs,
+      onLog: opts.onLog,
+      onFetch,
+    });
+  } catch (err) {
+    unwrap(err);
+  }
 }
