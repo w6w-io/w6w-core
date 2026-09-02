@@ -1,0 +1,16 @@
+{
+  "name": "@w6w-fixtures/egress",
+  "version": "1.0.0",
+  "description": "Fixture app exercising the egress redirect and pre-sign check battery.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.egress",
+    "displayName": "Egress Fixture",
+    "categories": ["other"],
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "network": { "allow": ["127.0.0.1"] },
+    "entry": "./index.ts"
+  }
+}

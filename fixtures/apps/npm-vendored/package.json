@@ -1,0 +1,15 @@
+{
+  "name": "@w6w-fixtures/npm-vendored",
+  "version": "1.0.0",
+  "description": "A clean fixture app (no vendored deps) pinning the sandbox's cold remote-import denial.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.npm-vendored",
+    "displayName": "Npm Vendored",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts"
+  }
+}
