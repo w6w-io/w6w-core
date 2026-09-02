@@ -85,6 +85,9 @@ interface PackageJson {
   repository?: string | { url?: string };
   author?: string | Author;
   w6w?: W6WPackageMetadata;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
 }
 
 /** Strip an npm scope: `@acme/slack` -> `slack`. */
@@ -169,6 +172,80 @@ function resolveRef(baseDir: string, ref: string): string {
   return isAbsolute(ref) ? ref : resolve(baseDir, ref);
 }
 
+/** True if a `package.json` dependency field is present with at least one entry. */
+function hasDeclaredDeps(deps: Record<string, string> | undefined): boolean {
+  return deps !== undefined && Object.keys(deps).length > 0;
+}
+
+/**
+ * Refuse an app that ships a vendored `node_modules/` tree or declares npm
+ * dependencies. Both are code that never appears in the app's reviewable
+ * source: `node_modules/` resolution is arbitrated by `read`, which is
+ * necessarily scoped to the app's own directory, so a vendored tree gets a
+ * runtime-computed `npm:` specifier to resolve even with `import:false` and
+ * `net:false` both in effect. Refusing unconditionally (no allow-list, no
+ * opt-in) is a deliberate decision — see HITL-1.
+ */
+/**
+ * `node_modules/` is searched at most this many levels below the app root.
+ * 12 is well past any real app's directory depth (`hello`/`sendgrid` are 2-3
+ * levels deep) — it exists only so a pathological tree can't blow the stack
+ * or run unbounded; hitting it without finding `node_modules` is not itself
+ * a refusal.
+ */
+const NODE_MODULES_SEARCH_MAX_DEPTH = 12;
+
+/**
+ * True if a directory literally named `node_modules` exists anywhere under
+ * `dir`, at most `NODE_MODULES_SEARCH_MAX_DEPTH` levels deep. This has to
+ * search the whole app tree, not just the root: `read` is scoped to the
+ * app's whole directory (`read: [opts.readScope]`, `sandbox/run-hook.ts:44`),
+ * so a vendored tree anywhere under the app root sits in the same trust
+ * boundary as one at the root itself — a publisher gains nothing by nesting
+ * it one level down.
+ *
+ * A symlinked directory is never followed (a symlink loop must not hang or
+ * crash the walk — it is treated as a dead end for recursion), but an entry
+ * literally *named* `node_modules` still trips the refusal regardless of its
+ * type, so a symlink can't be used to rename around the check.
+ */
+async function hasVendoredNodeModules(dir: string, depth: number): Promise<boolean> {
+  if (depth > NODE_MODULES_SEARCH_MAX_DEPTH) return false;
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.name === "node_modules") return true;
+      if (entry.isDirectory && !entry.isSymlink) {
+        if (await hasVendoredNodeModules(join(dir, entry.name), depth + 1)) return true;
+      }
+    }
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
+  }
+  return false;
+}
+
+async function assertNoNpmDependencies(root: string, pkg: PackageJson): Promise<void> {
+  if (await hasVendoredNodeModules(root, 0)) {
+    throw new LoadError(
+      "npm_dependencies_forbidden",
+      `App at ${root} ships a vendored \`node_modules/\` directory. A vendored dependency ` +
+        "tree is code that does not appear in the app's reviewable source — remove it.",
+      { dir: root, reason: "node_modules" },
+    );
+  }
+
+  const offendingField = (["dependencies", "devDependencies", "optionalDependencies"] as const)
+    .find((field) => hasDeclaredDeps(pkg[field]));
+  if (offendingField) {
+    throw new LoadError(
+      "npm_dependencies_forbidden",
+      `App at ${root} declares \`${offendingField}\` in package.json. npm dependencies are ` +
+        "code that does not appear in the app's reviewable source — remove them.",
+      { dir: root, reason: offendingField },
+    );
+  }
+}
+
 function computeAllowlist(manifest: AppManifest, auths: LoadedAuth[]): string[] {
   const hosts = new Set<string>(manifest.network?.allow ?? []);
   for (const { auth } of auths) {
@@ -251,6 +328,7 @@ export function healthAllowlist(appAllowlist: string[], check: HealthCheck): str
 export async function loadApp(dir: string): Promise<LoadedApp> {
   const root = resolve(dir);
   const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
+  await assertNoNpmDependencies(root, pkg);
 
   let manifest: AppManifest;
   if (pkg.w6w?.manifest) {
