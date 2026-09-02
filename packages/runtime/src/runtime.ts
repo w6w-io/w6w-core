@@ -124,8 +124,8 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_SAME_HOST_REDIRECTS = 5;
 
 /**
- * Perform a request on the host: enforce the allowlist, then fetch — with
- * `redirect: "manual"`, since "follow" cannot be selected per-host (the
+ * Perform a request on the host: enforce the allowlist, then fetch — in
+ * manual-redirect mode, since "follow" cannot be selected per-host (the
  * option is chosen before the destination is known). Every redirect
  * therefore surfaces here first:
  *   - a redirect to a DIFFERENT hostname is refused outright, with the same
