@@ -207,7 +207,7 @@ action arm's raw Action output is. See [Conformance](#conformance) for the bindi
 |---|---|---|---|
 | `manifestVersion` | string | ✅ | Core spec version. `"2"`, aligned with the [Workflow RFC](./workflow.md). |
 | `id` | string | ✅ | Host-issued opaque id (`fn_…`). Stable across renames **and vendor swaps**. |
-| `key` | string | ✅ | Machine name. Unique per project/tenant. Lowercase, kebab-case. Preserved across a swap. |
+| `key` | string | ✅ | Machine name. Matches `/^[a-z][a-z0-9-]{2,38}/` (lowercase-first, then lowercase letters/digits/hyphens, no `--` anywhere, no trailing `-`; `_` illegal). Unique per `(account, key)`, enforced by a **total** unique index (a Function always has a `key`). Validated against the grammar only on the Function's first save (the row is new); never re-checked on a later save. Lowercase, kebab-case. Preserved across a swap. See [Amendment — 2026-09-02: the `key` field's grammar, uniqueness scope, and validation timing](#amendment--2026-09-02-the-key-fields-grammar-uniqueness-scope-and-validation-timing). |
 | `displayName` | string | ⬜ | Human-facing name (e.g. "Send Email"). Falls back to `key`. |
 | `description` | string | ⬜ | One-line summary. |
 | `inputs` | [`Param`](./param.md)`[]` | ✅ | The **canonical interface**. Reuses the Param RFC verbatim — same types, hooks, validation. Preserved across a swap. |
@@ -491,3 +491,49 @@ type FnImpl = FnActionImpl | FnCallableImpl;
 
 This same shape and order is added to [`Endpoint`](./endpoint.md#field-reference) by the companion
 amendment there, since an Endpoint has the identical no-graph constraint on `reroute`.
+
+## Amendment — 2026-09-02: the `key` field's grammar, uniqueness scope, and validation timing
+
+> This section is **additive** to the [Fn](#fn) field table above; it introduces no breaking
+> change, no new field, and no change to `key`'s requiredness. It replaces the stale "Unique per
+> project/tenant" scope the `key` row (`:210`) carried, with the grammar and validation-timing rules
+> the implementation has always followed but this RFC never wrote down. It is the companion to
+> [Workflow's own `key`
+> amendment](./workflow.md#amendment--2026-09-02-the-workflow-key-field) (D-4): the two RFCs state
+> the same three rules — grammar, `(account, key)` uniqueness, first-assignment-only validation — so
+> a reader of either comes away with the same rule at the same fidelity. The one difference between
+> them is `key`'s **requiredness**, which this amendment does not change: a Function's `key` is
+> required (unchanged, above), because a Function is always addressed by it; a Workflow's `key` is
+> optional, because a Workflow is addressed by neither `name` nor `key`.
+
+**Grammar.** `key` matches `/^[a-z][a-z0-9-]{2,38}/` — a lowercase letter first, lowercase
+letters/digits/hyphens after, 3 to 39 characters — plus two rules the regex alone does not express:
+no `--` anywhere, and no trailing `-`. `_` is deliberately illegal; it is not a legal DNS label
+character. This is the same `isAccountSlug` grammar [Workflow's optional
+`key`](./workflow.md#amendment--2026-09-02-the-workflow-key-field) uses.
+
+**Uniqueness — `(account, key)`, total.** A host MUST enforce uniqueness on `(account, key)`,
+exactly as [Endpoint's `(account, key)` rule](./endpoint.md#an-endpoint-belongs-to-the-account)
+does, and refuse a colliding save as a caller-visible conflict. Because a Function always has a
+`key` — unlike Workflow's optional one — the enforcing index is **total**, not partial: no row is
+ever exempt.
+
+**Validated once, on the Function's first save.** The grammar is checked only when the Function row
+is first created (`!previous` — there is no earlier row to have already validated), never re-checked
+on a later save. A value that is already stored can never be made un-saveable by a later tightening
+of the grammar. This differs in *mechanism*, not in *rule*, from Workflow's own timing: a Function's
+creation and its first `key`-assignment are the same moment (a Function always has a `key`), so
+gating on "the row is new" and gating on "the stored key is null" pick out the identical instant for
+a Function. Workflow needs the null-check specifically because its two moments can differ — `key`
+starts absent and may be assigned later.
+
+### Conformance (additive)
+
+A host that implements this amendment MUST:
+
+- Enforce `key`'s grammar — `/^[a-z][a-z0-9-]{2,38}/`, no `--`, no trailing `-` — only on the
+  Function's first save.
+- Enforce `(account, key)` uniqueness with a **total** unique index, refusing a colliding save as a
+  caller-visible conflict.
+- Never re-validate a stored `key` against the grammar on a later save that does not itself change
+  `key`.
