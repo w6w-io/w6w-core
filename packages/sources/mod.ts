@@ -18,7 +18,9 @@ export {
   githubResolver,
   githubTarballUrl,
   githubToken,
+  isCommitSha,
   parseGithubRef,
+  resolveGithubCommitSha,
 } from "./src/github.ts";
 export type { GithubRef } from "./src/github.ts";
 export {
