@@ -13,10 +13,12 @@ import {
   gitlabArchiveUrl,
   gitlabAuthHeaders,
   gitlabResolver,
+  isCommitSha,
   parseBitbucketRef,
   parseGithubRef,
   parseGitlabRef,
   resolve,
+  resolveGithubCommitSha,
   SourceError,
   splitFragment,
   splitRef,
@@ -198,6 +200,106 @@ Deno.test("githubApiTarballUrl builds the authenticated endpoint", () => {
     githubApiTarballUrl({ owner: "w6w-io", repo: "slack", ref: "v1" }),
     "https://api.github.com/repos/w6w-io/slack/tarball/v1",
   );
+});
+
+// --- resolveGithubCommitSha ---
+
+/** Run `fn` with `globalThis.fetch` replaced, restoring it afterward. */
+async function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
+  const prior = globalThis.fetch;
+  globalThis.fetch = impl;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = prior;
+  }
+}
+
+const FAKE_SHA = "a".repeat(40);
+
+Deno.test("isCommitSha accepts a 40-hex string, rejects everything else", () => {
+  assert(isCommitSha(FAKE_SHA));
+  assert(isCommitSha(FAKE_SHA.toUpperCase()));
+  assert(!isCommitSha("main"));
+  assert(!isCommitSha("a".repeat(39)));
+  assert(!isCommitSha("g".repeat(40))); // not hex
+});
+
+Deno.test("resolveGithubCommitSha returns an already-SHA ref unchanged, no network call", async () => {
+  let calls = 0;
+  await withFetch(
+    () => {
+      calls++;
+      throw new Error("must not fetch for an already-resolved SHA");
+    },
+    async () => {
+      const sha = await resolveGithubCommitSha(
+        { owner: "w6w-io", repo: "slack", ref: FAKE_SHA },
+        {},
+      );
+      assertEquals(sha, FAKE_SHA);
+    },
+  );
+  assertEquals(calls, 0);
+});
+
+Deno.test("resolveGithubCommitSha resolves a branch ref via the GitHub commits API", async () => {
+  let seenUrl = "";
+  let seenAccept: string | null = null;
+  const sha = await withFetch(
+    (input, init) => {
+      seenUrl = String(input);
+      seenAccept = new Headers(init?.headers).get("accept");
+      return Promise.resolve(new Response(FAKE_SHA + "\n", { status: 200 }));
+    },
+    () => resolveGithubCommitSha({ owner: "w6w-io", repo: "resolve-branch", ref: "main" }, {}),
+  );
+  assertEquals(sha, FAKE_SHA);
+  assertEquals(seenUrl, "https://api.github.com/repos/w6w-io/resolve-branch/commits/main");
+  assertEquals(seenAccept, "application/vnd.github.sha");
+});
+
+Deno.test("resolveGithubCommitSha memoizes within its TTL — one fetch for repeated calls", async () => {
+  let calls = 0;
+  await withFetch(
+    () => {
+      calls++;
+      return Promise.resolve(new Response(FAKE_SHA, { status: 200 }));
+    },
+    async () => {
+      const gh = { owner: "w6w-io", repo: "resolve-memo", ref: "main" };
+      const first = await resolveGithubCommitSha(gh, {});
+      const second = await resolveGithubCommitSha(gh, {});
+      assertEquals(first, FAKE_SHA);
+      assertEquals(second, FAKE_SHA);
+    },
+  );
+  assertEquals(calls, 1);
+});
+
+Deno.test("resolveGithubCommitSha throws fetch_failed on a non-ok response", async () => {
+  const err = await withFetch(
+    () => Promise.resolve(new Response("not found", { status: 404 })),
+    () =>
+      assertRejects(
+        () => resolveGithubCommitSha({ owner: "w6w-io", repo: "resolve-404", ref: "gone" }, {}),
+        SourceError,
+      ),
+  );
+  assertEquals(err.code, "fetch_failed");
+});
+
+Deno.test("resolveGithubCommitSha throws fetch_failed on a non-SHA body", async () => {
+  const err = await withFetch(
+    () => Promise.resolve(new Response("<html>not a sha</html>", { status: 200 })),
+    () =>
+      assertRejects(
+        () =>
+          resolveGithubCommitSha({ owner: "w6w-io", repo: "resolve-bad-body", ref: "weird" }, {}),
+        SourceError,
+      ),
+  );
+  assertEquals(err.code, "fetch_failed");
 });
 
 // --- GitLab ---
