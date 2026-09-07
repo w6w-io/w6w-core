@@ -74,12 +74,12 @@ export async function resolveViaTarball(
   const cacheDir = resolvePath(opts.cacheDir ?? defaultCacheDir());
   const dest = join(cacheDir, ...src.cacheKey.map((s) => s.replace(/[^\w.-]/g, "_")));
 
-  if (!opts.force) {
+  if (opts.force) {
+    await Deno.remove(dest, { recursive: true }).catch(() => {});
+  } else {
     try {
       if ((await Deno.stat(dest)).isDirectory) return applySubpath(dest, src.subpath);
     } catch { /* not cached yet */ }
-  } else {
-    await Deno.remove(dest, { recursive: true }).catch(() => {});
   }
 
   const res = await fetch(src.url, { headers: src.headers });
@@ -87,12 +87,34 @@ export async function resolveViaTarball(
     const who = src.label ?? "source";
     throw new SourceError("fetch_failed", `${who} fetch failed (${res.status}): ${src.url}`);
   }
-  await Deno.mkdir(dest, { recursive: true });
+
+  // Extract into a private staging dir and only rename it into place as
+  // `dest` once fully populated — never extract into `dest` directly. Two
+  // concurrent resolves sharing the same cacheKey are the COMMON case (every
+  // app in a pack shares one repo+ref), and `Deno.mkdir(dest)` followed by a
+  // slow streaming extract used to make `dest` exist the instant extraction
+  // STARTED — so a concurrent caller's cache-hit check above would read a
+  // still-being-written directory as a complete hit and 404 looking for its
+  // own subpath inside it. Renaming a fully-extracted staging dir into place
+  // is atomic, so `dest` only ever appears once its content is real.
+  const staging = `${dest}.tmp-${crypto.randomUUID()}`;
+  await Deno.mkdir(staging, { recursive: true });
   try {
-    await extractStripped(res.body, dest);
+    await extractStripped(res.body, staging);
   } catch (e) {
-    await Deno.remove(dest, { recursive: true }).catch(() => {});
+    await Deno.remove(staging, { recursive: true }).catch(() => {});
     throw e;
+  }
+
+  try {
+    await Deno.rename(staging, dest);
+  } catch (renameErr) {
+    // Another resolve for the same cacheKey won the race and already
+    // populated `dest` first — a fine outcome, use its copy and drop ours.
+    // Anything else (permissions, disk full, …) is a real failure: surface it.
+    const destIsDir = await Deno.stat(dest).then((s) => s.isDirectory).catch(() => false);
+    await Deno.remove(staging, { recursive: true }).catch(() => {});
+    if (!destIsDir) throw renameErr;
   }
   return applySubpath(dest, src.subpath);
 }

@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@^1.0.0";
-import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
+import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.0.0";
 import {
   applySubpath,
   bitbucketAuthHeaders,
@@ -19,10 +19,12 @@ import {
   parseGitlabRef,
   resolve,
   resolveGithubCommitSha,
+  resolveViaTarball,
   SourceError,
   splitFragment,
   splitRef,
 } from "../mod.ts";
+import { TarStream, type TarStreamInput } from "jsr:@std/tar@^0.1";
 
 /** Run `fn` with the given env vars set, restoring prior values afterward. */
 function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
@@ -300,6 +302,190 @@ Deno.test("resolveGithubCommitSha throws fetch_failed on a non-SHA body", async 
       ),
   );
   assertEquals(err.code, "fetch_failed");
+});
+
+// --- resolveViaTarball ---
+
+/** Build a gzip'd tar body, top-level-prefixed like GitHub's tarballs, from `{path: content}`. */
+function buildTarball(
+  prefix: string,
+  files: Record<string, string>,
+): ReadableStream<Uint8Array> {
+  const enc = new TextEncoder();
+  const inputs: TarStreamInput[] = Object.entries(files).map(([path, content]) => {
+    const bytes = enc.encode(content);
+    return {
+      type: "file",
+      path: `${prefix}/${path}`,
+      size: bytes.length,
+      readable: ReadableStream.from([bytes]),
+    };
+  });
+  return ReadableStream.from(inputs)
+    .pipeThrough(new TarStream())
+    .pipeThrough(new CompressionStream("gzip"));
+}
+
+Deno.test("resolveViaTarball: cold cache fetches + extracts; warm cache skips the fetch", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    let fetches = 0;
+    const dir = await withFetch(
+      () => {
+        fetches++;
+        return Promise.resolve(
+          new Response(buildTarball("repo-main", { "hello.txt": "hi" }), { status: 200 }),
+        );
+      },
+      () =>
+        resolveViaTarball(
+          { cacheKey: ["t", "cold-warm"], url: "https://example.test/t.tar.gz" },
+          { cacheDir: tmp },
+        ),
+    );
+    assertEquals(await Deno.readTextFile(join(dir, "hello.txt")), "hi");
+    assertEquals(fetches, 1);
+
+    // Second resolve, same key: cache hit, no fetch.
+    const dir2 = await withFetch(
+      () => {
+        throw new Error("must not fetch on a warm cache");
+      },
+      () =>
+        resolveViaTarball(
+          { cacheKey: ["t", "cold-warm"], url: "https://example.test/t.tar.gz" },
+          { cacheDir: tmp },
+        ),
+    );
+    assertEquals(dir2, dir);
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+/** Wrap a stream so it yields nothing until `gate` resolves, then passes everything through. */
+function stallUntil<T>(stream: ReadableStream<T>, gate: Promise<void>): ReadableStream<T> {
+  const reader = stream.getReader();
+  return new ReadableStream<T>({
+    async start(controller) {
+      await gate;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        controller.enqueue(value);
+      }
+      controller.close();
+    },
+  });
+}
+
+Deno.test("resolveViaTarball: `dest` never exists half-populated (regression for the mkdir-then-extract race)", async () => {
+  // The bug: the old code did `Deno.mkdir(dest)` THEN awaited extraction —
+  // making `dest` exist, empty, for the whole extraction window. A concurrent
+  // resolve's cache-hit check (`Deno.stat(dest).isDirectory`) read that as a
+  // complete hit and 404'd looking for its own subpath inside it. This stalls
+  // the response body mid-flight to hold a resolve inside that window and
+  // asserts `dest` is invisible for the whole time — proven by extracting
+  // into a staging dir and only renaming it into place once fully populated.
+  const tmp = await Deno.makeTempDir();
+  try {
+    const dest = join(tmp, "t", "stall");
+    let openGate = () => {};
+    const gate = new Promise<void>((r) => (openGate = r));
+
+    const resolvePromise = withFetch(
+      () =>
+        Promise.resolve(
+          new Response(
+            stallUntil(buildTarball("repo-main", { "index.ts": "x" }), gate),
+            { status: 200 },
+          ),
+        ),
+      () =>
+        resolveViaTarball(
+          { cacheKey: ["t", "stall"], url: "https://example.test/t.tar.gz" },
+          { cacheDir: tmp },
+        ),
+    );
+
+    // Give resolveViaTarball time to get past the fetch and into extraction —
+    // the gate is still closed, so it's stalled mid-flight right now.
+    await new Promise((r) => setTimeout(r, 20));
+    const midFlight = await Deno.stat(dest).then((s) => s.isDirectory).catch(() => false);
+    assertEquals(midFlight, false, "dest must not exist until extraction is fully done");
+
+    openGate();
+    const dir = await resolvePromise;
+    assertEquals(await Deno.readTextFile(join(dir, "index.ts")), "x");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: concurrent cold resolves for the SAME key all land on real content", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const paths = ["apps/alpha/index.ts", "apps/bravo/index.ts", "apps/charlie/index.ts"];
+    const files = Object.fromEntries(paths.map((p) => [p, p]));
+
+    const results = await withFetch(
+      () => Promise.resolve(new Response(buildTarball("repo-main", files), { status: 200 })),
+      () =>
+        Promise.all(
+          paths.map((p) =>
+            resolveViaTarball(
+              {
+                cacheKey: ["t", "concurrent"],
+                url: "https://example.test/t.tar.gz",
+                subpath: dirname(p),
+              },
+              { cacheDir: tmp },
+            )
+          ),
+        ),
+    );
+
+    for (const [i, p] of paths.entries()) {
+      const file = join(results[i], "index.ts");
+      assertEquals(await Deno.readTextFile(file), p);
+    }
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: force removes the old cache before re-fetching", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const dir = await withFetch(
+      () =>
+        Promise.resolve(
+          new Response(buildTarball("repo-main", { "v.txt": "old" }), { status: 200 }),
+        ),
+      () =>
+        resolveViaTarball(
+          { cacheKey: ["t", "force"], url: "https://example.test/t.tar.gz" },
+          { cacheDir: tmp },
+        ),
+    );
+    assertEquals(await Deno.readTextFile(join(dir, "v.txt")), "old");
+
+    const dir2 = await withFetch(
+      () =>
+        Promise.resolve(
+          new Response(buildTarball("repo-main", { "v.txt": "new" }), { status: 200 }),
+        ),
+      () =>
+        resolveViaTarball(
+          { cacheKey: ["t", "force"], url: "https://example.test/t.tar.gz" },
+          { cacheDir: tmp, force: true },
+        ),
+    );
+    assertEquals(dir2, dir);
+    assertEquals(await Deno.readTextFile(join(dir2, "v.txt")), "new");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
 });
 
 // --- GitLab ---
