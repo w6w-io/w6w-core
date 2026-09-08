@@ -809,3 +809,108 @@ arm, [Dispatch and the result envelope](#dispatch-and-the-result-envelope), the 
 model, and every other field in the [Field reference](#field-reference) table above. No field is
 removed, no field retyped, and an Endpoint with no `retry`/`onError`/`reroute` behaves exactly as it
 did before this amendment.
+
+## Amendment — 2026-09-08: `enabled`, an independent, caller-settable invocability term
+
+> This section is the reconciling authority over five passages, plus one closing paragraph of
+> [Amendment — 2026-08-14b](#amendment--2026-08-14b-explicit-completion-status-and-a-draft-answers-404),
+> that together read as if `status` and `target` are the whole invocability predicate. **`enabled`
+> is a new, independent, caller-settable boolean**, ANDed alongside `status` and `target` — no
+> existing field's vocabulary, derivation, or wire placement changes.
+>
+> - The [Field reference](#field-reference) `target` row (`:187`) is **extended, not superseded**:
+>   an absent `target` still means a draft, and a present `target` is still not sufficient on its
+>   own to make an Endpoint invocable — now for a second, independent reason.
+> - The status table's [`draft` | not invocable](#status-is-host-state-and-the-vocabulary-is-closed)
+>   row is **unchanged**: `status` still has exactly two values, still derived solely from `target`,
+>   and `enabled` plays no part in its derivation.
+> - [The disagreement rule](#the-disagreement-rule--status-and-target-refusal-wins) is **extended to
+>   a third AND term** — see [The disagreement rule, extended to `enabled`](#the-disagreement-rule-extended-to-enabled)
+>   below. This is the load-bearing change.
+> - ["A draft is **not invocable**"](#what-still-governs-restated-as-this-sections-own-rules) is
+>   **unchanged**: `target`'s absence still refuses regardless of `enabled`.
+> - [Amendment — 2026-08-14b](#amendment--2026-08-14b-explicit-completion-status-and-a-draft-answers-404)'s
+>   closing paragraph makes two claims. *"Every rule governing an Endpoint whose `status` is
+>   `ready`"* is **narrowed by this section**: a `ready` Endpoint with a `target` present and
+>   `enabled: false` is not invocable. *"Every Endpoint that was invocable before this amendment
+>   [2026-08-14b] is invocable after it"* is a historical statement about that amendment's own
+>   before/after, not about this one, and it **stands unedited** — this section reaches only
+>   invocability from 2026-09-08 forward.
+>
+> Where any of the passages above and this section disagree, this section governs. Every other
+> amendment, and every other passage of this RFC, stands unedited — see **Unchanged by this
+> amendment** below.
+
+### `enabled`: an independent, caller-settable third term
+
+An Endpoint gains **`enabled`**, a boolean the caller sets directly, independent of `status` and
+`target`. `status` is a structural fact the host computes from `target`; `enabled` is caller
+**intent** — an operator's own decision to arm or disable an otherwise-complete Endpoint without
+touching its `target` or losing its `(account, key)` binding. The two answer different questions
+and can legitimately disagree: a `ready` Endpoint (valid `target`) can still be `enabled: false`,
+and a `draft` Endpoint (no `target`) can still carry `enabled: true` with nothing yet to gate.
+
+**Placement.** `enabled` is a **column beside the stored Endpoint** the host keeps, exactly where
+[Field reference](#field-reference) already puts `status` — *"`status` lives beside the stored
+Endpoint the host keeps, not inside the shape a caller writes"*
+([Amendment — 2026-08-14b](#status-is-host-state-and-the-vocabulary-is-closed)). It is therefore
+**not** a member of the wire shape this RFC's [Shape](#shape) illustrates, and the
+[Field reference](#field-reference) `#### Endpoint` table gains no new row for it, for the identical
+reason `status` gained none. Unlike `status`, `enabled` **is** caller-settable — but it is set
+through that stored column, not through a key in the create/update payload.
+
+**Default.** An Endpoint that has never been written with an explicit `enabled` is **`true`**. A
+host MUST NOT silently withhold dispatch from an Endpoint whose owner never expressed an opinion:
+every Endpoint that predates this amendment, and every Endpoint created without an explicit
+`enabled`, keeps exactly the invocability it already had.
+
+### `status` stays closed; `enabled` is a separate field
+
+[Amendment — 2026-08-14b](#status-is-host-state-and-the-vocabulary-is-closed) already closed
+`status` to exactly `draft` | `ready`, host-derived from `target` alone, and this amendment does not
+reopen that set. `enabled` is **not** a third `status` value. `status` answers a structural
+question — "does this Endpoint have a valid `target`?" — that the host alone computes and a caller
+cannot influence; `enabled` answers an intent question — "does the owner want this Endpoint to run
+right now?" — that only the caller can answer. Folding `enabled` into `status` would force one field
+to carry two facts that change independently and can legitimately disagree, exactly the drift
+[Amendment — 2026-08-14b](#status-is-host-state-and-the-vocabulary-is-closed) already reasoned about
+for `status` and `target` themselves. Keeping `enabled` a separate field is what lets it vary on its
+own axis without a write to one clobbering the other's fact.
+
+### The disagreement rule, extended to `enabled`
+
+[The disagreement rule](#the-disagreement-rule--status-and-target-refusal-wins) already established
+that drift between `status` and `target` can only ever **withhold** a dispatch, never **authorise**
+one. `enabled` joins as a third term under the identical argument, carried forward rather than
+merely asserted to compose: a caller-set `enabled: false` withholds dispatch outright regardless of
+`status`/`target`, and no combination of the three values can ever authorise a dispatch the other
+two would refuse — an added AND term can only shrink the set of Endpoints that pass, never grow it.
+
+> An Endpoint is invocable **iff** `status` is exactly `ready` **and** `target` is present **and**
+> `enabled` is `true`. Where any of the three disagree — in any direction — the Endpoint is **not**
+> invocable, and the host answers the same 404 it answers for any other non-invocable Endpoint.
+
+### The refusal is `404`, consistent with the existing rule
+
+A disabled Endpoint (`enabled: false`) refuses exactly as a `draft`, or a `status`/`target`
+mismatch, already does: **404**, at every address form
+[Amendment — 2026-08-14b](#the-refusal-is-404-not-422-and-still-never-a-5xx) already enumerates —
+`POST /endpoints/:id/invoke` ([Exposure](#exposure)),
+`POST <PUBLIC_BASE_URL>/invoke/<urn>` ([the universal invoke URL](#one-url-for-everything-runnable)),
+and `POST <TENANT_DOMAIN>/invoke/{account_slug}/{key}`
+([the account-key address](#two-address-forms-and-which-of-them-is-stable)) — never a 5xx. Both of
+that section's body rules carry forward unedited: on the `{account_slug}/{key}` address, the
+refusal MUST be **the same generic, byte-identical body every other miss on that address already
+returns** ([The host may narrow, never widen](#the-host-may-narrow-never-widen)) — a disabled
+Endpoint joins the same undifferentiated set as an unknown slug, an unknown key, or a draft; on the
+opaque id/URN forms, the body MAY name the condition (e.g. `endpoint_disabled`).
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the [Callable](#callable) union
+and the `action` target arm; `retry`/`onError`/`reroute`; the inbound `security` model;
+`(account, key)` uniqueness and `key` immutability; the URN and account-key address forms and their
+stability; the exposure fence (HITL-1); `status`'s closed two-value vocabulary and its derivation
+from `target` alone — `enabled` plays no part in computing `status`; every rule governing a draft
+Endpoint (`target` absent), which stays non-invocable regardless of `enabled`; and every Endpoint
+written without an explicit `enabled`, which keeps its prior invocability under the default of
+`true`. No field is removed, no field retyped, and the [Field reference](#field-reference) table
+gains no new row.
