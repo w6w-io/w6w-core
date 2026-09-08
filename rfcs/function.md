@@ -233,6 +233,11 @@ action arm's raw Action output is. See [Conformance](#conformance) for the bindi
 > storage-time constraint. A host may persist a FnImpl (and a Function containing it) as an
 > incomplete draft, e.g. with `uses.app`/`uses.action` unset. A separate computed validity signal
 > or a publish/invoke-time gate is what enforces runnability, not storage rejection.
+> This RFC deliberately defines **no normative lifecycle or publish field** for a Function. A
+> host's own publish/enable gate — whatever it uses to decide a stored Function may be invoked — is
+> **host state kept outside this manifest**: this document does not name it, type it, or reserve a
+> storage slot for it. `manifestVersion` is unaffected — it versions the interface this RFC defines,
+> not a host's own operational state.
 
 ## Adapter
 
