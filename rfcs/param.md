@@ -332,3 +332,39 @@ Circular dependencies are rejected at manifest load time.
 | Grouping / sections / tabs | **Resolved.** Added `type: "section"` (`section: "collapsible"` disclosure / `section: "group"` row/stack layout) as a layout-only container — its children's values stay flat in the enclosing form. See [Sections](#sections). Tabs still deferred. |
 | i18n on Param | **Deferred to the enclosing manifest's `localizations` block.** No per-Param locale object — avoids double-sourcing translations. |
 | `repeat` vs nested schema | Added a `group` type that takes a nested `Param[]` via `children`. Lists of structured items use `type: "group", repeat: true`. |
+
+## Amendment: rendering a `group`, `repeat` as `array` sugar, and `showIf` scoping
+
+> This section touches `repeat`'s five existing mentions at lines 40, 161, 241, 248, and 334 above
+> (produced by `grep -n 'repeat' rfcs/param.md`) — reinterpreting how a `group`/`repeat` param
+> renders and relates to `type: "array"`, not contradicting any of them.
+
+A host implementing the reference renderer (`@w6w/ui`'s `ParamsForm`) settled four rendering
+questions this RFC left open. They are recorded here so a second implementation matches:
+
+1. **A non-repeat `group` renders as a bare stacked container, not a titled box.** Unlike a
+   `section: "collapsible"` disclosure (a bordered `<details>` with a toggle), a `group`'s heading
+   (`label`, falling back to `key`) is plain text above its stacked children — no border, no
+   `<details>`, and no new `collapsed`/`title` field on `Param` (a `group` has neither; those stay
+   `section`-only, per the [Field reference](#field-reference) table above).
+2. **`showIf` inside a group's `children` resolves group-local siblings first, then the enclosing
+   form.** This is the same rule already stated above (line 256) for `dependsOn` — "references to
+   params outside the group are resolved against the enclosing form" — extended here to `showIf`:
+   a child's `showIf.field` is looked up among the group's own (flattened) `children` first; only a
+   key the group does not declare falls back to the enclosing form's values/defaults.
+3. **`repeat: true` is sugar for `type: "array"` with a synthesized `item`.** Both spellings stay
+   valid — `repeat: true` is not deprecated — but `type: "array"` with an explicit `item` is
+   preferred for new apps, since it names its element shape instead of leaving the renderer to infer
+   one from `type`/`children`. `packages/apps/apps/mailgun/actions/message-send.ts`'s
+   `customHeaders` field is the shipped precedent: it migrated from a two-field `repeat: true` group
+   to `type: "array"` with `item: { type: "object", fields: [...] }`, with a comment recording why.
+4. **A `group`'s `repeat` rows carry scalar children only** (`string`, `text`, `number`, `boolean`,
+   `select`) — no nested `group`/`section` child, and no `secret` child (a `secret` rendered as a
+   plain repeat-row cell would show its value unmasked). A group whose `children` don't fit this
+   ceiling still declares `repeat: true` validly; a renderer that can't fit them into its own
+   list-row control falls back to whatever it uses for an unstructured `group`/`json` value (the
+   reference renderer's JSON editor) rather than rendering the row incompletely or unsafely.
+
+The rest of this RFC — including the five `repeat` lines noted above — stands unedited; this
+amendment only makes explicit how a `group`/`repeat` param renders and scopes, on top of what
+[Groups](#groups) and the [Field reference](#field-reference) already specify.
