@@ -914,3 +914,86 @@ Endpoint (`target` absent), which stays non-invocable regardless of `enabled`; a
 written without an explicit `enabled`, which keeps its prior invocability under the default of
 `true`. No field is removed, no field retyped, and the [Field reference](#field-reference) table
 gains no new row.
+
+## Amendment — 2026-09-08b: `status`, extended to a stored version under dispatch
+
+> This section is the reconciling authority over five passages that together state the live
+> invocability rule, extended here to define what `status` means when the definition under dispatch
+> is a **stored past version** of an Endpoint rather than its live row:
+>
+> - The [Field reference](#field-reference) `target` row (`:187`) is **unchanged**: a version's own
+>   `target` is read the identical way, and its presence or absence is what a draft/complete
+>   distinction turns on for that version exactly as it does for the live row.
+> - The status table's [`draft` \| not invocable](#status-is-host-state-and-the-vocabulary-is-closed)
+>   row is **unchanged**: `status` still has exactly two values, and it is still derived from
+>   `target` alone.
+> - [Amendment — 2026-08-14b's disagreement
+>   rule](#the-disagreement-rule--status-and-target-refusal-wins) is **extended**: for a stored
+>   version under dispatch, the rule's `status` term is satisfied by that version's own
+>   structurally-derived completeness rather than by the live parent row's stored `status` value.
+>   This is the load-bearing change.
+> - ["A draft is **not invocable**"](#what-still-governs-restated-as-this-sections-own-rules) is
+>   **unchanged**: a version whose own `target` is absent is a draft under the identical rule, and
+>   still refuses.
+> - [Amendment — 2026-09-08's three-term
+>   restatement](#the-disagreement-rule-extended-to-enabled) is **extended by the same clause**: its
+>   `status` term reads the same way for a stored version as for the live row; its `enabled` term is
+>   untouched, because `enabled` continues to be read from the live Endpoint, never from a version.
+>
+> Where any of the five and this section disagree, this section governs. Every other passage of this
+> RFC stands unedited — see **Unchanged by this amendment** below.
+
+### A stored version has no `status` of its own
+
+[Amendment — 2026-08-14b](#status-is-host-state-and-the-vocabulary-is-closed) defines `status` as
+host state, derived from the live Endpoint's own `target` on every write. A host MAY, at its own
+discretion, keep a record of an Endpoint's **past** definitions, so that a caller can dispatch a
+specific stored version rather than whatever the live row currently holds. Read literally, the
+invocability rule stated so far is a predicate over the live row alone, and it says nothing about
+what `status` means for a version that is not that row. This section closes that gap. It does not add
+a new `status` value, and a stored version does not gain a `status` field of its own.
+
+### The identical derivation, applied to the version's own `target`
+
+When a host dispatches a **stored version** rather than the live definition, the `status` term of the
+invocability rule is satisfied by applying the **identical derivation** `status` is itself computed
+by — `target` present ⇒ complete, `target` absent ⇒ draft — to **that version's own stored `target`**,
+never to the live row's `status` column. The live row's `status` describes the live row's own current
+draft state; it has no bearing on a version that is not the live definition, and a host MUST NOT
+substitute it for the version's own derived state.
+
+> An Endpoint version is invocable **iff** that version's own `target` is present **and** the
+> Endpoint's `enabled` is `true`. The `status` term of the live rule is satisfied by the same
+> structural derivation `status` itself is computed by, applied to that version's own `target` —
+> never by the live row's stored `status`, which describes the current draft and not the version
+> under dispatch.
+
+### Why the two cannot disagree
+
+This is not a second rule that might drift from the first. The live `status` and a stored version's
+derived completeness are two evaluations of the **same predicate** (`target` present ⇒ complete) over
+the same field (`target`), read from two different rows. Neither value is ever written directly —
+both are computed, on demand, from a `target` that already exists — so there is no independently
+stored signal for either to drift against. This is a narrower case than
+[Amendment — 2026-08-14b's disagreement
+rule](#the-disagreement-rule--status-and-target-refusal-wins), which reasons about two genuinely
+independent stored values (`status` and `target`) and shows their drift is safely bounded to
+withhold-only; here there is a single predicate over a single field, so there is no second, drifting
+value to bound in the first place — the same reasoning this RFC already relies on, carried one step
+further rather than merely asserted.
+
+### What this amendment does not define
+
+Where and how a host stores a past version of an Endpoint's definition is host bookkeeping this RFC
+leaves open, exactly as it already leaves open where `status` (`:700-701`) and `enabled`
+(`:854-859`) themselves are stored.
+
+**Unchanged by this amendment.** `status`'s closed two-value vocabulary and its derivation from
+`target` alone; the live Endpoint's three-term invocability rule (`status` exactly `ready` **and**
+`target` present **and** `enabled` `true`) and the fact that a draft — a definition whose `target` is
+absent — remains not invocable; the 404 refusal and every address form it applies at; the
+[Callable](#callable) union and its two arms; `(account, key)` uniqueness and `key` immutability; the
+exposure fence (HITL-1); and the [Field reference](#field-reference) table, which gains no new row.
+No field is removed, no field retyped, and every Endpoint whose live definition was invocable before
+this amendment remains invocable after it, under an unchanged rule; this section only extends what
+`status` means when the definition under dispatch is a stored version rather than the live row.
