@@ -997,3 +997,113 @@ exposure fence (HITL-1); and the [Field reference](#field-reference) table, whic
 No field is removed, no field retyped, and every Endpoint whose live definition was invocable before
 this amendment remains invocable after it, under an unchanged rule; this section only extends what
 `status` means when the definition under dispatch is a stored version rather than the live row.
+
+## Amendment — 2026-09-11: publish state, a fourth, independent invocability term
+
+> This section is the reconciling authority over the three normative invocability sentences (each
+> marked, in this RFC's own convention, with a bolded "iff") found by grepping for that mark, plus
+> one closing paragraph that restates one of them:
+>
+> - [The disagreement rule — `status` and `target`, refusal
+>   wins](#the-disagreement-rule--status-and-target-refusal-wins)'s own invocability sentence (`:706`)
+>   is **already superseded** — by [Amendment — 2026-09-08](#amendment--2026-09-08-enabled-an-independent-caller-settable-invocability-term)'s
+>   three-term restatement below, not by this section — and is named here only so the enumeration is
+>   complete, per this section's own citation discipline.
+> - [The disagreement rule, extended to
+>   `enabled`](#the-disagreement-rule-extended-to-enabled)'s three-term invocability sentence (`:889`)
+>   is **superseded on its own terms**: restated below with a FOURTH AND term. This is the
+>   load-bearing change.
+> - [A stored version's own invocability sentence](#the-identical-derivation-applied-to-the-versions-own-target)
+>   (`:965`) is **unchanged**. A specific stored version, addressed by its own version number, is
+>   dispatched by naming an exact snapshot directly — that is what pinning a version means — and its
+>   invocability already turns solely on that version's own `target`, never on the live row's `status`
+>   column ([Amendment — 2026-09-08b](#amendment--2026-09-08b-status-extended-to-a-stored-version-under-dispatch)).
+>   Publish state is read from the live row exactly as `enabled` is (below), so a version-pinned
+>   dispatch is exempt from it for the identical reason it is already exempt from the live `status`
+>   column: it is not consulting the live row's derived facts at all.
+> - [Amendment — 2026-09-08b](#amendment--2026-09-08b-status-extended-to-a-stored-version-under-dispatch)'s
+>   own closing paragraph restates the **three**-term rule (`status` exactly `ready` **and** `target`
+>   present **and** `enabled` `true`) as what "every Endpoint whose live definition was invocable
+>   before this amendment" means. That is a historical statement about *that* amendment's own
+>   before/after, exactly as [Amendment — 2026-09-08](#amendment--2026-09-08-enabled-an-independent-caller-settable-invocability-term)
+>   already treated [Amendment — 2026-08-14b](#amendment--2026-08-14b-explicit-completion-status-and-a-draft-answers-404)'s
+>   own closing paragraph — it **stands unedited**; this section reaches only invocability from
+>   2026-09-11 forward.
+>
+> Where any of the passages above and this section disagree, this section governs. Every other
+> amendment, and every other passage of this RFC, stands unedited — see **Unchanged by this
+> amendment** below.
+
+### Publish state: a fourth, independent invocability term
+
+An Endpoint that has **never been published** is not invocable through the unversioned invoke path,
+independent of `status`, `target`, and `enabled`. "Published" is not a field this RFC defines,
+types, or reserves a storage slot for — it is **host state**, in the identical posture
+[`function.md`](./function.md#fnimpl)'s own note takes for a Function's publish/enable gate: *"This
+RFC deliberately defines no normative lifecycle or publish field… A host's own publish/enable gate…
+is host state kept outside this manifest: this document does not name it, type it, or reserve a
+storage slot for it."* This section departs from that posture in exactly one respect — it **names**
+the state and states its invocability effect, because (unlike a Function or a Workflow) an
+Endpoint's publish state is being given a normative invocability rule here, exactly as `status` and
+`enabled` already are. It does **not** depart from it in the other two: publish state gains no row
+in the [Field reference](#field-reference) table, is never accepted from a caller's create/update
+payload, and this RFC reserves it no wire shape of its own — a host is free to keep it however it
+already keeps `status` and `enabled` (a column, a side table, a computed view).
+
+A concrete example of the state this section is about: a host that lets a caller build and iterate on
+an Endpoint's `target` in draft, then explicitly **publish** a reviewed snapshot before it becomes
+externally callable — exactly the same publish/version affordance
+[Amendment — 2026-09-08b](#amendment--2026-09-08b-status-extended-to-a-stored-version-under-dispatch)
+already assumes exists (it is what a "stored version" *is*). Before the first publish, no such
+snapshot exists yet.
+
+### The disagreement rule, extended to publish state
+
+[The disagreement rule](#the-disagreement-rule--status-and-target-refusal-wins) and
+[its extension to `enabled`](#the-disagreement-rule-extended-to-enabled) both already establish that
+an added AND term can only **withhold** a dispatch, never **authorise** one. Publish state joins as a
+FOURTH term under the identical argument, carried forward rather than merely asserted to compose: a
+live Endpoint that has never been published withholds dispatch outright regardless of `status`,
+`target`, or `enabled`, and no combination of the four values can ever authorise a dispatch the other
+three would refuse.
+
+> An Endpoint is invocable through the unversioned invoke path **iff** `status` is exactly `ready`
+> **and** `target` is present **and** `enabled` is `true` **and** the Endpoint has been published at
+> least once. Where any of the four disagree — in any direction — the Endpoint is **not** invocable,
+> and the host answers the same 404 it answers for any other non-invocable Endpoint.
+
+A host MAY offer a caller-declared bypass of this one term specifically (an explicit "run the live,
+unpublished definition anyway" affordance) — this RFC neither requires nor forbids one, the same way
+it is silent on whether a host offers any other operator override. Where a host does not offer one,
+the rule above is unconditional.
+
+### The refusal is `404`, consistent with the existing rule
+
+A live Endpoint that has never been published refuses exactly as a `draft`, a `status`/`target`
+mismatch, or `enabled: false` already do: **404**, at every address form
+[Amendment — 2026-08-14b](#the-refusal-is-404-not-422-and-still-never-a-5xx) already enumerates —
+`POST /endpoints/:id/invoke` ([Exposure](#exposure)),
+`POST <PUBLIC_BASE_URL>/invoke/<urn>` ([the universal invoke URL](#one-url-for-everything-runnable)),
+and `POST <TENANT_DOMAIN>/invoke/{account_slug}/{key}`
+([the account-key address](#two-address-forms-and-which-of-them-is-stable)) — never a 5xx. Both of
+that section's body rules carry forward unedited: on the `{account_slug}/{key}` address, the refusal
+MUST be **the same generic, byte-identical body every other miss on that address already returns**
+([The host may narrow, never widen](#the-host-may-narrow-never-widen)) — a never-published Endpoint
+joins the same undifferentiated set as an unknown slug, an unknown key, a draft, or a disabled
+Endpoint, for the identical reason: this address is short and human-guessable, and a distinguishable
+body would disclose that a real Endpoint sits behind it. On the opaque id/URN forms, the body MAY
+name the condition (e.g. `endpoint_not_published`).
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the [Callable](#callable) union and
+the `action` target arm; `retry`/`onError`/`reroute`; the inbound `security` model; `(account, key)`
+uniqueness and `key` immutability; the URN and account-key address forms and their stability; the
+exposure fence (HITL-1); `status`'s closed two-value vocabulary and its derivation from `target`
+alone; `enabled`'s default and independence from `status`; a stored version's own invocability rule
+(`:965`, unchanged per the blockquote above) and everything
+[Amendment — 2026-09-08b](#amendment--2026-09-08b-status-extended-to-a-stored-version-under-dispatch)
+establishes about it; and every Endpoint written before this amendment existed, which keeps exactly
+the invocability its `status`/`target`/`enabled` already gave it **if and only if** it has also been
+published — a host introducing this gate for the first time is expected to treat "already published"
+the same way it already treats any other pre-existing state, not to retroactively strand every
+Endpoint that predates the concept. No field is removed, no field retyped, and the
+[Field reference](#field-reference) table gains no new row.
