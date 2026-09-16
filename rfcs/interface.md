@@ -471,3 +471,83 @@ not this Interface's; see T1.1.1 for the one shipped consumer's handling.
 maps `url` to GitHub's own `html_url` for free, because `list` and `get` both bind `file-get` with no
 output field-mapping declared — the raw vendor object, `html_url` included, already passes through
 unmapped.
+
+## Amendment — 2026-09-16: branch-aware `put`/`delete`, commit URLs, and two optional VCS methods on blob-store@1 (DEC-1)
+
+> This section is **additive** to `blob-store@1`'s worked example above; it introduces no breaking
+> change. It adds one optional input (`branch`) and one optional output (`commitUrl`) to `put` and
+> `delete`, and it adds two new, entirely **optional** methods, `createRef` and `openPullRequest`.
+> Grepping every passage in this file that mentions `expectedSha` (`grep -n "expectedSha" rfcs/interface.md`)
+> finds exactly seven hits: `:170`, `:171`, `:175`, `:198`, `:203`, `:381`,
+> `:384`. This amendment supersedes two of them — `:170` (`put`'s canonical shape) and `:171`
+> (`delete`'s canonical shape), both restated below with `branch?` and `commitUrl?` added. The other
+> five stand unchanged in meaning: `:175`, `:381`, `:384` still hold — `delete` still requires
+> `expectedSha` unconditionally, unaffected by the new optional `branch` — and `:198`/`:203`'s
+> `expectedSha` → `sha` mapping is untouched; those two entries only *gain* a `branch` key, they do
+> not lose or rename anything they already had. The worked example's methods block (`:167-171`) and
+> `io.w6w.github`'s conformance block (`:183-208`) are **not edited** by this amendment — it is
+> insertions-only — but for `put` and `delete` this section **supersedes** them: a reader who lands
+> at `:170`-`:171`, or at `io.w6w.github`'s unedited `put`/`delete` conformance entries at
+> `:195-205`, should treat both as superseded by the shapes and deltas below. Apart from the two
+> passages just enumerated (`:170`, `:171`) and the conformance deltas named in the closing section
+> below, the rest of the document — including all five other `expectedSha` hits — stands unedited.
+
+`put` and `delete`'s canonical shapes become:
+
+```
+put    { owner, repository, path, content, expectedSha?, branch? }  → { sha, commitUrl? }
+delete { owner, repository, path, expectedSha, branch? }            → { ok, commitUrl? }
+```
+
+`branch` is **optional** on both inputs: when absent, the implementer writes to whatever branch it
+would have written to before this amendment (for GitHub, the repository's default branch), so no
+existing caller changes behaviour. `commitUrl` is **optional** on both outputs: an implementer with
+no commit concept simply omits it, and no caller may assume its presence — the identical optionality
+rule the 2026-08-29 `url` amendment above already established for `get`/`list`.
+
+Before this amendment, a write through the Interface could only ever reach the implementer's default
+branch — there was no canonical input to name another one. A binding whose branch differs from the
+default is already a supported, ordinary configuration for a GitHub (or Gitea) repository; without
+`branch`, such a write had no way to land anywhere but the wrong branch. That is the entire reason
+`put`/`delete` need it.
+
+`blob-store@1` also grows two new methods, both **entirely optional**:
+
+```
+createRef       { owner, repository, branch, fromSha }                    → { sha }
+openPullRequest { owner, repository, headBranch, baseBranch, title, body? } → { url, number }
+```
+
+An App that declares `blob-store@1` without binding either method **remains conformant** — a blob
+store with no branch or pull-request concept has nothing to bind them to, exactly as partial
+conformance already permits for any Interface method (see [Conformance](#conformance)). A host that
+wants `createRef` or `openPullRequest` MUST probe the declaring App's own `InterfaceConformance` for
+those two keys and degrade gracefully when they are absent, never assume their presence. These two
+methods belong on a *blob* store because this Interface's canonical coordinate shape was never purely
+file-oriented: `blob-store@1` already carries `headRef`, a VCS-level concept with no file content of
+its own, precisely because its coordinates are a git repository's own (`:166`) — branch creation and
+pull requests are the same class of VCS operation `headRef` already established as in scope.
+
+`io.w6w.github` must make the following conformance deltas to bind the new shapes (all additions to
+that App's own manifest; none require editing the worked example above):
+
+- `put.with` gains `branch: { "$": "inputs.branch" }`; `put.outputMap` becomes
+  `{ sha: { "$": "output.content.sha" }, commitUrl: { "$": "output.commit.html_url" } }`.
+- `delete.with` gains `branch: { "$": "inputs.branch" }`; `delete.outputMap` becomes
+  `{ ok: true, commitUrl: { "$": "output.commit.html_url" } }`.
+- `createRef: { uses: { action: "ref-create" }, outputMap: { sha: { "$": "output.object.sha" } } }` —
+  no `with`, because `ref-create`'s params align 1:1 with the canonical inputs, exactly as `headRef`'s
+  entry does today (`:187-188`). `ref-create` is a **new Action** `io.w6w.github` must add — it does
+  not exist today; the only `git/ref` call in that App is `ref-get.ts`'s GET.
+- `openPullRequest: { uses: { action: "pull-request-create" }, with: { owner: { "$": "inputs.owner" },
+  repository: { "$": "inputs.repository" }, title: { "$": "inputs.title" },
+  head: { "$": "inputs.headBranch" }, base: { "$": "inputs.baseBranch" }, body: { "$": "inputs.body" } },
+  outputMap: { url: { "$": "output.html_url" }, number: { "$": "output.number" } } }`.
+
+[Deferred limitations](#deferred-limitations) item (iv)'s closing sentence — "Neither `put` nor
+`delete` is invoked by anything this run's reference consumer builds" — was a statement about the
+2026-08-27 run that built it, and stays true of that run; it is superseded in fact as of this
+amendment, because the host push path built alongside this amendment is the first real caller of
+either method. Item (iv)'s argument against sourcing `commitMessage` from a canonical input is
+untouched by this amendment — `commitMessage` remains a literal `with` value, not a field this
+amendment adds.
