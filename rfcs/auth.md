@@ -62,6 +62,11 @@ The publisher's hooks own the full credential lifecycle:
 
 - **`exchange`** decides what gets stored (the credential blob).
 - **`sign`** uses the stored credential to inject auth into every outbound request.
+- **`handshake`** is the socket-backed generalization of `sign`, for protocols with no single
+  signable request. Instead of augmenting one HTTP `Request`, it produces the protocol's auth
+  frames **iteratively** — bytes to send, and a slot for the server's reply — round-trip by
+  round-trip (Postgres SASL/SCRAM, MySQL native password, Redis `AUTH`/`HELLO`) until the
+  handshake completes and the host hands the action a live `ctx.socket`.
 - **`refresh`** updates the credential when it expires.
 
 From the platform's view, the credential is an **opaque blob**. The spec does not declare its shape,
@@ -224,6 +229,7 @@ token-exchange link (RFC 8693) instead. `jit.resourcePrefix` is the same editor-
     "test": "./hooks/test.ts",
     "afterConnect": "./hooks/after-connect.ts",
     "sign": "./hooks/sign-request.ts",
+    "handshake": "./hooks/handshake.ts",
     "refresh": "./hooks/refresh.ts",
     "revoke": "./hooks/revoke.ts"
   }
@@ -242,6 +248,7 @@ which is required).
 | `test`         | connect + periodic | After `exchange`, and on schedule          | **Required.** Validates the credential is live. Failure surfaces as a broken connection.                       |
 | `afterConnect` | connect            | After `test`                               | Fetch display data (user name, team, region) for `connectionLabel` variables.                                  |
 | `sign`         | runtime            | On every outbound request                  | Inject auth headers, sign the request, add query params. Receives the opaque credential; actions never see it. |
+| `handshake`    | runtime            | Once per action `execute`, before `ctx.socket` is handed to it | The socket analogue of `sign`: produce the protocol's auth frames iteratively, round-trip by round-trip, until the connection is authenticated. Receives the opaque credential and the read-only connect target; the host drives the byte exchange over the real socket. |
 | `refresh`      | runtime            | When the credential expires or is rejected | Refresh OAuth token (or equivalent) and retry. Returns updated credential blob.                                |
 | `revoke`       | disconnect         | When the user disconnects                  | Revoke the credential server-side, clean up any remote state.                                                  |
 
@@ -295,8 +302,8 @@ Hooks make these first-class instead of workarounds.
 
 ## Hook runtime
 
-All hooks named here — `preflight`, `exchange`, `test`, `afterConnect`, `sign`, `refresh`, `revoke`
-— execute under the [Hook Runtime RFC](./hook-runtime.md). Their input/output shapes, the ambient
+All hooks named here — `preflight`, `exchange`, `test`, `afterConnect`, `sign`, `handshake`,
+`refresh`, `revoke` — execute under the [Hook Runtime RFC](./hook-runtime.md). Their input/output shapes, the ambient
 `HookContext`, the credential-isolation invariant that makes `sign` the only network-less hook with
 the credential, the error shape, the default 30 s timeout, and the sandbox posture are all defined
 there. The per-hook signatures appear in the [Hook registry](./hook-runtime.md#hook-registry).

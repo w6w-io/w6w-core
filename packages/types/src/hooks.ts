@@ -9,7 +9,7 @@
  */
 import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
-import type { RedactedConnection } from "./connection.ts";
+import type { ConnectionTarget, RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
 
@@ -38,6 +38,12 @@ export interface HookContext {
    * performs the privileged work), never tokens handed into the sandbox.
    */
   host?: HostExtensions;
+  /**
+   * The Connection's byte stream — already opened, already handshaken by the host.
+   * Present only for action `execute`, only when the app declares the `socket`
+   * capability and the Connection carries a `target`.
+   */
+  socket?: SocketHandle;
 }
 
 /**
@@ -113,6 +119,42 @@ export type SignHook = (
   input: { request: SignableRequest; credential: unknown },
   ctx: HookContext,
 ) => SignableRequest | Promise<SignableRequest>;
+
+/**
+ * A host-mediated byte stream. The sandbox holds this object, never an OS socket:
+ * every call is a message to the host, which owns the real connection.
+ */
+export interface SocketHandle {
+  /** Write bytes. Resolves once the host has written them. */
+  write(bytes: Uint8Array): Promise<void>;
+  /** Read up to `max` bytes (default host-chosen). Resolves `null` at EOF. */
+  read(max?: number): Promise<Uint8Array | null>;
+  /** Close the stream. Idempotent. */
+  close(): Promise<void>;
+}
+
+/** One step of an iterative, network-less handshake. */
+export type HandshakeStep =
+  | { done: false; send: Uint8Array; state?: unknown }
+  | { done: true; send?: Uint8Array };
+
+/**
+ * Auth `handshake` — the protocol-agnostic generalization of `sign`.
+ * Holds the credential; has NO network (its `ctx.fetch` and `ctx.socket` are both
+ * absent). It produces the auth frame; the HOST sends it and feeds the reply back.
+ */
+export type HandshakeHook = (
+  input: {
+    credential: unknown;
+    /** Read-only. The hook may READ the target but can never influence it. */
+    target: ConnectionTarget;
+    /** Absent on the first call; otherwise the server's reply to the previous `send`. */
+    received?: Uint8Array;
+    /** Whatever the previous step returned as `state`. Absent on the first call. */
+    state?: unknown;
+  },
+  ctx: HookContext,
+) => HandshakeStep | Promise<HandshakeStep>;
 
 /**
  * Health `check` — a declared, side-effect-free probe.
