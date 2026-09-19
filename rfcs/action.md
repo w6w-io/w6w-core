@@ -388,7 +388,7 @@ The engine's "wait for all inbound edges, then aggregate" traversal is pinned in
 > introduces no breaking change to existing actions. It adds one `OutputField.type` member so an
 > action can declare that a field of its output is a file reference, not inline data.
 
-`OutputField.type` gains a fifth member: `"string" | "number" | "boolean" | "object" | "array" |
+`OutputField.type` gains a sixth member: `"string" | "number" | "boolean" | "object" | "array" |
 "file"`. A `file`-typed output field's runtime value is a [`FileRef`](./param.md#file) (`@w6w/types`)
 — an opaque, host-minted reference to bytes the action wrote into the host's run file store, never
 the bytes themselves.

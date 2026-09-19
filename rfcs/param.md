@@ -184,7 +184,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `date` | string (`YYYY-MM-DD`) | |
 | `datetime` | string (ISO 8601) | Includes timezone. |
 | `secret` | string | Masked in UI, encrypted at rest. Implies `secret: true`. |
-| `file` | string (ref) | Reference to an uploaded file — see [File](#file) below. |
+| `file` | `FileRef` (object; a bare `id` string is resolved to one) | Reference to an uploaded file — see [File](#file) below. |
 | `json` | any | Structured JSON; host renders a JSON editor. |
 | `code` | string | Code with language via `ui` (e.g. `"code:sql"`). |
 | `group` | object | Nested form. Value is a `Record<string, unknown>` whose keys are the `key`s of the params in `children`. See [Groups](#groups). |

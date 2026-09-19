@@ -360,8 +360,9 @@ without turning the per-run store into an unbounded liability on a host with no 
 
 ### `SignableRequest.body` may be binary
 
-[`## Ambient API: HookContext`](#ambient-api-hookcontext)'s `ctx.fetch` and the `sign` hook's own
-`SignableRequest` are documented today with a `body?: string | null` shape. That shape is corrected:
+The `sign` hook's own `SignableRequest`, part of [`## Ambient API:
+HookContext`](#ambient-api-hookcontext), is documented today with a `body?: string | null` shape.
+That shape is corrected:
 a `sign` hook's `SignableRequest.body` MAY be a `Uint8Array`, in addition to a `string` or
 `null`/absent. A generic sandbox proxy that string-coerces every outgoing body silently corrupts a
 binary upload before it ever reaches the wire — `sign` MUST receive and return the bytes it was
