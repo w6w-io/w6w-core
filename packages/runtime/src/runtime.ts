@@ -605,19 +605,39 @@ export async function invoke(
     signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides),
   );
 
-  // 5. Open ctx.socket when, and only when, the Connection carries a target:
-  // real connect/TLS (target-checked, DC-3), then the auth `handshake` loop
-  // (DC-1) — both before `execute()` ever runs, so the action always gets an
-  // already-open, already-authenticated stream, never a bare `open()` to call
-  // itself (`SocketHandle` has none). Closed in the `finally` below no matter
-  // how `execute` (or opening/handshaking itself) turns out, so a socket can
-  // never outlive this invocation.
+  // 5. Open ctx.socket when, and only when, the Connection carries a target
+  // AND the App declares the `socket` capability (hook-runtime.md:144-146,
+  // amended by T1.1.1 — `ctx.socket` is present "only ... when the App
+  // declares the socket capability ... and the Connection carries a
+  // target"): real connect/TLS (target-checked, DC-3), then the auth
+  // `handshake` loop (DC-1) — both before `execute()` ever runs, so the
+  // action always gets an already-open, already-authenticated stream, never
+  // a bare `open()` to call itself (`SocketHandle` has none). Closed in the
+  // `finally` below no matter how `execute` (or opening/handshaking itself)
+  // turns out, so a socket can never outlive this invocation.
+  //
+  // `app.manifest.capabilities?.socket` is read ONLY at this one presence
+  // gate — a target-bearing Connection on an App that never declared the
+  // capability fails fast as `socket_unavailable` (hook-runtime.md:319),
+  // before any DNS resolution or `Deno.connect` attempt. This is a distinct
+  // decision from *which* targets are allowed: it never touches, and must
+  // never be threaded into, `checkTarget`/`socket.ts`'s private-range
+  // predicate (DC-5 stays: capability declaration is for publish-time
+  // review, not target enforcement).
   let socket: SocketSession | undefined;
 
   // 6. Invoke the action's `execute` in the sandbox.
   let value: unknown;
   try {
     if (opts.connection?.target) {
+      if (!app.manifest.capabilities?.socket) {
+        throw new W6WError(
+          "socket_unavailable",
+          "execute",
+          `App "${app.manifest.id}" does not declare the "socket" capability; ` +
+            `Connection "${opts.connection.id}" carries a target.`,
+        );
+      }
       socket = await openConnectionSocket(app, auth, opts.connection.target, credential, opts);
     }
     value = await runHook({

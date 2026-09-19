@@ -639,3 +639,67 @@ Deno.test("FU-6: bytes a batching server sends after the auth-confirmation frame
 
   assertEquals((result.value as { echoed: string | null }).echoed, "NEXT-MESSAGE\n");
 });
+
+// ── ROUND 1 / B-1 — ctx.socket is gated on capability AND target ───────────
+
+Deno.test("ROUND1/B-1: target present but the App does not declare capabilities.socket -> socket_unavailable, and the listener never sees a connection attempt", async () => {
+  const app = await loadApp(DIR);
+  // A parameterized in-memory variant of the fixture app, not a second
+  // fixture directory: same loaded App, `manifest.capabilities` stripped —
+  // proves the presence gate reads `app.manifest.capabilities?.socket`
+  // rather than anything file-path-specific.
+  const noCapApp = { ...app, manifest: { ...app.manifest, capabilities: undefined } };
+
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  const acceptPromise = listener.accept();
+
+  const target: ConnectionTarget = {
+    host: "localhost",
+    port,
+    tlsMode: "disable",
+    allowPrivate: true,
+  };
+  const err = await assertRejects(
+    () =>
+      invoke(noCapApp, inv("round-trip", { message: "x" }), {
+        connection: connectionWithTarget(target),
+      }),
+    W6WError,
+  );
+  assertEquals(err.code, "socket_unavailable");
+
+  // The strong form: not just that the promise rejected, but that nothing
+  // ever touched the network — the listener's own accept() never resolves
+  // within a short window, rather than merely trusting the rejection.
+  const raceResult = await Promise.race([
+    acceptPromise.then(() => "connected" as const),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
+  ]);
+  assertEquals(raceResult, "timeout");
+
+  try {
+    listener.close();
+  } catch {
+    // already gone
+  }
+});
+
+Deno.test("ROUND1/B-1: target absent, App does not declare capabilities.socket -> unaffected, no ctx.socket attempted, action still runs", async () => {
+  const app = await loadApp(DIR);
+  const noCapApp = { ...app, manifest: { ...app.manifest, capabilities: undefined } };
+
+  // No `connection.target` at all — DC-2's per-Connection model: an app can
+  // decline the capability entirely and its non-socket actions must be
+  // unaffected. `round-trip` needs a live ctx.socket to do anything useful,
+  // so this only proves invoke() does not throw `socket_unavailable` when
+  // there is no target to begin with (the capability check must not fire).
+  const err = await assertRejects(
+    () => invoke(noCapApp, inv("round-trip", { message: "x" }), {}),
+    W6WError,
+  );
+  // Whatever fails here (no connection resolved / no ctx.socket for the
+  // action to write to) it must NOT be `socket_unavailable` — that code is
+  // reserved for "target present, capability absent."
+  assert(err.code !== "socket_unavailable", err.code);
+});
