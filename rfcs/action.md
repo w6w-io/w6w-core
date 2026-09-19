@@ -381,3 +381,27 @@ The engine's "wait for all inbound edges, then aggregate" traversal is pinned in
 | Sample data | Added optional `sample` alongside `output`. Cheap to spec, big editor UX win. |
 | Connectionless actions | Added optional `requiresAuth` to opt an Action out of needing a Connection even when the App declares Auth (resolves the corresponding Invocation question). |
 | Control-flow step types | Introduced `type: "control"` — control actions declare params/output like any action but are interpreted by the workflow engine (not called via the runtime). The canonical set (`if`, `foreach`, `parallel`, `wait`) lives in the first-party `@w6w/control` app; see the [Engine RFC](./engine.md) for interpretation semantics. |
+
+## Amendment — 2026-09-19: `file` output fields and the binary channel
+
+> This section is **additive** to the Final `## Output` / `### OutputField` shape above; it
+> introduces no breaking change to existing actions. It adds one `OutputField.type` member so an
+> action can declare that a field of its output is a file reference, not inline data.
+
+`OutputField.type` gains a fifth member: `"string" | "number" | "boolean" | "object" | "array" |
+"file"`. A `file`-typed output field's runtime value is a [`FileRef`](./param.md#file) (`@w6w/types`)
+— an opaque, host-minted reference to bytes the action wrote into the host's run file store, never
+the bytes themselves.
+
+```json
+"output": [
+  { "key": "id",       "type": "string", "label": "Record ID" },
+  { "key": "document", "type": "file",   "label": "Generated PDF" }
+]
+```
+
+A downstream step's `{ "$": "steps.<id>.output.document" }` binding onto a `file`-typed field
+resolves to the `FileRef` — the same six-field JSON object the action produced — never to the
+underlying bytes. A step that needs the bytes themselves reads them explicitly through
+[`ctx.file.read`](./hook-runtime.md#amendment--2026-09-19-ctxfile-and-binary-capable-signablerequestbody),
+passing the resolved `FileRef` (or its bare `id`).

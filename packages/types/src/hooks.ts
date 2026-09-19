@@ -12,6 +12,7 @@ import type { OutputField } from "./action.ts";
 import type { RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
+import type { FileCapability } from "./file.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -38,6 +39,13 @@ export interface HookContext {
    * performs the privileged work), never tokens handed into the sandbox.
    */
   host?: HostExtensions;
+  /**
+   * Host-mediated access to the run file store. OPTIONAL because a conforming host need not
+   * implement the capability at all — a portable app MUST handle its absence. (A host that DOES
+   * implement it may still present it and refuse every call when the app holds no file
+   * capability; the reference runtime does exactly that.)
+   */
+  file?: FileCapability;
 }
 
 /**
