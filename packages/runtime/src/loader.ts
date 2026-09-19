@@ -150,6 +150,12 @@ function manifestFromPackageJson(pkg: PackageJson): AppManifest {
     localizations: w.localizations,
     engines: w.engines,
     network: w.network,
+    // Declarative-only (DC-5): publish-time review visibility, never read by
+    // `runtime.ts` to gate anything — the real check is per-Connection, not
+    // per-App. Surfaced the same way `network` is, straight off the raw
+    // `w6w` block, with no derived/computed counterpart the way
+    // `network.allow` gets `netAllowlist` below.
+    capabilities: w.capabilities,
   };
 }
 

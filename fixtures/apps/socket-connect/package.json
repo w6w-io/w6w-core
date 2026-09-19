@@ -1,0 +1,16 @@
+{
+  "name": "@w6w-fixtures/socket-connect",
+  "version": "1.0.0",
+  "description": "Fixture app proving the host half of ctx.socket: real connect, target check, TLS, and the handshake loop, end to end.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.socket-connect",
+    "displayName": "Socket Connect",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts",
+    "capabilities": { "socket": true }
+  }
+}

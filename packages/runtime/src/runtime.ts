@@ -33,6 +33,7 @@ import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
 import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
 import { W6WError } from "./errors.ts";
+import { openConnectionSocket, type SocketSession } from "./socket.ts";
 
 export type { EgressInfo };
 export { DEFAULT_EGRESS_BODY_LIMIT } from "./egress.ts";
@@ -604,9 +605,21 @@ export async function invoke(
     signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides),
   );
 
-  // 5. Invoke the action's `execute` in the sandbox.
+  // 5. Open ctx.socket when, and only when, the Connection carries a target:
+  // real connect/TLS (target-checked, DC-3), then the auth `handshake` loop
+  // (DC-1) — both before `execute()` ever runs, so the action always gets an
+  // already-open, already-authenticated stream, never a bare `open()` to call
+  // itself (`SocketHandle` has none). Closed in the `finally` below no matter
+  // how `execute` (or opening/handshaking itself) turns out, so a socket can
+  // never outlive this invocation.
+  let socket: SocketSession | undefined;
+
+  // 6. Invoke the action's `execute` in the sandbox.
   let value: unknown;
   try {
+    if (opts.connection?.target) {
+      socket = await openConnectionSocket(app, auth, opts.connection.target, credential, opts);
+    }
     value = await runHook({
       entryPath: app.entryPath,
       selector: { kind: "action", key: loaded.definition.key },
@@ -617,9 +630,12 @@ export async function invoke(
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
       onFetch,
+      onSocket: socket?.onSocket,
     });
   } catch (err) {
     unwrap(err);
+  } finally {
+    socket?.close();
   }
 
   return { value };
