@@ -627,3 +627,62 @@ This amendment does not specify **how** a host compiles or sandboxes the templat
 is host implementation detail, deliberately deferred, and stays out of the conformance list above. A
 conforming host may choose any sandboxing approach, provided it never renders in-process alongside
 live connections and decrypted secrets.
+
+## Amendment — 2026-09-19: the `language` param on `@w6w/script`·`run` (F-1)
+
+> This section is **additive** to the node kinds, reserved-pseudo-app, and Conformance material
+> above; it introduces no breaking change and edits none of the following, which **stand unedited**,
+> superseded in reading by this amendment:
+> - the [Node kinds](#node-kinds) table's `internal` row, whose Examples cell reads
+>   `run JS · set typed vars`;
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table's `@w6w/script` row,
+>   whose Input cell reads `{ code, input? }`;
+> - the [Conformance](#conformance) bullet "Execute `@w6w/script`·`run` with no ambient authority (no
+>   network, filesystem, or environment access)."
+>
+> None of the three is renamed, split, or excluded from this amendment's scope, and this amendment
+> does not claim any of them was itself updated — it restates and narrows their meaning in one place
+> rather than editing them in theirs.
+
+`@w6w/script`·`run` gains an optional `language` param: an enum, v1 values `"javascript"` and
+`"python"`, defaulting to `"javascript"` when omitted. Its `with` shape is unchanged in cardinality —
+still `{ code, input? }` per the table above — `language` is a third, optional sibling key on that
+same object, not a replacement for either existing one. **Omitting `language` leaves every existing
+step's behaviour byte-identical to today**: the node still runs its `code` as JavaScript, with the
+same input/output contract, the same sandbox posture, and the same failure shape as before this
+amendment existed. A workflow authored before this amendment, with no `language` key at all, is a
+valid `language: "javascript"` step under it.
+
+### Conformance (additive)
+
+A host that implements the `language` param on `@w6w/script`·`run` MUST:
+
+- Execute `@w6w/script`·`run` with no ambient authority — no network, filesystem, or environment
+  access — **as a property of the node, not of the JavaScript language alone**: the existing
+  Conformance bullet above binds identically whatever `language` says, for every v1 value including
+  `"python"`.
+- **Never** satisfy a non-`"javascript"` `language` by shelling out: a host MUST NOT invoke a real
+  interpreter as a **subprocess**, nor otherwise hand step code OS-level process authority, to run a
+  non-JavaScript step. `language` selects an execution mode inside the same no-ambient-authority
+  sandbox the node already runs in — not a different privilege boundary.
+- **Refuse an unrecognised `language` value before executing any code** — the same synchronous,
+  pre-execution rejection this RFC already requires for the node's other malformed params (see the
+  `@w6w/document` and `@w6w/template` amendments above), carrying the same error shape a host uses
+  for its other internal-node param errors (the `{ code, message }` shape recorded on
+  [NodeRun](#noderun)`.error`). A host never starts running step code on an unrecognised `language`
+  and then fails partway through.
+- Deny network access to the Python execution path in v1. This is a **deliberate v1 scoping
+  decision**, not an inherent property of the Python language or of this RFC's sandbox model — a
+  future amendment may widen it, and a host reading only this file MUST NOT treat the denial as
+  permanent simply because no `language`-specific egress mechanism is specified here.
+
+This amendment does not specify **how** a host executes non-JavaScript code — that mechanism (e.g.
+which in-sandbox interpreter runs a `"python"` step) is host implementation detail, deliberately
+deferred to the host's own engine work, exactly as this RFC already defers `@w6w/template`'s
+compile/render mechanism above.
+
+**Out of scope (F-5): no per-item execution mode.** `language` is a single axis selecting which
+language a step's `code` runs as; it gains no second axis for "run once per item of a collection." A
+workflow author who needs that wraps the `@w6w/script` step in a `foreach` sub-block — ordinary
+graph composition already available via `@w6w/control`, not a property this amendment adds to
+`language` itself. No spec field is added for a per-item mode.
