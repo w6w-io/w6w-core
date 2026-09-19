@@ -7,12 +7,7 @@
  * the trusted host, via the `onFetch` callback the caller supplies — that is
  * where the egress allowlist is enforced and where `sign` runs.
  */
-import type {
-  FileRef,
-  InvocationContext,
-  RedactedConnection,
-  SignableRequest,
-} from "@w6w/types";
+import type { FileRef, InvocationContext, RedactedConnection, SignableRequest } from "@w6w/types";
 import { W6WError } from "../errors.ts";
 import type {
   DescribedApp,

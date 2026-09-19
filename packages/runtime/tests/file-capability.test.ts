@@ -168,7 +168,12 @@ Deno.test("A3: create -> read round-trips binary bytes byte-identically", async 
 Deno.test("A4: a Uint8Array ctx.fetch body reaches onFetch as real bytes, not a digit list", async () => {
   const app = await loadApp(FILE_DIR);
   let captured: SignableRequest | undefined;
-  const emptyResponse: WireResponse = { status: 200, statusText: "OK", headers: {}, body: new Uint8Array() };
+  const emptyResponse: WireResponse = {
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    body: new Uint8Array(),
+  };
 
   const result = await runHook<{ status: number }>({
     entryPath: app.entryPath,

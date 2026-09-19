@@ -230,7 +230,11 @@ Deno.test("`!` on a path replaces just that leaf", () => {
 
 Deno.test("applyOverrides: plain keys deep-merge into the JSON body", () => {
   const out = applyOverrides(req(), { body: { added: true, nested: { over: 2 } } });
-  assertEquals(JSON.parse(text(out.body)), { name: "a", nested: { keep: 1, over: 2 }, added: true });
+  assertEquals(JSON.parse(text(out.body)), {
+    name: "a",
+    nested: { keep: 1, over: 2 },
+    added: true,
+  });
 });
 
 Deno.test("applyOverrides: a path MERGES into what is already at that leaf", () => {
