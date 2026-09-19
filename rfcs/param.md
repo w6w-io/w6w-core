@@ -201,6 +201,14 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `multiselect` | `"dropdown"`, `"checkboxes"`, `"chips"` | `"dropdown"` |
 | `code` | `"code:<language>"` | `"code:plain"` |
 
+`ui` is **static per param**: nothing in this spec re-renders a param's `ui` hint when another
+param's value changes, including when that other param is named in `dependsOn` — `dependsOn` only
+gates enable/disable and invalidates `options`/value (see [Dependencies](#dependencies)), it does not
+re-select a sibling's `ui`. A host whose editor mode should track a sibling param's value (for
+example, a `code` param whose language depends on another param's current selection) reads that
+sibling param's **current value** directly at render time — this spec supplies no mechanism that
+does it for the host.
+
 ### Options
 
 **Static:**
