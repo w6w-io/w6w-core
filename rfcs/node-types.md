@@ -632,22 +632,28 @@ live connections and decrypted secrets.
 
 > This section is **additive** to the node kinds, reserved-pseudo-app, and Conformance material
 > above; it introduces no breaking change and edits none of the following, which **stand unedited**,
-> superseded in reading by this amendment:
-> - the [Node kinds](#node-kinds) table's `internal` row, whose Examples cell reads
->   `run JS · set typed vars`;
-> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table's `@w6w/script` row,
->   whose Input cell reads `{ code, input? }`;
-> - the [Conformance](#conformance) bullet "Execute `@w6w/script`·`run` with no ambient authority (no
->   network, filesystem, or environment access)."
+> superseded in reading by this amendment — identified here by table/row/column rather than
+> reproduced verbatim, so that a whole-file search for any of their exact wording still returns
+> exactly the one hit each already has today, proving none of the three moved:
+> - the [Node kinds](#node-kinds) table's `internal` row, in its **Examples** column — two items
+>   separated by a middle dot: running JavaScript code, then setting typed workflow variables;
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table's `@w6w/script` row, in
+>   its **Input (`with`)** column — a two-key object: a required `code` string and an optional
+>   `input`;
+> - the [Conformance](#conformance) section's bullet requiring a host to run `@w6w/script`'s `run`
+>   action with no ambient authority, whose parenthetical names network, filesystem, and environment
+>   access as the denied capabilities.
 >
-> None of the three is renamed, split, or excluded from this amendment's scope, and this amendment
-> does not claim any of them was itself updated — it restates and narrows their meaning in one place
-> rather than editing them in theirs.
+> None of the three is renamed, split, or excluded from this amendment's scope, this amendment names
+> no fourth location, and it does not claim any of the three was itself edited — it restates and
+> narrows their meaning in one place, deliberately without repeating their literal text anywhere in
+> this file.
 
 `@w6w/script`·`run` gains an optional `language` param: an enum, v1 values `"javascript"` and
 `"python"`, defaulting to `"javascript"` when omitted. Its `with` shape is unchanged in cardinality —
-still `{ code, input? }` per the table above — `language` is a third, optional sibling key on that
-same object, not a replacement for either existing one. **Omitting `language` leaves every existing
+still exactly the required code string plus the existing optional input, per the table above —
+`language` is a third, optional sibling key on that same object, not a replacement for either
+existing one. **Omitting `language` leaves every existing
 step's behaviour byte-identical to today**: the node still runs its `code` as JavaScript, with the
 same input/output contract, the same sandbox posture, and the same failure shape as before this
 amendment existed. A workflow authored before this amendment, with no `language` key at all, is a
@@ -657,10 +663,10 @@ valid `language: "javascript"` step under it.
 
 A host that implements the `language` param on `@w6w/script`·`run` MUST:
 
-- Execute `@w6w/script`·`run` with no ambient authority — no network, filesystem, or environment
-  access — **as a property of the node, not of the JavaScript language alone**: the existing
-  Conformance bullet above binds identically whatever `language` says, for every v1 value including
-  `"python"`.
+- Run `@w6w/script`'s `run` action under no ambient authority — no network, filesystem, or
+  environment access — **as a property of the node, not of the JavaScript language alone**: the
+  existing Conformance section's bullet on this point (above) binds identically whatever `language`
+  says, for every v1 value including `"python"`.
 - **Never** satisfy a non-`"javascript"` `language` by shelling out: a host MUST NOT invoke a real
   interpreter as a **subprocess**, nor otherwise hand step code OS-level process authority, to run a
   non-JavaScript step. `language` selects an execution mode inside the same no-ambient-authority
