@@ -3,7 +3,14 @@
  * See rfcs/auth.md.
  */
 import type { Param } from "./param.ts";
-import type { AfterConnectHook, ExchangeHook, Hook, RefreshHook, SignHook } from "./hooks.ts";
+import type {
+  AfterConnectHook,
+  ExchangeHook,
+  HandshakeHook,
+  Hook,
+  RefreshHook,
+  SignHook,
+} from "./hooks.ts";
 
 export type AuthType =
   | "oauth2"
@@ -125,6 +132,8 @@ export interface AuthDefinition extends Auth {
   afterConnect?: AfterConnectHook;
   /** Inject auth into every outbound request. Only hook that reads the credential. */
   sign?: SignHook;
+  /** Produce the protocol's auth frames, iteratively. The socket analogue of `sign`. */
+  handshake?: HandshakeHook;
   /** Refresh the credential when it expires or is rejected. */
   refresh?: RefreshHook;
   /** Revoke the credential on disconnect. */
@@ -138,6 +147,7 @@ export const AUTH_HOOK_KINDS = [
   "test",
   "afterConnect",
   "sign",
+  "handshake",
   "refresh",
   "revoke",
 ] as const;

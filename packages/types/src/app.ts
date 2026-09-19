@@ -85,6 +85,16 @@ export interface AppManifest {
     /** Hostnames the app's hooks may reach (e.g. `"api.sendgrid.com"`). */
     allow?: string[];
   };
+
+  /**
+   * Declared capabilities, for publish-time review visibility. NOT an allowlist and
+   * NOT enforced by the runtime — a socket target is per-Connection, so it cannot be
+   * reviewed statically the way a fixed `network.allow` host list can.
+   */
+  capabilities?: {
+    /** This app's actions expect a host-mediated `ctx.socket`. */
+    socket?: boolean;
+  };
 }
 
 /**

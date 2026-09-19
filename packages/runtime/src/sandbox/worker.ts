@@ -10,7 +10,7 @@
  * the network — the trusted host does all I/O.
  */
 import { AUTH_HOOK_KINDS, TRIGGER_HOOK_KINDS } from "@w6w/types";
-import type { AppDefinition } from "@w6w/types";
+import type { AppDefinition, SocketHandle } from "@w6w/types";
 import type {
   DescribedApp,
   HostMessage,
@@ -26,8 +26,13 @@ declare const self: {
 
 const post = (msg: WorkerMessage) => self.postMessage(msg);
 
+// Resolve value is `unknown`, not `WireResponse`, because this one map now
+// correlates BOTH fetch (resolves WireResponse) and socket (resolves void |
+// Uint8Array | null) replies through the single shared `nextId` counter
+// below — see protocol.ts's `socket-*` doc comment for why a shared
+// id-space is load-bearing, not incidental.
 const pending = new Map<number, {
-  resolve: (r: WireResponse) => void;
+  resolve: (value: unknown) => void;
   reject: (e: Error) => void;
 }>();
 let nextId = 1;
@@ -46,7 +51,7 @@ function proxyFetch(enabled: boolean) {
 
     const id = nextId++;
     return new Promise<WireResponse>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
       post({ type: "fetch", id, request: { url, method, headers, body } });
     }).then((r) =>
       new Response(r.body.byteLength ? (r.body as unknown as BodyInit) : null, {
@@ -55,6 +60,43 @@ function proxyFetch(enabled: boolean) {
         headers: r.headers,
       })
     );
+  };
+}
+
+/**
+ * Build `ctx.socket`. Returns `undefined` when the host disabled it, rather
+ * than a stub that throws on first use — `HookContext.socket` is optional
+ * precisely so an app can feature-detect with `if (ctx.socket)`, and a
+ * present-but-throwing value would make that check lie.
+ *
+ * Each method is a one-shot request/response over the same `pending` map and
+ * `nextId` counter `proxyFetch` uses, so a `write`/`read`/`close` in flight
+ * can never be resolved by the wrong reply.
+ */
+function proxySocket(enabled: boolean): SocketHandle | undefined {
+  if (!enabled) return undefined;
+
+  type SocketWorkerMessage = Extract<
+    WorkerMessage,
+    { type: "socket-write" | "socket-read" | "socket-close" }
+  >;
+  function call<T>(msg: SocketWorkerMessage): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      pending.set(msg.id, { resolve: resolve as (value: unknown) => void, reject });
+      post(msg);
+    });
+  }
+
+  return {
+    write(bytes: Uint8Array): Promise<void> {
+      return call<void>({ type: "socket-write", id: nextId++, bytes });
+    },
+    read(max?: number): Promise<Uint8Array | null> {
+      return call<Uint8Array | null>({ type: "socket-read", id: nextId++, max });
+    },
+    close(): Promise<void> {
+      return call<void>({ type: "socket-close", id: nextId++ });
+    },
   };
 }
 
@@ -115,6 +157,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
   }
   const ctx = {
     fetch: proxyFetch(msg.enableFetch),
+    socket: proxySocket(msg.enableSocket),
     log: (level: string, message: string, data?: unknown) =>
       post({ type: "log", level, message, data }),
     connection: msg.connection,
@@ -209,6 +252,33 @@ self.onmessage = (e) => {
       return;
     }
     case "fetch-error": {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        p.reject(new Error(msg.message));
+      }
+      return;
+    }
+    case "socket-write-response":
+    case "socket-close-response": {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        p.resolve(undefined);
+      }
+      return;
+    }
+    case "socket-read-response": {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        p.resolve(msg.bytes);
+      }
+      return;
+    }
+    case "socket-write-error":
+    case "socket-read-error":
+    case "socket-close-error": {
       const p = pending.get(msg.id);
       if (p) {
         pending.delete(msg.id);

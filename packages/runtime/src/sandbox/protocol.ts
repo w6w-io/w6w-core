@@ -33,6 +33,30 @@ export interface DescribedTrigger {
   hooks: TriggerHookKind[];
 }
 
+/**
+ * One socket operation the worker asks the host to perform, passed to the
+ * host's `onSocket` callback. Not itself a wire message — `run-hook.ts`
+ * builds one of these from the `id`-bearing `socket-write`/`socket-read`/
+ * `socket-close` `WorkerMessage` it just received, so the callback (like
+ * `onFetch`) never has to think about request-id correlation.
+ */
+export type SocketRequest =
+  | { op: "write"; bytes: Uint8Array }
+  | { op: "read"; max?: number }
+  | { op: "close" };
+
+/**
+ * The result of one socket operation, returned by the host's `onSocket`
+ * callback. Its own shape, deliberately not `WireResponse` — a socket reply
+ * carries no HTTP status/headers, and each op's payload differs (only `read`
+ * carries bytes), so reusing the HTTP-status-shaped type would either lie
+ * about unused fields or force every op through one over-general shape.
+ */
+export type SocketResult =
+  | { op: "write" }
+  | { op: "read"; bytes: Uint8Array | null }
+  | { op: "close" };
+
 /** A health check's config plus whether it actually carries a probe. */
 export interface DescribedHealthCheck {
   check: HealthCheck;
@@ -70,15 +94,40 @@ export type HostMessage =
     invocation?: unknown;
     /** When true, `ctx.fetch` proxies through the host; otherwise it throws. */
     enableFetch: boolean;
+    /**
+     * When true, `ctx.socket` is a live `SocketHandle` proxying through the
+     * host; otherwise it is `undefined` (never a throwing stub — see
+     * `HookContext.socket`'s doc comment in `@w6w/types`).
+     */
+    enableSocket: boolean;
   }
   // Import the entry module and return its actions/auth config (no functions).
   | { type: "start"; op: "describe-app"; entryPath: string }
   | { type: "fetch-response"; id: number; response: WireResponse }
-  | { type: "fetch-error"; id: number; message: string };
+  | { type: "fetch-error"; id: number; message: string }
+  // Socket replies. There is no "socket-open" request/reply pair: the host
+  // opens the stream (and runs the handshake) before `execute()` ever runs,
+  // so the worker only ever asks to write/read/close a stream it was handed
+  // — it can never pick or redirect the destination, unlike `ctx.fetch`
+  // where the URL comes from the (untrusted) action itself.
+  | { type: "socket-write-response"; id: number }
+  | { type: "socket-write-error"; id: number; message: string }
+  | { type: "socket-read-response"; id: number; bytes: Uint8Array | null }
+  | { type: "socket-read-error"; id: number; message: string }
+  | { type: "socket-close-response"; id: number }
+  | { type: "socket-close-error"; id: number; message: string };
 
 /** Worker -> host. */
 export type WorkerMessage =
   | { type: "log"; level: string; message: string; data?: unknown }
   | { type: "fetch"; id: number; request: SignableRequest }
+  // Socket requests: write bytes, read up to `max` bytes (host-chosen
+  // default when absent), or close. Each carries its own correlation `id`
+  // (shared with `fetch`'s counter — see `worker.ts`'s single `nextId`) so a
+  // reply can never be delivered to the wrong pending call even when a hook
+  // interleaves `ctx.fetch` and `ctx.socket` calls.
+  | { type: "socket-write"; id: number; bytes: Uint8Array }
+  | { type: "socket-read"; id: number; max?: number }
+  | { type: "socket-close"; id: number }
   | { type: "result"; value: unknown }
   | { type: "error"; error: { name: string; message: string } };

@@ -105,6 +105,9 @@ interface HookContext {
 
   /** Non-portable, host-provided capabilities. Empty in core; hosts augment it. See [Host extensions](#host-extensions). */
   host?: HostExtensions;
+
+  /** The Connection's byte stream, already opened and handshaken by the host. See [`ctx.socket`](#ctxsocket). */
+  socket?: SocketHandle;
 }
 ```
 
@@ -118,6 +121,75 @@ The hook's only network primitive. The host:
 4. For `sign` itself: `ctx.fetch` is **not available** — see [Credential isolation](#credential-isolation).
 
 The hook sees a normal `Response`. The credential and the egress check are the host's job.
+
+### `ctx.socket`
+
+A host-mediated byte stream to the Connection's configured target — the socket analogue of
+`ctx.fetch`. The host owns the real connection (`Deno.connect` / `Deno.connectTls` or an
+implementation's equivalent); the sandbox holds only a message channel to it, exactly as it holds
+only a message channel to the real HTTP client behind `ctx.fetch`. `SocketHandle`
+(`write`/`read`/`close`) has **no `open()`** — opening is entirely the host's job, never something
+the sandbox can initiate or redirect (see [`@w6w/types`](../packages/types/src/hooks.ts)).
+
+Before `execute()` runs, the host, in order:
+
+1. Reads `Connection.target` ([Connection RFC §Field reference](./connection.md#field-reference)) —
+   never the credential.
+2. Performs the [target check](#the-target-check) below.
+3. Opens the real connection and drives the Auth `handshake` hook ([Auth RFC](./auth.md)) to
+   completion: call the hook, send its returned `send` bytes over the socket, feed the server's
+   reply back as the next call's `received`, and repeat until the hook returns `{ done: true }`.
+4. Only then hands `execute()` a live `ctx.socket`.
+
+`ctx.socket` is present **only** for action `execute`, and only when the App declares the `socket`
+capability ([App manifest](../packages/types/src/app.ts)'s `capabilities.socket`) and the Connection
+carries a `target`.
+
+**Not a `ctx.host` extension.** `ctx.socket` is a **core, portable capability**, available on any
+compliant host that implements the `socket` capability — the same way `ctx.fetch` is.
+[`ctx.host`](#host-extensions) exists for the opposite case: non-portable, per-deployment
+capabilities a specific host bolts on for its own apps. A host must not fold socket support into
+`ctx.host` — that would make every socket-backed app non-portable, which defeats the point of
+specifying it here.
+
+**Lifetime.** A socket is not a second timeout domain. It lives for exactly one `execute()` call and
+dies with that call's worker at the same default every hook gets — **30 000 ms**
+([Timeouts and cancellation](#timeouts-and-cancellation)), host-overridable per call. A long-running
+query over `ctx.socket` is bound by the same clock a long-running `ctx.fetch` call is.
+
+### The target check
+
+`Connection.target` needs its own checkpoint mechanism, distinct from `network.allow`, for four
+reasons:
+
+**(a) Different source of truth.** A static per-App `network.allow` list suits a fixed vendor host
+(every install of a Slack app reaches `slack.com`). It does not suit a socket target: `host`/`port`/
+`database`/`tlsMode` are **user-configured, per-Connection** values (which Postgres instance *this*
+user pointed the Connection at), so the host checks `Connection.target` itself — read without ever
+decrypting `credential` — rather than a manifest-declared allowlist.
+
+**(b) One checkpoint, not two.** `ctx.fetch` needs two checkpoints (`runtime.ts:294-321` before
+`sign` runs, and `runtime.ts:168-174` on the actual outgoing request) because **both** the action's
+request *and* `sign`'s rewrite can move the destination — two untrusted mutation points. The socket
+target check needs exactly **one**, immediately before the real connect, because there are **zero**
+untrusted mutation points: the sandbox never supplies a target at all (`HandshakeStep` carries only
+bytes — see [Auth RFC](./auth.md) — never a host, port, or URL), so nothing downstream of the host's
+own read of `Connection.target` can change what gets connected to.
+
+**(c) Never implicit, not blocked outright.** A loopback or private-range target is not refused
+by policy alone — it is refused unless requested. The host **resolves** the target hostname and
+checks the *resolved* addresses (not the literal hostname string), so a public-looking name that
+resolves into private space (DNS rebinding) is refused exactly as `localhost` is — unless
+`target.allowPrivate === true`. The host then connects to the address it just checked, never
+re-resolving, so there is no window between the check and the connect for the answer to change.
+
+**(d) The v1 boundary.** This single-checkpoint design depends on the handshake never redirecting
+the target mid-session. A protocol whose handshake needs to hand back a *different* target partway
+through (Redis Cluster's `MOVED`/`ASK` redirects) breaks it — `HandshakeStep` has nowhere to carry a
+new target, and `ConnectionTarget` is read-only input to `handshake`. Such a protocol would need
+`ctx.fetch`'s two-checkpoint pattern back: a first check on the configured target, and a second on
+whatever the handshake redirected to. Out of scope for `manifestVersion: "1"` — noted here so a
+future RFC revisiting this does not have to rediscover it.
 
 ### `ctx.log`
 
@@ -144,7 +216,7 @@ The runtime intentionally exposes no:
 - Cryptographic / random / time primitives beyond what the host language provides natively (`globalThis.crypto`, `Date.now()`).
 - Inter-hook persistence. A hook is a pure function over `(input, ctx)`.
 
-The **core** capabilities (`fetch`, `log`, `connection`, `invocation`) are a **closed list**: a new *portable* capability is added only by amending this RFC. A host that needs a capability of its own does not invent a new top-level `ctx` field — it adds it under [`ctx.host`](#host-extensions), where the non-portability is explicit.
+The **core** capabilities (`fetch`, `ctx.socket`, `log`, `connection`, `invocation`) are a **closed list**: a new *portable* capability is added only by amending this RFC. A host that needs a capability of its own does not invent a new top-level `ctx` field — it adds it under [`ctx.host`](#host-extensions), where the non-portability is explicit.
 
 ## Host extensions
 
@@ -182,6 +254,7 @@ The complete set of hook kinds, their input/output shapes, and the lifecycle pha
 | `auth.test` | [Auth RFC](./auth.md) | `{ credential }` | `{ ok, message? }` | `auth` | **Yes** |
 | `auth.afterConnect` | [Auth RFC](./auth.md) | `{ credential }` | display metadata | `auth` | **Yes** |
 | `auth.sign` | [Auth RFC](./auth.md) | `{ request, credential }` | `SignableRequest` | `execute` | **Yes** |
+| `auth.handshake` | [Auth RFC](./auth.md) | `{ credential, target, received?, state? }` | `HandshakeStep` | `execute` | **Yes** |
 | `auth.refresh` | [Auth RFC](./auth.md) | `{ credential }` | opaque credential | `auth` | **Yes** |
 | `auth.revoke` | [Auth RFC](./auth.md) | `{ credential }` | `void` | `auth` | **Yes** |
 
@@ -242,7 +315,15 @@ A `false` result is a soft failure: the runtime converts it to a typed error (`p
 | `connection_pending` / `connection_broken` / `connection_revoked` | `auth` | Connection lifecycle gates ([Invocation RFC](./invocation.md)). |
 | `egress_denied` | `execute` | `ctx.fetch` URL host not in the App's `network.allow`. |
 | `invalid_request_url` | `execute` | `ctx.fetch` (or a `sign` hook's return) produced an unparseable URL. |
+| `socket_denied` | `execute` | The pre-connect [target check](#the-target-check) refused `Connection.target` — an unresolvable host, or a resolved loopback/private-range address without `target.allowPrivate`. |
+| `socket_unavailable` | `execute` | The host could not establish the real connection (`Deno.connect`/`Deno.connectTls` refused, timed out, or the App declares no `socket` capability / the Connection carries no `target`). |
+| `socket_failed` | `execute` | An established `ctx.socket` I/O call (`write`/`read`/`close`) failed after the connection was open. |
 | `unknown_app` / `unknown_action` / `unknown_connection` | `resolution` / `auth` | Resolution failure ([Invocation RFC](./invocation.md)). |
+
+A failed `auth.handshake` round trip is **not** a new code: like a failed `refresh`, it surfaces as
+the existing `connection_broken` (`runtime.ts:449-451`'s try/catch taxonomy for a failed
+credential-bearing connect hook) — the handshake never gets far enough to hand back a `ctx.socket`,
+so there is no partially-open socket to clean up beyond what that taxonomy already does for `refresh`.
 
 This table is closed for `manifestVersion: "1"`. New codes require an RFC bump.
 
@@ -264,12 +345,13 @@ The reference runtime does not enforce CPU or memory caps — Deno workers don't
 
 A compliant host MUST guarantee, for every hook invocation:
 
-| Capability | Action sandbox | Sign sandbox | Other auth hooks |
+| Capability | Action sandbox | Sign / handshake sandbox | Other auth hooks |
 |---|---|---|---|
 | Filesystem read | App dir only | App dir only | App dir only |
 | Filesystem write | Denied | Denied | Denied |
 | Network (raw) | Denied | Denied | Denied |
 | `ctx.fetch` | Available, host-mediated, signed | **Removed** | Available, host-mediated, **unsigned** |
+| `ctx.socket` | Available, host-mediated, pre-handshaken | **Removed** | Absent |
 | Environment variables | Denied | Denied | Denied |
 | Subprocess / FFI | Denied | Denied | Denied |
 | Credential | Absent | Present in `input.credential` | Present in `input.credential` |
@@ -287,6 +369,10 @@ A host claims compliance with the Hook Runtime by passing the conformance suite 
 - The timeout default and override mechanism.
 - The sandbox posture matrix, demonstrated by a fixture app that attempts each denied capability and must fail.
 - The credential-isolation invariant, demonstrated by `auth.sign` being unable to perform a network call.
+- The `ctx.socket` capability: a fixture app proving the action sandbox's raw `Deno.connect` still
+  dies (no unmediated network primitive reaches userland, same invariant as `ctx.fetch`), and a
+  fixture proving the pre-connect [target check](#the-target-check) refuses a denied target
+  (loopback/private-range without `allowPrivate`) before any real connect is attempted.
 
 The fixtures live in `core/fixtures/` and are runnable against any host as a black-box test.
 

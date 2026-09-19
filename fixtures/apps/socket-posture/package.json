@@ -1,0 +1,15 @@
+{
+  "name": "@w6w-fixtures/socket-posture",
+  "version": "1.0.0",
+  "description": "Fixture app proving ctx.socket is the only route to a host-mediated byte stream.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.socket-posture",
+    "displayName": "Socket Posture",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts"
+  }
+}
