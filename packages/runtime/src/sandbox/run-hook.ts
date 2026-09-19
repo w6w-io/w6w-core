@@ -29,6 +29,12 @@ const NO_NET_PERMS = {
   import: false as const,
 };
 
+/**
+ * Exported (it was module-private before this node) so a test can call
+ * `runWorker` below directly with its own hand-built `start` message —
+ * the only way to exercise the `onSocket`-absent guard, since `runHook`'s
+ * own derivation ties `enableSocket` to `onSocket`'s presence 1:1.
+ */
 export interface WorkerRunOptions {
   readScope: string;
   timeoutMs?: number;
