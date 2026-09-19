@@ -5,6 +5,7 @@
 import type {
   Action,
   AuthHookKind,
+  FileRef,
   HealthCheck,
   InterfaceConformance,
   SignableRequest,
@@ -70,15 +71,22 @@ export type HostMessage =
     invocation?: unknown;
     /** When true, `ctx.fetch` proxies through the host; otherwise it throws. */
     enableFetch: boolean;
+    /** When true, `ctx.file` proxies through the host; otherwise both methods reject. */
+    enableFile: boolean;
   }
   // Import the entry module and return its actions/auth config (no functions).
   | { type: "start"; op: "describe-app"; entryPath: string }
   | { type: "fetch-response"; id: number; response: WireResponse }
-  | { type: "fetch-error"; id: number; message: string };
+  | { type: "fetch-error"; id: number; message: string }
+  | { type: "file-read-response"; id: number; ref: FileRef; bytes: Uint8Array }
+  | { type: "file-create-response"; id: number; ref: FileRef }
+  | { type: "file-error"; id: number; message: string };
 
 /** Worker -> host. */
 export type WorkerMessage =
   | { type: "log"; level: string; message: string; data?: unknown }
   | { type: "fetch"; id: number; request: SignableRequest }
   | { type: "result"; value: unknown }
-  | { type: "error"; error: { name: string; message: string } };
+  | { type: "error"; error: { name: string; message: string } }
+  | { type: "file-read"; id: number; ref: string }
+  | { type: "file-create"; id: number; bytes: Uint8Array; contentType: string; filename: string };

@@ -7,7 +7,12 @@
  * the trusted host, via the `onFetch` callback the caller supplies — that is
  * where the egress allowlist is enforced and where `sign` runs.
  */
-import type { InvocationContext, RedactedConnection, SignableRequest } from "@w6w/types";
+import type {
+  FileRef,
+  InvocationContext,
+  RedactedConnection,
+  SignableRequest,
+} from "@w6w/types";
 import { W6WError } from "../errors.ts";
 import type {
   DescribedApp,
@@ -32,6 +37,18 @@ interface WorkerRunOptions {
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
+  /**
+   * Resolve a `FileRef.id` (or a bare ref id string) to its bytes, host-side.
+   * `ctx.file.read` proxies through this. Both `onFileRead` and `onFileCreate`
+   * must be supplied for the sandbox's `ctx.file` to be enabled at all — a
+   * conforming host implements the whole two-method capability or none of it
+   * (DC-3), never half.
+   */
+  onFileRead?: (refId: string) => Promise<{ ref: FileRef; bytes: Uint8Array }>;
+  /** Store bytes and mint a `FileRef`, host-side. `ctx.file.create` proxies through this. */
+  onFileCreate?: (
+    input: { bytes: Uint8Array; contentType: string; filename: string },
+  ) => Promise<FileRef>;
 }
 
 /** Spawn a sandbox worker, drive one start message to completion, return its result. */
@@ -73,6 +90,44 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
           } catch (err) {
             worker.postMessage({
               type: "fetch-error",
+              id: msg.id,
+              message: (err as Error)?.message ?? String(err),
+            });
+          }
+          return;
+        }
+        case "file-read": {
+          if (!opts.onFileRead) {
+            worker.postMessage({ type: "file-error", id: msg.id, message: "file unavailable" });
+            return;
+          }
+          try {
+            const { ref, bytes } = await opts.onFileRead(msg.ref);
+            worker.postMessage({ type: "file-read-response", id: msg.id, ref, bytes });
+          } catch (err) {
+            worker.postMessage({
+              type: "file-error",
+              id: msg.id,
+              message: (err as Error)?.message ?? String(err),
+            });
+          }
+          return;
+        }
+        case "file-create": {
+          if (!opts.onFileCreate) {
+            worker.postMessage({ type: "file-error", id: msg.id, message: "file unavailable" });
+            return;
+          }
+          try {
+            const ref = await opts.onFileCreate({
+              bytes: msg.bytes,
+              contentType: msg.contentType,
+              filename: msg.filename,
+            });
+            worker.postMessage({ type: "file-create-response", id: msg.id, ref });
+          } catch (err) {
+            worker.postMessage({
+              type: "file-error",
               id: msg.id,
               message: (err as Error)?.message ?? String(err),
             });
@@ -123,6 +178,7 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
     connection: opts.connection,
     invocation: opts.invocation,
     enableFetch: !!opts.onFetch,
+    enableFile: !!(opts.onFileRead && opts.onFileCreate),
   }, opts);
 }
 

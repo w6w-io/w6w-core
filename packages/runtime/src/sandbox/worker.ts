@@ -10,7 +10,7 @@
  * the network — the trusted host does all I/O.
  */
 import { AUTH_HOOK_KINDS, TRIGGER_HOOK_KINDS } from "@w6w/types";
-import type { AppDefinition } from "@w6w/types";
+import type { AppDefinition, FileCapability, FileRef } from "@w6w/types";
 import type {
   DescribedApp,
   HostMessage,
@@ -26,12 +26,47 @@ declare const self: {
 
 const post = (msg: WorkerMessage) => self.postMessage(msg);
 
-const pending = new Map<number, {
-  resolve: (r: WireResponse) => void;
-  reject: (e: Error) => void;
-}>();
+/**
+ * One correlation-id space, shared by `ctx.fetch` and `ctx.file` (the note in
+ * this node's contract: "`ctx.file` reuses it"). The three proxies' responses
+ * are shaped differently, so `pending`'s value is a discriminated union rather
+ * than one fixed resolve type — `nextId` is still a single counter either way.
+ */
+type Pending =
+  | { kind: "fetch"; resolve: (r: WireResponse) => void; reject: (e: Error) => void }
+  | {
+    kind: "file-read";
+    resolve: (r: { ref: FileRef; bytes: Uint8Array }) => void;
+    reject: (e: Error) => void;
+  }
+  | { kind: "file-create"; resolve: (r: FileRef) => void; reject: (e: Error) => void };
+
+const pending = new Map<number, Pending>();
 let nextId = 1;
 let started = false;
+
+/**
+ * DC-5: coerce an outgoing `ctx.fetch` body onto the binary-safe wire.
+ *
+ * `Uint8Array` passes through untouched; any other `ArrayBufferView` (a
+ * `DataView`, a typed array of another element size) becomes a `Uint8Array`
+ * over the SAME bytes, respecting `byteOffset`/`byteLength` — a view over a
+ * slice of a larger buffer must not widen to the whole buffer. A bare
+ * `ArrayBuffer` becomes a `Uint8Array` over its full range. Everything else
+ * (a string, a `URLSearchParams`, `FormData`, …) keeps today's `String(...)`
+ * behaviour unchanged — this fix targets exactly the case that was silently
+ * corrupting binary uploads, not every other body shape `ctx.fetch` accepts.
+ * `null`/`undefined` stays `null`.
+ */
+function coerceBody(body: BodyInit | null | undefined): string | Uint8Array | null {
+  if (body == null) return null;
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }
+  return String(body);
+}
 
 function proxyFetch(enabled: boolean) {
   return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -42,11 +77,11 @@ function proxyFetch(enabled: boolean) {
     const method = init?.method ?? "GET";
     const headers: Record<string, string> = {};
     if (init?.headers) new Headers(init.headers).forEach((v, k) => (headers[k] = v));
-    const body = init?.body != null ? String(init.body) : null;
+    const body = coerceBody(init?.body);
 
     const id = nextId++;
     return new Promise<WireResponse>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      pending.set(id, { kind: "fetch", resolve, reject });
       post({ type: "fetch", id, request: { url, method, headers, body } });
     }).then((r) =>
       new Response(r.body.byteLength ? (r.body as unknown as BodyInit) : null, {
@@ -55,6 +90,43 @@ function proxyFetch(enabled: boolean) {
         headers: r.headers,
       })
     );
+  };
+}
+
+/**
+ * `ctx.file` — mirrors `proxyFetch`'s pending-map correlation exactly (see
+ * `Pending` above), over the two-method wire pinned in this node's contract
+ * (`protocol.ts`'s `file-read`/`file-create` and their responses). Disabled
+ * ⇒ both methods REJECT, the same shape `proxyFetch(false)` uses — `ctx.file`
+ * is always present (A1/A2), never an absent field and never a silent no-op.
+ */
+function proxyFile(enabled: boolean): FileCapability {
+  const unavailable = () =>
+    Promise.reject(new Error("File capability is not available in this context."));
+  return {
+    read(ref) {
+      if (!enabled) return unavailable();
+      const refId = typeof ref === "string" ? ref : ref.id;
+      const id = nextId++;
+      return new Promise<{ ref: FileRef; bytes: Uint8Array }>((resolve, reject) => {
+        pending.set(id, { kind: "file-read", resolve, reject });
+        post({ type: "file-read", id, ref: refId });
+      });
+    },
+    create(bytes, meta) {
+      if (!enabled) return unavailable();
+      const id = nextId++;
+      return new Promise<FileRef>((resolve, reject) => {
+        pending.set(id, { kind: "file-create", resolve, reject });
+        post({
+          type: "file-create",
+          id,
+          bytes,
+          contentType: meta.contentType,
+          filename: meta.filename,
+        });
+      });
+    },
   };
 }
 
@@ -119,6 +191,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
       post({ type: "log", level, message, data }),
     connection: msg.connection,
     invocation: msg.invocation,
+    file: proxyFile(msg.enableFile),
   };
   const value = await fn(msg.input, ctx);
   post({ type: "result", value });
@@ -202,13 +275,37 @@ self.onmessage = (e) => {
       return;
     case "fetch-response": {
       const p = pending.get(msg.id);
-      if (p) {
+      if (p && p.kind === "fetch") {
         pending.delete(msg.id);
         p.resolve(msg.response);
       }
       return;
     }
     case "fetch-error": {
+      const p = pending.get(msg.id);
+      if (p) {
+        pending.delete(msg.id);
+        p.reject(new Error(msg.message));
+      }
+      return;
+    }
+    case "file-read-response": {
+      const p = pending.get(msg.id);
+      if (p && p.kind === "file-read") {
+        pending.delete(msg.id);
+        p.resolve({ ref: msg.ref, bytes: msg.bytes });
+      }
+      return;
+    }
+    case "file-create-response": {
+      const p = pending.get(msg.id);
+      if (p && p.kind === "file-create") {
+        pending.delete(msg.id);
+        p.resolve(msg.ref);
+      }
+      return;
+    }
+    case "file-error": {
       const p = pending.get(msg.id);
       if (p) {
         pending.delete(msg.id);
