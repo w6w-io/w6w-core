@@ -13,6 +13,8 @@ import type {
   DescribedApp,
   HostMessage,
   Selector,
+  SocketRequest,
+  SocketResult,
   WireResponse,
   WorkerMessage,
 } from "./protocol.ts";
@@ -27,15 +29,32 @@ const NO_NET_PERMS = {
   import: false as const,
 };
 
-interface WorkerRunOptions {
+export interface WorkerRunOptions {
   readScope: string;
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
+  /**
+   * Host-mediated socket proxy, servicing the worker's `ctx.socket` calls.
+   * Absent, exactly like `onFetch`: every socket op the worker asks for
+   * fails (never hangs, never silently no-ops) instead of reaching a real
+   * socket the caller never agreed to open. Opening the actual OS
+   * connection is this callback's owner's job (T1.2.2) — this seam only
+   * proxies write/read/close to whatever the caller supplies.
+   */
+  onSocket?: (request: SocketRequest) => Promise<SocketResult>;
 }
 
-/** Spawn a sandbox worker, drive one start message to completion, return its result. */
-function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
+/**
+ * Spawn a sandbox worker, drive one start message to completion, return its
+ * result. Exported (alongside the convenience wrappers below) because
+ * `describeApp` already needs to hand-build a `start` message directly —
+ * and so does a test proving the `onSocket`-absent guard is live: `runHook`
+ * always derives `enableSocket` from `!!opts.onSocket`, so nothing through
+ * that convenience wrapper can ever decouple the two; only a caller driving
+ * `runWorker` directly can construct that scenario.
+ */
+export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
 
   const worker = new Worker(import.meta.resolve("./worker.ts"), {
@@ -73,6 +92,70 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
           } catch (err) {
             worker.postMessage({
               type: "fetch-error",
+              id: msg.id,
+              message: (err as Error)?.message ?? String(err),
+            });
+          }
+          return;
+        }
+        case "socket-write": {
+          if (!opts.onSocket) {
+            worker.postMessage({
+              type: "socket-write-error",
+              id: msg.id,
+              message: "socket unavailable",
+            });
+            return;
+          }
+          try {
+            await opts.onSocket({ op: "write", bytes: msg.bytes });
+            worker.postMessage({ type: "socket-write-response", id: msg.id });
+          } catch (err) {
+            worker.postMessage({
+              type: "socket-write-error",
+              id: msg.id,
+              message: (err as Error)?.message ?? String(err),
+            });
+          }
+          return;
+        }
+        case "socket-read": {
+          if (!opts.onSocket) {
+            worker.postMessage({
+              type: "socket-read-error",
+              id: msg.id,
+              message: "socket unavailable",
+            });
+            return;
+          }
+          try {
+            const result = await opts.onSocket({ op: "read", max: msg.max });
+            const bytes = result.op === "read" ? result.bytes : null;
+            worker.postMessage({ type: "socket-read-response", id: msg.id, bytes });
+          } catch (err) {
+            worker.postMessage({
+              type: "socket-read-error",
+              id: msg.id,
+              message: (err as Error)?.message ?? String(err),
+            });
+          }
+          return;
+        }
+        case "socket-close": {
+          if (!opts.onSocket) {
+            worker.postMessage({
+              type: "socket-close-error",
+              id: msg.id,
+              message: "socket unavailable",
+            });
+            return;
+          }
+          try {
+            await opts.onSocket({ op: "close" });
+            worker.postMessage({ type: "socket-close-response", id: msg.id });
+          } catch (err) {
+            worker.postMessage({
+              type: "socket-close-error",
               id: msg.id,
               message: (err as Error)?.message ?? String(err),
             });
@@ -123,6 +206,7 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
     connection: opts.connection,
     invocation: opts.invocation,
     enableFetch: !!opts.onFetch,
+    enableSocket: !!opts.onSocket,
   }, opts);
 }
 
