@@ -104,10 +104,22 @@ function proxyFetch(enabled: boolean) {
  * a TypeScript parameter type (`read(ref: FileRef | string)`) is not a
  * security boundary — it is erased at runtime and enforces nothing against
  * code we don't trust. Both entry points runtime-narrow their argument
- * BEFORE the `post(...)` call: a malformed call never reaches the wire, and
- * rejects the same way (a rejecting Promise, never a thrown synchronous
- * error) `proxyFetch(false)` already does for a disabled capability, so a
- * malformed call and a disabled capability are one class of failure, not two.
+ * BEFORE the `post(...)` call, rejecting the same way (a rejecting Promise,
+ * never a thrown synchronous error) `proxyFetch(false)` already does for a
+ * disabled capability, so a malformed call and a disabled capability are one
+ * class of failure, not two.
+ *
+ * ROUND 2 / B3: this narrowing is an ERGONOMIC fast path, not the boundary —
+ * it runs in the SAME Deno Worker realm as the untrusted app module, so every
+ * global it resolves against (`Uint8Array`, `Symbol.hasInstance`, the getter
+ * on an object literal) is itself app-writable. A getter-based TOCTOU (a
+ * `ref` whose `.id` returns a string on `isFileRef`'s read and an object on
+ * this method's own re-read) and a fake-branded `Uint8Array`
+ * (`Object.create(Uint8Array.prototype)`) both pass these checks and still
+ * reach the wire. The actual boundary is `run-hook.ts`'s `worker.onmessage`
+ * switch, which re-checks the SAME value on the host side, after it has
+ * crossed `structuredClone` — the one point the app cannot reach or rewrite.
+ * These checks stay for a faster, clearer error on an honest app's mistake.
  */
 function proxyFile(enabled: boolean): FileCapability {
   const unavailable = () =>
@@ -120,9 +132,13 @@ function proxyFile(enabled: boolean): FileCapability {
       if (typeof ref === "string") {
         refId = ref;
       } else if (isFileRef(ref)) {
-        // isFileRef already requires `typeof id === "string"`, so this is
-        // never anything but a string — the wire's `ref` field can never
-        // carry a nested object, a path, a URL or a token.
+        // isFileRef checks `typeof id === "string"` at the moment it reads
+        // `.id` — but a getter can return a different value on a second
+        // read (a same-realm TOCTOU this worker-side check cannot see), so
+        // this line does NOT itself guarantee the wire's `ref` field can
+        // only ever carry a string. `run-hook.ts`'s host-side re-check,
+        // after `structuredClone` has evaluated any getter exactly once and
+        // frozen the result, is what actually enforces that.
         refId = ref.id;
       } else {
         return malformed("ctx.file.read: ref must be a FileRef or a string id.");

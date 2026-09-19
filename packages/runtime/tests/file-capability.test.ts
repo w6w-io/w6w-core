@@ -275,6 +275,89 @@ Deno.test("B1: ctx.file.create rejects a non-Uint8Array bytes payload, never rea
   assert(!onFileCreateCalled, "onFileCreate must never be called with a non-Uint8Array payload");
 });
 
+// ── ROUND 2 / B3-B4 — the host realm (run-hook.ts), not the worker realm, is
+// the actual boundary. `worker.ts` runs in the SAME Deno Worker realm as the
+// untrusted app module, so a worker-side runtime check resolves `Uint8Array`,
+// `ArrayBuffer` and getter reads against globals/values the app itself
+// controls. These three cases reproduce the evaluator's proven bypasses
+// (`artifacts/T1.2.1-r1-sandbox-escape.md` rows 1, 2, 6) via the fixture's
+// `evil` action, which builds each hostile value INSIDE the worker — the
+// only place a getter-based TOCTOU or a fake-branded Uint8Array can be built
+// at all, since `structuredClone` would flatten either one before a
+// host-built value (e.g. one assembled directly in this test's `input`)
+// could ever cross into the worker.
+
+Deno.test("B4: a getter-TOCTOU file ref is refused, onFileRead never invoked", async () => {
+  const app = await loadApp(FILE_DIR);
+  let onFileReadCalled = false;
+  const onFileRead = (_refId: string): Promise<{ ref: FileRef; bytes: Uint8Array }> => {
+    onFileReadCalled = true;
+    return Promise.reject(new Error("onFileRead must never be invoked with a getter-TOCTOU ref"));
+  };
+  const onFileCreate = (): Promise<FileRef> => Promise.reject(new Error("unused in this test"));
+
+  await assertRejects(
+    () =>
+      runHook({
+        entryPath: app.entryPath,
+        selector: { kind: "action", key: "evil" },
+        input: { mode: "getter-ref" },
+        readScope: app.dir,
+        onFileRead,
+        onFileCreate,
+      }),
+    W6WError,
+  );
+  assert(!onFileReadCalled, "onFileRead must never be called with a getter-TOCTOU ref");
+});
+
+Deno.test("B4: a fake-branded Uint8Array create payload is refused, onFileCreate never invoked", async () => {
+  const app = await loadApp(FILE_DIR);
+  let onFileCreateCalled = false;
+  const onFileCreate = (): Promise<FileRef> => {
+    onFileCreateCalled = true;
+    return Promise.reject(new Error("onFileCreate must never be invoked with a fake Uint8Array"));
+  };
+  const onFileRead = (): Promise<{ ref: FileRef; bytes: Uint8Array }> =>
+    Promise.reject(new Error("unused in this test"));
+
+  await assertRejects(
+    () =>
+      runHook({
+        entryPath: app.entryPath,
+        selector: { kind: "action", key: "evil" },
+        input: { mode: "fake-u8" },
+        readScope: app.dir,
+        onFileRead,
+        onFileCreate,
+      }),
+    W6WError,
+  );
+  assert(!onFileCreateCalled, "onFileCreate must never be called with a fake-branded Uint8Array");
+});
+
+Deno.test("B4: a fake-branded Uint8Array ctx.fetch body is refused, onFetch never invoked", async () => {
+  const app = await loadApp(FILE_DIR);
+  let onFetchCalled = false;
+  const onFetch = (_request: SignableRequest): Promise<WireResponse> => {
+    onFetchCalled = true;
+    return Promise.reject(new Error("onFetch must never be invoked with a fake Uint8Array body"));
+  };
+
+  await assertRejects(
+    () =>
+      runHook({
+        entryPath: app.entryPath,
+        selector: { kind: "action", key: "evil" },
+        input: { mode: "fake-u8-fetch" },
+        readScope: app.dir,
+        onFetch,
+      }),
+    W6WError,
+  );
+  assert(!onFetchCalled, "onFetch must never be called with a fake-branded Uint8Array body");
+});
+
 Deno.test("A5: a body override on a binary request fails loudly, without corrupting the bytes", () => {
   const request: SignableRequest = {
     url: "https://example.test/upload",

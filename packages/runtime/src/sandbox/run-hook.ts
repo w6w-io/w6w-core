@@ -79,6 +79,27 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
             worker.postMessage({ type: "fetch-error", id: msg.id, message: "fetch unavailable" });
             return;
           }
+          // ROUND 2 / B3: `worker.ts` runs in the SAME Deno Worker realm as
+          // the untrusted app module, so its own `instanceof`/`ArrayBuffer.
+          // isView` checks resolve against globals that module can rewrite
+          // (a fake-branded Uint8Array, a hijacked Symbol.hasInstance) — not
+          // a boundary. This is the one point running on the value AFTER it
+          // has crossed `structuredClone`, in the host realm the app cannot
+          // reach or rewrite, so it is where DC-5's binary-safe body contract
+          // is actually enforced before a forged value can reach `onFetch`
+          // (and, downstream, the credential-bearing `sign` hook).
+          const b = msg.request.body;
+          if (
+            !(b == null || typeof b === "string" ||
+              (ArrayBuffer.isView(b) && b instanceof Uint8Array))
+          ) {
+            worker.postMessage({
+              type: "fetch-error",
+              id: msg.id,
+              message: "malformed fetch body",
+            });
+            return;
+          }
           try {
             const response = await opts.onFetch(msg.request);
             worker.postMessage({ type: "fetch-response", id: msg.id, response });
@@ -96,6 +117,18 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
             worker.postMessage({ type: "file-error", id: msg.id, message: "file unavailable" });
             return;
           }
+          // ROUND 2 / B3: the actual boundary for A3's "onFileRead receives
+          // only the id string" — see the fetch case's comment above for why
+          // it cannot live in `worker.ts`. A getter-based TOCTOU (`isFileRef`
+          // reads `.id` once, sees a string; a second read sees an object)
+          // defeats any worker-side check because both reads happen in the
+          // same realm as the getter itself; `msg.ref` here is the value
+          // AFTER `structuredClone`, which evaluates a getter exactly once
+          // and freezes the result, so there is no second read left to lie to.
+          if (typeof msg.ref !== "string") {
+            worker.postMessage({ type: "file-error", id: msg.id, message: "malformed file-read" });
+            return;
+          }
           try {
             const { ref, bytes } = await opts.onFileRead(msg.ref);
             worker.postMessage({ type: "file-read-response", id: msg.id, ref, bytes });
@@ -111,6 +144,23 @@ function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
         case "file-create": {
           if (!opts.onFileCreate) {
             worker.postMessage({ type: "file-error", id: msg.id, message: "file unavailable" });
+            return;
+          }
+          // ROUND 2 / B3: the actual boundary for A3's "onFileCreate
+          // receives a real Uint8Array" — a fake-branded object
+          // (`Object.create(Uint8Array.prototype)`) passes a same-realm
+          // `instanceof Uint8Array` inside the worker but has no
+          // `[[ViewedArrayBuffer]]` slot, so it arrives here (past
+          // `structuredClone`) as a plain object — `ArrayBuffer.isView`
+          // (checked FIRST, on the internal slot, not the prototype chain)
+          // correctly reports `false` for it, closing the hole a worker-side
+          // `instanceof` check alone could not.
+          if (!ArrayBuffer.isView(msg.bytes) || !(msg.bytes instanceof Uint8Array)) {
+            worker.postMessage({
+              type: "file-error",
+              id: msg.id,
+              message: "malformed file-create",
+            });
             return;
           }
           try {
