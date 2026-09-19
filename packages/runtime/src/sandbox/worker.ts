@@ -9,7 +9,7 @@
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import { AUTH_HOOK_KINDS, TRIGGER_HOOK_KINDS } from "@w6w/types";
+import { AUTH_HOOK_KINDS, isFileRef, TRIGGER_HOOK_KINDS } from "@w6w/types";
 import type { AppDefinition, FileCapability, FileRef } from "@w6w/types";
 import type {
   DescribedApp,
@@ -99,14 +99,34 @@ function proxyFetch(enabled: boolean) {
  * (`protocol.ts`'s `file-read`/`file-create` and their responses). Disabled
  * ⇒ both methods REJECT, the same shape `proxyFetch(false)` uses — `ctx.file`
  * is always present (A1/A2), never an absent field and never a silent no-op.
+ *
+ * ROUND 1 / B1: the app script calling this is untrusted by construction, so
+ * a TypeScript parameter type (`read(ref: FileRef | string)`) is not a
+ * security boundary — it is erased at runtime and enforces nothing against
+ * code we don't trust. Both entry points runtime-narrow their argument
+ * BEFORE the `post(...)` call: a malformed call never reaches the wire, and
+ * rejects the same way (a rejecting Promise, never a thrown synchronous
+ * error) `proxyFetch(false)` already does for a disabled capability, so a
+ * malformed call and a disabled capability are one class of failure, not two.
  */
 function proxyFile(enabled: boolean): FileCapability {
   const unavailable = () =>
     Promise.reject(new Error("File capability is not available in this context."));
+  const malformed = (message: string) => Promise.reject(new Error(message));
   return {
     read(ref) {
       if (!enabled) return unavailable();
-      const refId = typeof ref === "string" ? ref : ref.id;
+      let refId: string;
+      if (typeof ref === "string") {
+        refId = ref;
+      } else if (isFileRef(ref)) {
+        // isFileRef already requires `typeof id === "string"`, so this is
+        // never anything but a string — the wire's `ref` field can never
+        // carry a nested object, a path, a URL or a token.
+        refId = ref.id;
+      } else {
+        return malformed("ctx.file.read: ref must be a FileRef or a string id.");
+      }
       const id = nextId++;
       return new Promise<{ ref: FileRef; bytes: Uint8Array }>((resolve, reject) => {
         pending.set(id, { kind: "file-read", resolve, reject });
@@ -115,6 +135,13 @@ function proxyFile(enabled: boolean): FileCapability {
     },
     create(bytes, meta) {
       if (!enabled) return unavailable();
+      // A string, a plain object, or any other ArrayBufferView subtype is a
+      // caller error here — DC-5's permissive `coerceBody` is a different
+      // code path (ctx.fetch bodies); ctx.file.create stays strict, because
+      // its contract is "you already have bytes."
+      if (!(bytes instanceof Uint8Array)) {
+        return malformed("ctx.file.create: bytes must be a Uint8Array.");
+      }
       const id = nextId++;
       return new Promise<FileRef>((resolve, reject) => {
         pending.set(id, { kind: "file-create", resolve, reject });

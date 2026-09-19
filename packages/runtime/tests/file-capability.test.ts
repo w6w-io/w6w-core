@@ -212,6 +212,69 @@ Deno.test("A5: the egress capture of a binary body is a byte-count placeholder, 
 
 // ── A5 site 3 (overrides.ts:351-355) — an override on a binary body fails loudly ─
 
+// ── ROUND 1 / B1-B2 — the wire's `ref`/`bytes` fields are runtime-narrowed ──
+// TypeScript's `read(ref: FileRef | string)` / `create(bytes: Uint8Array, …)`
+// parameter types are erased at runtime and enforce nothing against the
+// untrusted sandboxed app script that calls them. These two cases reproduce
+// the evaluator's exact adversarial fixture shapes and assert the malformed
+// payload never reaches the host-side stub at all — not merely that a
+// rejection eventually surfaces.
+
+Deno.test("B1: ctx.file.read rejects an object ref whose .id is itself an object, never reaching the host", async () => {
+  const app = await loadApp(FILE_DIR);
+  let onFileReadCalled = false;
+  const onFileRead = (_refId: string): Promise<{ ref: FileRef; bytes: Uint8Array }> => {
+    onFileReadCalled = true;
+    return Promise.reject(new Error("onFileRead must never be invoked with a malformed ref"));
+  };
+  const onFileCreate = (): Promise<FileRef> => Promise.reject(new Error("unused in this test"));
+
+  await assertRejects(
+    () =>
+      runHook({
+        entryPath: app.entryPath,
+        // The exact evaluator shape: a nested object carrying a path/token
+        // payload, never a string id and never a well-formed FileRef.
+        selector: { kind: "action", key: "read-file" },
+        input: { ref: { id: { path: "/etc/passwd", token: "hunter2" } } },
+        readScope: app.dir,
+        onFileRead,
+        onFileCreate,
+      }),
+    W6WError,
+  );
+  assert(!onFileReadCalled, "onFileRead must never be called with a malformed ref");
+});
+
+Deno.test("B1: ctx.file.create rejects a non-Uint8Array bytes payload, never reaching the host", async () => {
+  const app = await loadApp(FILE_DIR);
+  let onFileCreateCalled = false;
+  const onFileCreate = (): Promise<FileRef> => {
+    onFileCreateCalled = true;
+    return Promise.reject(new Error("onFileCreate must never be invoked with malformed bytes"));
+  };
+  const onFileRead = (): Promise<{ ref: FileRef; bytes: Uint8Array }> =>
+    Promise.reject(new Error("unused in this test"));
+
+  await assertRejects(
+    () =>
+      runHook({
+        entryPath: app.entryPath,
+        // `create-file-raw` forwards `bytes` unmodified (no `new
+        // Uint8Array(...)` wrapping like `create-file` does), so a plain
+        // JS string reaches `proxyFile.create` exactly as the evaluator's
+        // `ctx.file.create("i am a string", …)` reproduction did.
+        selector: { kind: "action", key: "create-file-raw" },
+        input: { bytes: "i am a string", contentType: "text/plain", filename: "a.txt" },
+        readScope: app.dir,
+        onFileRead,
+        onFileCreate,
+      }),
+    W6WError,
+  );
+  assert(!onFileCreateCalled, "onFileCreate must never be called with a non-Uint8Array payload");
+});
+
 Deno.test("A5: a body override on a binary request fails loudly, without corrupting the bytes", () => {
   const request: SignableRequest = {
     url: "https://example.test/upload",
