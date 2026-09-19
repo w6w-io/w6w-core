@@ -75,6 +75,12 @@ Deno.test("A1: Object.keys(ctx.file) is exactly ['read', 'create']", async () =>
 
 // ── A2 — no capability means a refusal, not a crash ─────────────────────────
 
+// The exact substring proxyFile's OWN guard throws — asserted, not just "some
+// W6WError" — so a deleted worker-side guard (which still ends up rejecting,
+// via run-hook.ts's separate host-side "file unavailable" guard) is caught:
+// that path produces a DIFFERENT message than this one.
+const NO_CAPABILITY = "File capability is not available";
+
 Deno.test("A2: ctx.file.read rejects when the host supplies neither callback", async () => {
   const app = await loadApp(FILE_DIR);
   await assertRejects(
@@ -86,6 +92,7 @@ Deno.test("A2: ctx.file.read rejects when the host supplies neither callback", a
         readScope: app.dir,
       }),
     W6WError,
+    NO_CAPABILITY,
   );
 });
 
@@ -100,6 +107,7 @@ Deno.test("A2: ctx.file.create rejects when the host supplies neither callback",
         readScope: app.dir,
       }),
     W6WError,
+    NO_CAPABILITY,
   );
 });
 
@@ -118,6 +126,7 @@ Deno.test("A2: supplying only one of the two callbacks still leaves ctx.file rej
         onFileCreate, // onFileRead deliberately omitted
       }),
     W6WError,
+    NO_CAPABILITY,
   );
 });
 
