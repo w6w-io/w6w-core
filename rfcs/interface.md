@@ -551,3 +551,25 @@ amendment, because the host push path built alongside this amendment is the firs
 either method. Item (iv)'s argument against sourcing `commitMessage` from a canonical input is
 untouched by this amendment — `commitMessage` remains a literal `with` value, not a field this
 amendment adds.
+
+## Amendment — 2026-09-19: `blob-store@1` is not the run file channel
+
+> This section is **additive** — a cross-reference only. It changes nothing about `blob-store@1`'s
+> id, methods, or `io.w6w.github`'s conformance declared above, and nothing about the [Summary](#summary)'s
+> or [Governance](#governance-the-interface-id-vocabulary)'s framing of `blob-store@1` as a named
+> method contract with `io.w6w.github` as "the worked case this RFC pins throughout." It exists
+> because a second, unrelated mechanism now also uses the word "blob," and a reader who greps for it
+> can otherwise land on the wrong one.
+
+`blob-store@1` is a **git-repo file-sync method contract** —
+`headRef`/`list`/`get`/`put`/`delete` against `io.w6w.github`, exactly as the worked example
+above (`:162-176`) defines it. It has nothing to do with a workflow run's own file channel.
+
+That separate, unrelated mechanism is the [`file` param type](./param.md#file) and its runtime
+value, `FileRef` (`@w6w/types`) — a **run-scoped byte reference** a workflow step's params or output
+can carry, resolved and read via
+[`ctx.file`](./hook-runtime.md#amendment--2026-09-19-ctxfile-and-binary-capable-signablerequestbody)
+and produced by a [`file`-typed output field](./action.md#amendment--2026-09-19-file-output-fields-and-the-binary-channel).
+Nothing about `blob-store@1` — its interface id, its methods, or `io.w6w.github`'s conformance —
+changes, narrows, or generalises because `FileRef` exists; the two mechanisms share a word and
+nothing else.
