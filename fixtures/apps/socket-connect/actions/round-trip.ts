@@ -9,6 +9,13 @@ interface Input {
    * apart from "never closes at all").
    */
   failAfter?: boolean;
+  /**
+   * Test-only: skip the write and go straight to `ctx.socket.read()` — used
+   * by the FU-6 leftover test, where the first read must be satisfiable
+   * entirely from bytes the handshake already queued, with no fresh write
+   * to prompt the listener into replying.
+   */
+  skipWrite?: boolean;
 }
 
 interface Output {
@@ -30,12 +37,15 @@ const roundTrip: ActionDefinition<Input, Output> = {
   params: [
     { key: "message", label: "Message", type: "string", required: true },
     { key: "failAfter", label: "Fail after round trip", type: "boolean" },
+    { key: "skipWrite", label: "Skip write (read-only round trip)", type: "boolean" },
   ],
   output: [{ key: "echoed", type: "string", label: "Echoed" }],
 
   async execute(input, ctx) {
     if (!ctx.socket) throw new Error("ctx.socket is not present.");
-    await ctx.socket.write(new TextEncoder().encode(input.message));
+    if (!input.skipWrite) {
+      await ctx.socket.write(new TextEncoder().encode(input.message));
+    }
     const bytes = await ctx.socket.read();
     const echoed = bytes ? new TextDecoder().decode(bytes) : null;
     if (input.failAfter) throw new Error("forced failure after the round trip");

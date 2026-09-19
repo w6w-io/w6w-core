@@ -133,10 +133,25 @@ export interface SocketHandle {
   close(): Promise<void>;
 }
 
-/** One step of an iterative, network-less handshake. */
+/**
+ * One step of an iterative, network-less handshake.
+ *
+ * The `done: true` arm's optional `leftover` carries bytes the HOST's final
+ * handshake `read()` received but the hook did not need to consume to
+ * recognize completion — a real server routinely batches the trailing
+ * protocol messages that follow the auth-confirmation frame in the same TCP
+ * segment (e.g. Postgres's `AuthenticationSASLFinal` + `AuthenticationOk` +
+ * `ParameterStatus` + `BackendKeyData` + `ReadyForQuery` in one burst). A hook
+ * that recognizes it only needed the leading bytes returns the remainder
+ * here so the host can hand it back on the FIRST post-handshake
+ * `ctx.socket.read()`, instead of silently discarding it. Additive and
+ * optional: a hook that never splits its `received` buffer (the sandbox side
+ * of every handshake shipped before this field existed) simply never
+ * populates it, and nothing else about this type changes.
+ */
 export type HandshakeStep =
   | { done: false; send: Uint8Array; state?: unknown }
-  | { done: true; send?: Uint8Array };
+  | { done: true; send?: Uint8Array; leftover?: Uint8Array };
 
 /**
  * Auth `handshake` — the protocol-agnostic generalization of `sign`.

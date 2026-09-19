@@ -592,3 +592,50 @@ Deno.test("FU-4: a raw connect failure's relayed message does not contain the ta
   assert(!err.message.includes("127.0.0.1"), err.message);
   assert(!err.message.includes(":1"), err.message);
 });
+
+// ── FU-6 — trailing post-handshake bytes are never dropped ─────────────────
+
+Deno.test("FU-6: bytes a batching server sends after the auth-confirmation frame, in the SAME write, are not dropped — the first post-handshake ctx.socket.read() yields them", async () => {
+  const app = await loadApp(DIR);
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+
+  const serverDone = (async () => {
+    const conn = await listener.accept();
+    await readUntilNewline(conn); // consumes "AUTH <token>\n"
+    // ONE single write batching the "OK\n" auth-confirmation frame AND the
+    // next protocol message — mirrors a real Postgres server batching
+    // AuthenticationSASLFinal+AuthenticationOk+ParameterStatus+BackendKeyData
+    // +ReadyForQuery in a single TCP burst.
+    await writeFully(conn, enc("OK\nNEXT-MESSAGE\n"));
+    try {
+      conn.close();
+    } catch {
+      // already gone
+    }
+  })();
+
+  const target: ConnectionTarget = {
+    host: "127.0.0.1",
+    port,
+    tlsMode: "disable",
+    allowPrivate: true,
+  };
+  const connection = connectionWithTarget(target, { token: "secret-token", mode: "leftover" });
+
+  // `skipWrite` — the first `ctx.socket.read()` must be satisfiable entirely
+  // from the handshake's queued leftover, with no fresh write to prompt the
+  // listener (which has already said everything it's going to say).
+  const result = await invoke(app, inv("round-trip", { message: "unused", skipWrite: true }), {
+    connection,
+  });
+
+  await serverDone;
+  try {
+    listener.close();
+  } catch {
+    // already gone
+  }
+
+  assertEquals((result.value as { echoed: string | null }).echoed, "NEXT-MESSAGE\n");
+});

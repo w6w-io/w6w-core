@@ -13,9 +13,14 @@ interface Credential {
    *     as `connection_broken`.
    *   - `"never-done"` — always returns `{ done: false }`, ignoring the
    *     reply, so the loop must hit its step cap rather than spin forever.
+   *   - `"leftover"` — same 2-step shape as the real handshake, but the
+   *     listener's step-2 reply batches the "OK\n" auth-confirmation AND a
+   *     trailing protocol message in one write; this mode recognizes only
+   *     the "OK\n" prefix as its own and returns everything after it as
+   *     `HandshakeStep.leftover`, for `socket-connect.test.ts`'s FU-6 case.
    * Absent (or any other value) runs the real handshake below.
    */
-  mode?: "fetch" | "never-done";
+  mode?: "fetch" | "never-done" | "leftover";
 }
 
 /**
@@ -45,6 +50,17 @@ const handshakeAuth: AuthDefinition = {
     }
     if (mode === "never-done") {
       return { done: false, send: new TextEncoder().encode("PING\n") };
+    }
+    if (mode === "leftover") {
+      if (received === undefined) {
+        return { done: false, send: new TextEncoder().encode(`AUTH ${token}\n`) };
+      }
+      // Only "OK\n" belongs to the handshake; anything the server batched
+      // after it in the same read is the connection's, not the auth
+      // exchange's — hand it back as `leftover`.
+      const idx = received.indexOf(0x0a); // "\n"
+      const leftover = received.subarray(idx + 1);
+      return { done: true, leftover: leftover.byteLength > 0 ? leftover : undefined };
     }
 
     if (received === undefined) {

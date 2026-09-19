@@ -394,6 +394,14 @@ async function writeAll(conn: Deno.Conn, data: Uint8Array): Promise<void> {
  * step cap — surfaces as `connection_broken`, the same shape a failed
  * `refresh` gets (`runtime.ts:449-451`); a handshake failure is not a new
  * error code (`hook-runtime.md`'s Codes table, T1.1.1).
+ *
+ * Returns the final step's `leftover`, if any — bytes the last `read()`
+ * pulled off the wire that the hook recognized as belonging to the
+ * connection proper, not the auth exchange (see `HandshakeStep`'s doc
+ * comment in `@w6w/types`). The caller (`openConnectionSocket`) is
+ * responsible for handing these back on the first post-handshake
+ * `ctx.socket.read()` — this function only surfaces them, it never touches
+ * `onSocket`.
  */
 export async function runHandshake(
   app: LoadedApp,
@@ -402,12 +410,12 @@ export async function runHandshake(
   credential: unknown,
   conn: Deno.Conn,
   opts: { timeoutMs?: number } = {},
-): Promise<void> {
+): Promise<Uint8Array | undefined> {
   let received: Uint8Array | undefined;
   let state: unknown;
 
   for (let step = 0; step < MAX_HANDSHAKE_STEPS; step++) {
-    let result: { done: boolean; send?: Uint8Array; state?: unknown };
+    let result: { done: boolean; send?: Uint8Array; state?: unknown; leftover?: Uint8Array };
     try {
       result = await runHook({
         entryPath: app.entryPath,
@@ -433,7 +441,7 @@ export async function runHandshake(
       }
     }
 
-    if (result.done) return;
+    if (result.done) return result.leftover;
 
     const buf = new Uint8Array(HANDSHAKE_READ_BUFFER_BYTES);
     let n: number | null;
@@ -512,11 +520,24 @@ function logIoFailure(
  * connection. The stream itself (`openSocket`'s return value) is exactly
  * what this is built from — there is no other route to it, matching
  * `SocketHandle` having no `open()`.
+ *
+ * `opts.leftover`, when given, is bytes the handshake's final `read()`
+ * already pulled off the wire past what the hook consumed (its
+ * `HandshakeStep`'s `leftover` — see that type's doc comment). They are
+ * queued here and drained — largest chunk first, remainder kept for the
+ * NEXT call — before any fresh `conn.read()`, so the first post-handshake
+ * `ctx.socket.read()` never silently drops trailing bytes a batching server
+ * sent in the same TCP segment as the auth-confirmation frame.
  */
 export function buildOnSocket(
   conn: Deno.Conn,
-  opts: { onLog?: (level: string, message: string, data?: unknown) => void } = {},
+  opts: {
+    onLog?: (level: string, message: string, data?: unknown) => void;
+    leftover?: Uint8Array;
+  } = {},
 ): (request: SocketRequest) => Promise<SocketResult> {
+  let pending: Uint8Array | undefined = opts.leftover?.byteLength ? opts.leftover : undefined;
+
   return async (request: SocketRequest): Promise<SocketResult> => {
     switch (request.op) {
       case "write": {
@@ -540,6 +561,13 @@ export function buildOnSocket(
         // Clamp BEFORE allocating — `Uint8Array(size)` is the only allocation
         // this branch ever performs, and `size` is never the raw worker value.
         const size = Math.min(request.max ?? DEFAULT_SOCKET_READ_BYTES, MAX_SOCKET_IO_BYTES);
+        if (pending) {
+          // Drain the handshake leftover first — never a real read while
+          // there are queued bytes still owed to the caller.
+          const chunk = pending.subarray(0, size);
+          pending = pending.byteLength > size ? pending.subarray(size) : undefined;
+          return { op: "read", bytes: chunk };
+        }
         const buf = new Uint8Array(size);
         let n: number | null;
         try {
@@ -597,9 +625,10 @@ export async function openConnectionSocket(
   } = {},
 ): Promise<SocketSession> {
   const conn = await openSocket(target, opts);
+  let leftover: Uint8Array | undefined;
   try {
     if (auth?.hooks.has("handshake")) {
-      await runHandshake(app, auth, target, credential, conn, opts);
+      leftover = await runHandshake(app, auth, target, credential, conn, opts);
     }
   } catch (e) {
     try {
@@ -610,7 +639,7 @@ export async function openConnectionSocket(
     throw e;
   }
   return {
-    onSocket: buildOnSocket(conn, opts),
+    onSocket: buildOnSocket(conn, { ...opts, leftover }),
     close: () => {
       try {
         conn.close();
