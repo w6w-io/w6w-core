@@ -101,10 +101,20 @@ function truncate(text: string, limit: number): { text: string; truncated: boole
 
 /**
  * Redact a request body. JSON bodies are re-serialized with sensitive keys
- * masked; anything else (form-encoded, XML, binary) is passed through as text —
- * a form body's credential fields are masked by pattern instead.
+ * masked; form-encoded bodies get their credential fields masked by pattern.
+ *
+ * A **binary** body (DC-5: `ctx.fetch` can now carry one) is NOT decoded into
+ * the capture — decoding it would put raw bytes into the run-log surface
+ * `project.md`'s constraints forbid. It is recorded as a fixed,
+ * byte-count-bearing placeholder instead (A5's `egress.ts:107` decision).
  */
-function captureRequestBody(body: string, limit: number): { text: string; truncated: boolean } {
+function captureRequestBody(
+  body: string | Uint8Array,
+  limit: number,
+): { text: string; truncated: boolean } {
+  if (body instanceof Uint8Array) {
+    return { text: `[binary ${body.length} bytes]`, truncated: false };
+  }
   const trimmed = body.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     try {

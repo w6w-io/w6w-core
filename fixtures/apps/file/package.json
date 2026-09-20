@@ -1,0 +1,15 @@
+{
+  "name": "@w6w-fixtures/file",
+  "version": "1.0.0",
+  "description": "Conformance fixture for ctx.file (T1.2.1) — the read/create proxy pair, and a binary ctx.fetch body (DC-5).",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.file",
+    "displayName": "File",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts"
+  }
+}

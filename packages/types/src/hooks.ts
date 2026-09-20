@@ -12,6 +12,7 @@ import type { OutputField } from "./action.ts";
 import type { ConnectionTarget, RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
+import type { FileCapability } from "./file.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -44,6 +45,13 @@ export interface HookContext {
    * capability and the Connection carries a `target`.
    */
   socket?: SocketHandle;
+  /**
+   * Host-mediated access to the run file store. OPTIONAL because a conforming host need not
+   * implement the capability at all — a portable app MUST handle its absence. (A host that DOES
+   * implement it may still present it and refuse every call when the app holds no file
+   * capability; the reference runtime does exactly that.)
+   */
+  file?: FileCapability;
 }
 
 /**
@@ -106,7 +114,15 @@ export interface SignableRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
-  body?: string | null;
+  /**
+   * `Uint8Array` reaches here ONLY when the app itself passed binary bytes to
+   * `ctx.fetch` (DC-5's fix, `sandbox/worker.ts`'s `coerceBody`) — the host
+   * never converts a string body to bytes on its own. So the 15 apps whose
+   * `sign` hooks read `request.body` as text keep seeing text; nothing here
+   * widens what THEY receive, only what an app that opts into a binary
+   * upload can send.
+   */
+  body?: string | Uint8Array | null;
 }
 
 /**

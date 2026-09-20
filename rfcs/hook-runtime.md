@@ -216,7 +216,11 @@ The runtime intentionally exposes no:
 - Cryptographic / random / time primitives beyond what the host language provides natively (`globalThis.crypto`, `Date.now()`).
 - Inter-hook persistence. A hook is a pure function over `(input, ctx)`.
 
-The **core** capabilities (`fetch`, `ctx.socket`, `log`, `connection`, `invocation`) are a **closed list**: a new *portable* capability is added only by amending this RFC. A host that needs a capability of its own does not invent a new top-level `ctx` field — it adds it under [`ctx.host`](#host-extensions), where the non-portability is explicit.
+The **core** capabilities — `fetch`, `log`, `connection`, `invocation`, `socket`, and any further
+capability introduced by a dated `## Amendment` section below — are a **closed list**: a new
+*portable* capability is added only by amending this RFC (a Final section revision, or an additive
+dated amendment). A host that needs a capability of its own does not invent a new top-level `ctx`
+field — it adds it under [`ctx.host`](#host-extensions), where the non-portability is explicit.
 
 ## Host extensions
 
@@ -355,6 +359,7 @@ A compliant host MUST guarantee, for every hook invocation:
 | Environment variables | Denied | Denied | Denied |
 | Subprocess / FFI | Denied | Denied | Denied |
 | Credential | Absent | Present in `input.credential` | Present in `input.credential` |
+| `ctx.file` | Available, host-mediated | **Removed** | **Removed** |
 
 The reference implementation in `@w6w/runtime` runs hooks in Deno Web Workers spawned with the corresponding `permissions` map. Other implementations (V8 isolates with embedder hooks, gVisor-wrapped processes, Wasm with capability imports) are valid provided they produce the same observable behavior.
 
@@ -379,3 +384,104 @@ The fixtures live in `core/fixtures/` and are runnable against any host as a bla
 ## Open questions
 
 None at this time. Future capabilities (Wasm targets, explicit cancellation primitives, per-host extension codes, persisted hook state) will be raised as their own RFCs against a later `manifestVersion`.
+
+## Amendment — 2026-09-19: `ctx.file` and binary-capable `SignableRequest.body`
+
+> This section is **additive** to the Final `HookContext` and sandbox-posture shapes above; it
+> introduces no breaking change to any existing hook. It adds one ambient capability (`ctx.file`) to
+> the closed list referenced at [`## Ambient API: HookContext`](#ambient-api-hookcontext), and
+> corrects `SignableRequest.body`'s documented shape so a `sign` hook can pass binary bytes through
+> unmodified rather than being forced to stringify them.
+
+### `ctx.file`
+
+`HookContext` gains a seventh, optional field, appended after `socket` — this amendment was
+authored concurrently with the `## ctx.socket` capability above, in a separate project; `file` is
+simply the next field appended once both landed, not a claim about its own fixed position:
+
+```ts
+interface HookContext {
+  // ...fetch, log, connection, invocation, host, socket unchanged...
+  file?: FileCapability;
+}
+```
+
+`FileCapability` (`@w6w/types`) is exactly two methods — `read` and `create` — both whole-buffer,
+proxied to the host exactly like `ctx.fetch`: the sandbox posts a request across the worker
+boundary and awaits the host's reply; it never holds a file handle, a path, or a credential.
+
+```ts
+interface FileCapability {
+  read(ref: FileRef | string): Promise<{ ref: FileRef; bytes: Uint8Array }>;
+  create(bytes: Uint8Array, meta: { contentType: string; filename: string }): Promise<FileRef>;
+}
+```
+
+`file` is **optional** because a conforming host need not implement the run file store at all — a
+portable app MUST handle its absence (feature-detect `ctx.file` before calling it, exactly as an
+app must already tolerate an empty `ctx.host`). A host MAY implement the capability yet still
+present `file` as absent, or present-but-refusing, to a hook it does not trust with file access; the
+reference runtime exposes `file` to action `execute` and refuses every call from a hook kind with no
+run to scope files against (see the `ctx.file` row added to [`## Sandbox posture`](#sandbox-posture)
+above).
+
+Two host-enforced ceilings bound the store, exported from `@w6w/types`:
+
+- `FILE_MAX_BYTES = 10 * 1024 * 1024` (10 MiB) — the size of any one file. Enforced on `create`
+  (reject an oversized write) and on `read` (a host MUST NOT have let a larger object into the store
+  in the first place, so the read-side check is defense-in-depth, not a truncation point).
+- `RUN_FILE_MAX_TOTAL_BYTES = 50 * 1024 * 1024` (50 MiB) — the sum of every file one run creates.
+  Enforced on `create` only; a run that has already spent its budget gets a loud rejection, not a
+  silently truncated file.
+
+**Why these numbers, read against [`## Resource limits`](#resource-limits):** that section states
+the reference runtime enforces no memory cap, because Deno workers don't expose one portably — bytes
+a hook reads out of the file store into its own memory are exactly the otherwise-uncapped resource
+that section describes. `FILE_MAX_BYTES` is the file store's own substitute cap: 10 MiB keeps a
+single `ctx.file.read` (and a small number of them outstanding at once, on the architecture
+`## Resource limits` already describes as otherwise unbounded) well inside a Worker's practical
+memory headroom, while comfortably covering what this channel exists for today — generated PDFs,
+CSV exports, small-to-medium media — and staying well short of a size that would make an
+uncapped-memory host start swapping under concurrent Invocations. `RUN_FILE_MAX_TOTAL_BYTES` at 5×
+that ceiling bounds a whole run's cumulative file footprint (a step chain creating several files)
+without turning the per-run store into an unbounded liability on a host with no other cap on it.
+
+### `SignableRequest.body` may be binary
+
+The `sign` hook's own `SignableRequest`, part of [`## Ambient API:
+HookContext`](#ambient-api-hookcontext), is documented today with a `body?: string | null` shape.
+That shape is corrected:
+a `sign` hook's `SignableRequest.body` MAY be a `Uint8Array`, in addition to a `string` or
+`null`/absent. A generic sandbox proxy that string-coerces every outgoing body silently corrupts a
+binary upload before it ever reaches the wire — `sign` MUST receive and return the bytes it was
+given unchanged when the body is binary, exactly as it already passes a string body through
+unchanged today. This is a documentation correction to the ambient contract, not a new capability:
+nothing about `ctx.fetch`'s host-mediated egress model changes, only the shape of data allowed to
+flow through it.
+
+### Sandbox posture — reasoning for the new row
+
+`ctx.file` is **Removed** from the Sign sandbox and from every other auth-phase hook (`refresh`,
+`exchange`, `preflight`, `revoke`), deliberately, for v1: those hooks run outside any Invocation
+([`ctx.invocation`](#ctxinvocation) is documented as absent for them precisely because they are "not
+driven by an Invocation"), and the run file store is scoped to a run — there is no run to scope a
+file read or write against during credential construction. No code needs to move file bytes while
+signing a request or refreshing a token, so removing the capability there costs nothing and keeps
+the credential-construction sandbox's surface exactly as narrow as `ctx.fetch`'s.
+
+As with any host capability, `ctx.file` remains bound by [`## Host extensions`](#host-extensions)
+rule 3: a host MUST NOT place a path, URL, or presigned credential into `ctx` for a sandboxed hook
+to read directly. `ctx.file.read`/`ctx.file.create` proxy to the host exactly as `ctx.fetch` does —
+the host performs the actual storage I/O itself and the sandbox never receives a location or a
+credential it could use unmediated.
+
+### Reconciling `## Open questions`
+
+[`## Open questions`](#open-questions) states that future capabilities "will be raised as their own
+RFCs against a later `manifestVersion`." That sentence describes a **breaking** addition to the
+ambient API; `ctx.file` is not one. Like `action.md`'s `aggregate` control and `interface.md`'s two
+`blob-store@1` amendments, this section adds a capability to `manifestVersion: "1"` through this
+repo's dated-`## Amendment` convention precisely because it is additive — every existing hook that
+never reads `ctx.file` keeps working unchanged, with `file` simply `undefined` on its `ctx`. A
+capability that could not be added without breaking an existing hook is what `## Open questions`
+reserves for a later `manifestVersion`; this one does not qualify.

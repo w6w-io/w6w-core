@@ -86,6 +86,7 @@ Deno.test("ctx.socket calls reject (not hang) when enableSocket is true but onSo
         input: { message: "x" },
         enableFetch: false,
         enableSocket: true,
+        enableFile: false,
       }, {
         readScope: app.dir,
         timeoutMs: 2_000,

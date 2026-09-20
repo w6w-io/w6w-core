@@ -5,6 +5,7 @@
 import type {
   Action,
   AuthHookKind,
+  FileRef,
   HealthCheck,
   InterfaceConformance,
   SignableRequest,
@@ -100,6 +101,8 @@ export type HostMessage =
      * `HookContext.socket`'s doc comment in `@w6w/types`).
      */
     enableSocket: boolean;
+    /** When true, `ctx.file` proxies through the host; otherwise both methods reject. */
+    enableFile: boolean;
   }
   // Import the entry module and return its actions/auth config (no functions).
   | { type: "start"; op: "describe-app"; entryPath: string }
@@ -115,7 +118,10 @@ export type HostMessage =
   | { type: "socket-read-response"; id: number; bytes: Uint8Array | null }
   | { type: "socket-read-error"; id: number; message: string }
   | { type: "socket-close-response"; id: number }
-  | { type: "socket-close-error"; id: number; message: string };
+  | { type: "socket-close-error"; id: number; message: string }
+  | { type: "file-read-response"; id: number; ref: FileRef; bytes: Uint8Array }
+  | { type: "file-create-response"; id: number; ref: FileRef }
+  | { type: "file-error"; id: number; message: string };
 
 /** Worker -> host. */
 export type WorkerMessage =
@@ -130,4 +136,6 @@ export type WorkerMessage =
   | { type: "socket-read"; id: number; max?: number }
   | { type: "socket-close"; id: number }
   | { type: "result"; value: unknown }
-  | { type: "error"; error: { name: string; message: string } };
+  | { type: "error"; error: { name: string; message: string } }
+  | { type: "file-read"; id: number; ref: string }
+  | { type: "file-create"; id: number; bytes: Uint8Array; contentType: string; filename: string };

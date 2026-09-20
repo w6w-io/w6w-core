@@ -11,6 +11,19 @@ import {
 } from "../mod.ts";
 import type { RequestOverrides, SignableRequest } from "@w6w/types";
 
+/**
+ * Narrow `SignableRequest.body` (widened to `string | Uint8Array | null` by
+ * T1.2.1/A5) to text for `JSON.parse`/`URLSearchParams`. Every request built
+ * in this file is text, never binary — `applyOverrides` throws for a binary
+ * body instead of reaching these call sites (see `file-capability.test.ts`'s
+ * own A5 coverage) — so this is a type-level fact this suite already relies
+ * on, not a behavior change.
+ */
+function text(body: SignableRequest["body"]): string {
+  if (typeof body !== "string") throw new Error(`expected a text body, got ${typeof body}`);
+  return body;
+}
+
 function req(over: Partial<SignableRequest> = {}): SignableRequest {
   return {
     url: "https://api.example.com/v1/things",
@@ -182,14 +195,14 @@ Deno.test("adding CC keeps the recipients the flow configured — BOTH key forms
   const cc = [{ email: "cc1@example.com" }];
 
   const viaPlain = applyOverrides(sendgridReq(), { body: { personalizations: [{ cc }] } });
-  assertEquals(JSON.parse(viaPlain.body!).personalizations, expected);
+  assertEquals(JSON.parse(text(viaPlain.body)).personalizations, expected);
 
   const viaPath = applyOverrides(sendgridReq(), { body: { "personalizations[0].cc": cc } });
-  assertEquals(JSON.parse(viaPath.body!).personalizations, expected);
+  assertEquals(JSON.parse(text(viaPath.body)).personalizations, expected);
 
   // ...and everything else the action built is untouched either way.
-  assertEquals(JSON.parse(viaPlain.body!).subject, "Your order shipped");
-  assertEquals(JSON.parse(viaPath.body!).content, [
+  assertEquals(JSON.parse(text(viaPlain.body)).subject, "Your order shipped");
+  assertEquals(JSON.parse(text(viaPath.body)).content, [
     { type: "text/plain", value: "It's on the way." },
   ]);
 });
@@ -199,7 +212,7 @@ Deno.test("`!` replaces outright — the only way to discard what the action bui
     body: { "personalizations!": [{ to: [{ email: "someone-else@example.com" }] }] },
   });
   // No `to` from the original survives: that is the instruction `!` carries.
-  assertEquals(JSON.parse(out.body!).personalizations, [{
+  assertEquals(JSON.parse(text(out.body)).personalizations, [{
     to: [{ email: "someone-else@example.com" }],
   }]);
 });
@@ -208,26 +221,32 @@ Deno.test("`!` on a path replaces just that leaf", () => {
   const out = applyOverrides(sendgridReq(), {
     body: { "personalizations[0].to!": [{ email: "only@example.com" }] },
   });
-  assertEquals(JSON.parse(out.body!).personalizations, [{ to: [{ email: "only@example.com" }] }]);
+  assertEquals(JSON.parse(text(out.body)).personalizations, [{
+    to: [{ email: "only@example.com" }],
+  }]);
 });
 
 // ── Body merging ───────────────────────────────────────────────────────────
 
 Deno.test("applyOverrides: plain keys deep-merge into the JSON body", () => {
   const out = applyOverrides(req(), { body: { added: true, nested: { over: 2 } } });
-  assertEquals(JSON.parse(out.body!), { name: "a", nested: { keep: 1, over: 2 }, added: true });
+  assertEquals(JSON.parse(text(out.body)), {
+    name: "a",
+    nested: { keep: 1, over: 2 },
+    added: true,
+  });
 });
 
 Deno.test("applyOverrides: a path MERGES into what is already at that leaf", () => {
   // A path names a place, not a replacement — `!` is what means replacement.
   const out = applyOverrides(req(), { body: { "nested.deeper": { x: 1 } } });
-  assertEquals(JSON.parse(out.body!).nested, { keep: 1, over: 1, deeper: { x: 1 } });
+  assertEquals(JSON.parse(text(out.body)).nested, { keep: 1, over: 1, deeper: { x: 1 } });
 });
 
 Deno.test("applyOverrides: a path is applied after a plain key naming the same leaf", () => {
   // Fixed order — paths after plain — rather than an object-key-order accident.
   const out = applyOverrides(req(), { body: { nested: { over: 2 }, "nested.over": 9 } });
-  assertEquals(JSON.parse(out.body!).nested, { keep: 1, over: 9 });
+  assertEquals(JSON.parse(text(out.body)).nested, { keep: 1, over: 9 });
 });
 
 Deno.test("applyOverrides: the request is copied, never mutated", () => {
@@ -245,7 +264,7 @@ Deno.test("applyOverrides: a non-object JSON body is left alone", () => {
 
 Deno.test("applyOverrides: overrides become the body when the action sent none", () => {
   const out = applyOverrides(req({ body: null, headers: {} }), { body: { only: 1 } });
-  assertEquals(JSON.parse(out.body!), { only: 1 });
+  assertEquals(JSON.parse(text(out.body)), { only: 1 });
   assertEquals(out.headers["content-type"], "application/json");
 });
 
@@ -267,7 +286,7 @@ Deno.test("applyOverrides: the same `body` field merges a form body, arrays repe
   const out = applyOverrides(formReq(), {
     body: { MediaUrl: ["https://x/a.jpg", "https://x/b.jpg"], Body: "replaced" },
   });
-  const p = new URLSearchParams(out.body!);
+  const p = new URLSearchParams(text(out.body));
   assertEquals(p.get("From"), "+1");
   assertEquals(p.get("Body"), "replaced");
   assertEquals(p.getAll("MediaUrl"), ["https://x/a.jpg", "https://x/b.jpg"]);
