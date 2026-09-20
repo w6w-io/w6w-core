@@ -16,6 +16,7 @@ import type {
   AppManifest,
   Auth,
   Connection,
+  FileRef,
   HealthCheck,
   InterfaceConformance,
   Invocation,
@@ -67,6 +68,17 @@ export interface InvokeOptions {
   captureEgress?: boolean;
   /** Per-body cap for `captureEgress`, in bytes. Defaults to 32 KiB. */
   egressBodyLimit?: number;
+  /**
+   * Host-mediated `ctx.file.read`/`ctx.file.create` implementations. Both must
+   * be supplied for `ctx.file` to be enabled in the sandbox (DC-3: a
+   * conforming host implements the whole two-method capability or none of
+   * it). The `sign` hook never receives either — same reason it gets no
+   * `onFetch` today (below, `signingFetch`'s `runHook` call for `sign`).
+   */
+  onFileRead?: (refId: string) => Promise<{ ref: FileRef; bytes: Uint8Array }>;
+  onFileCreate?: (
+    input: { bytes: Uint8Array; contentType: string; filename: string },
+  ) => Promise<FileRef>;
 }
 
 export interface InvokeResult {
@@ -185,7 +197,15 @@ async function hostFetch(
         res = await fetch(currentUrl, {
           method,
           headers: req.headers,
-          body,
+          // A5 (runtime.ts:180): a Uint8Array body passes through to the real
+          // fetch UNCHANGED — no stringify, no re-encode. Deno's own `lib`
+          // types this call's `body` as `BufferSource | ... | string`, which
+          // structurally includes `Uint8Array` at runtime (confirmed:
+          // `fetch`'s body accepts a `Uint8Array` directly in Deno), but the
+          // compiler's overload resolution here narrows on the union in a way
+          // that rejects it type-only — the cast documents that mismatch
+          // rather than papering over an actual behavior change.
+          body: body as BodyInit | null | undefined,
           redirect: "manual",
           signal: controller.signal,
         });
@@ -617,6 +637,8 @@ export async function invoke(
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
       onFetch,
+      onFileRead: opts.onFileRead,
+      onFileCreate: opts.onFileCreate,
     });
   } catch (err) {
     unwrap(err);
@@ -681,6 +703,8 @@ export async function invokeTriggerHook(
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
       onFetch,
+      onFileRead: opts.onFileRead,
+      onFileCreate: opts.onFileCreate,
     });
   } catch (err) {
     unwrap(err);

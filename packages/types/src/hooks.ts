@@ -108,7 +108,15 @@ export interface SignableRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
-  body?: string | null;
+  /**
+   * `Uint8Array` reaches here ONLY when the app itself passed binary bytes to
+   * `ctx.fetch` (DC-5's fix, `sandbox/worker.ts`'s `coerceBody`) — the host
+   * never converts a string body to bytes on its own. So the 15 apps whose
+   * `sign` hooks read `request.body` as text keep seeing text; nothing here
+   * widens what THEY receive, only what an app that opts into a binary
+   * upload can send.
+   */
+  body?: string | Uint8Array | null;
 }
 
 /**
