@@ -413,11 +413,19 @@ Deno.test("(h) a handshake hook that never returns done rejects at the step cap,
     W6WError,
   );
   const elapsedMs = Date.now() - started;
-  // Observed: a step-cap rejection well under the 5s per-step timeout budget —
-  // not a hang, and not a `hook_timeout` (which would mean the cap never
-  // fired and every step burned its own timeout instead).
+  // The real invariant: the step cap fires after MAX_HANDSHAKE_STEPS (16) fast
+  // round trips, not after each step burns its own 5s `timeoutMs` budget (which
+  // would total up to MAX_HANDSHAKE_STEPS * 5_000 = 80s and manifest as a
+  // `hook_timeout`, not `connection_broken`). 16 real sandboxed hook
+  // invocations cost real wall time — ~670ms/step measured on GitHub Actions
+  // runners (~10.7s total), vs. well under 5s on faster local/devcontainer
+  // hardware — so the bound here is deliberately loose: it only needs to rule
+  // out the pathological per-step-timeout case, not race CI runner speed.
   assertEquals(err.code, "connection_broken");
-  assert(elapsedMs < 5_000, `expected a fast step-cap rejection, took ${elapsedMs}ms`);
+  assert(
+    elapsedMs < 30_000,
+    `expected a fast step-cap rejection (well under the 80s pathological bound), took ${elapsedMs}ms`,
+  );
   close();
 });
 
