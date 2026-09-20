@@ -13,6 +13,26 @@ export type ConnectionState =
 /** Free-form metadata populated by Auth's `afterConnect`. */
 export type ConnectionDisplay = Record<string, unknown>;
 
+/**
+ * The non-secret, host-readable connect target of a socket-backed Connection.
+ * Separate from `credential` on purpose: the host must read host/port/tlsMode to
+ * perform the pre-connect check, and `credential` is opaque to the platform.
+ */
+export interface ConnectionTarget {
+  host: string;
+  port: number;
+  /** Protocol-level namespace selector, when the protocol has one (Postgres: the database). */
+  database?: string;
+  tlsMode: "disable" | "verify-full" | "custom-ca";
+  /** PEM trust anchor. Required by, and only meaningful for, `tlsMode: "custom-ca"`. */
+  caCert?: string;
+  /**
+   * Opt in to a target that RESOLVES to a loopback/link-local/private address.
+   * Absent or false: the host refuses such a target with `socket_denied`.
+   */
+  allowPrivate?: boolean;
+}
+
 export interface Connection {
   manifestVersion: string;
   /** Stable, host-issued identifier. */
@@ -33,6 +53,11 @@ export interface Connection {
   /** Redacted from the projection (leaks rotation cadence). */
   lastRefreshedAt?: string;
   expiresAt?: string;
+  /**
+   * Set at connect time alongside `credential`, from the user's Connection form.
+   * Non-secret: it SURVIVES redaction and is visible to userland.
+   */
+  target?: ConnectionTarget;
 }
 
 /**

@@ -15,7 +15,7 @@ export type ActionType = "read" | "search" | "perform" | "control";
 export interface OutputField {
   /** Machine name. Dot notation for nested paths (`message.id`). */
   key: string;
-  type: "string" | "number" | "boolean" | "object" | "array";
+  type: "string" | "number" | "boolean" | "object" | "array" | "file";
   label: string;
 }
 

@@ -184,7 +184,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `date` | string (`YYYY-MM-DD`) | |
 | `datetime` | string (ISO 8601) | Includes timezone. |
 | `secret` | string | Masked in UI, encrypted at rest. Implies `secret: true`. |
-| `file` | string (ref) | Reference to uploaded file; actual storage is the host's concern. |
+| `file` | `FileRef` (object; a bare `id` string is resolved to one) | Reference to an uploaded file — see [File](#file) below. |
 | `json` | any | Structured JSON; host renders a JSON editor. |
 | `code` | string | Code with language via `ui` (e.g. `"code:sql"`). |
 | `group` | object | Nested form. Value is a `Record<string, unknown>` whose keys are the `key`s of the params in `children`. See [Groups](#groups). |
@@ -200,6 +200,14 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `select` | `"dropdown"`, `"radio"` | `"dropdown"` |
 | `multiselect` | `"dropdown"`, `"checkboxes"`, `"chips"` | `"dropdown"` |
 | `code` | `"code:<language>"` | `"code:plain"` |
+
+`ui` is **static per param**: nothing in this spec re-renders a param's `ui` hint when another
+param's value changes, including when that other param is named in `dependsOn` — `dependsOn` only
+gates enable/disable and invalidates `options`/value (see [Dependencies](#dependencies)), it does not
+re-select a sibling's `ui`. A host whose editor mode should track a sibling param's value (for
+example, a `code` param whose language depends on another param's current selection) reads that
+sibling param's **current value** directly at render time — this spec supplies no mechanism that
+does it for the host.
 
 ### Options
 
@@ -235,6 +243,41 @@ The `source` hook receives the current form state (including all `dependsOn` val
 | `hook` | path | Custom validator. Receives `{ value, form }`, returns `{ ok: true }` or `{ ok: false, message }`. |
 
 Validation runs on field change and again on submit.
+
+### File
+
+A `file` param's resolved value is a `FileRef` (`@w6w/types`) — a host-minted, opaque reference to
+bytes held in the host's run file store. The bytes never travel inline: a `FileRef` is plain JSON
+(`kind`, `id`, `contentType`, `size`, `filename`, `expiresAt`) that flows through params, step
+output, and invocation records exactly like any other value.
+
+```ts
+interface FileRef {
+  kind: "file";
+  id: string;
+  contentType: string;
+  size: number;
+  filename: string;
+  expiresAt: string; // RFC 3339
+}
+```
+
+- A host handed a **bare string** for a `file` param MUST treat it as a `FileRef.id` and resolve
+  it to a full `FileRef` **within the run's own scope** — never any other run's file.
+- A host that cannot resolve the id — unknown, outside the run's scope, or already past
+  `expiresAt` — MUST fail the step loudly with a named error (e.g. `unknown_file` /
+  `file_expired`) rather than passing the raw string through to the action's `execute` hook
+  unresolved.
+- **Possessing a ref is not authorization.** The authorization is the run's own scope, checked
+  host-side on every resolution — an id alone, even if guessed or leaked, grants nothing outside
+  that scope.
+- A ref carries `expiresAt`. After that instant the host MUST refuse to read the bytes, regardless
+  of whether the underlying storage still physically holds them.
+
+See the [Hook Runtime RFC's `ctx.file` amendment](./hook-runtime.md#amendment--2026-09-19-ctxfile-and-binary-capable-signablerequestbody)
+for how an action reads/creates file bytes, and the [Action RFC's output
+amendment](./action.md#amendment--2026-09-19-file-output-fields-and-the-binary-channel) for how a
+step produces one.
 
 ## Groups
 

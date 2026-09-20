@@ -19,3 +19,4 @@ export * from "./src/invocation.ts";
 export * from "./src/overrides.ts";
 export * from "./src/value.ts";
 export * from "./src/pack.ts";
+export * from "./src/file.ts";

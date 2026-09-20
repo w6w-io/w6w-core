@@ -9,9 +9,10 @@
  */
 import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
-import type { RedactedConnection } from "./connection.ts";
+import type { ConnectionTarget, RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
+import type { FileCapability } from "./file.ts";
 
 /** Ambient API available to every hook, injected by the runtime. */
 export interface HookContext {
@@ -38,6 +39,19 @@ export interface HookContext {
    * performs the privileged work), never tokens handed into the sandbox.
    */
   host?: HostExtensions;
+  /**
+   * The Connection's byte stream — already opened, already handshaken by the host.
+   * Present only for action `execute`, only when the app declares the `socket`
+   * capability and the Connection carries a `target`.
+   */
+  socket?: SocketHandle;
+  /**
+   * Host-mediated access to the run file store. OPTIONAL because a conforming host need not
+   * implement the capability at all — a portable app MUST handle its absence. (A host that DOES
+   * implement it may still present it and refuse every call when the app holds no file
+   * capability; the reference runtime does exactly that.)
+   */
+  file?: FileCapability;
 }
 
 /**
@@ -100,7 +114,15 @@ export interface SignableRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
-  body?: string | null;
+  /**
+   * `Uint8Array` reaches here ONLY when the app itself passed binary bytes to
+   * `ctx.fetch` (DC-5's fix, `sandbox/worker.ts`'s `coerceBody`) — the host
+   * never converts a string body to bytes on its own. So the 15 apps whose
+   * `sign` hooks read `request.body` as text keep seeing text; nothing here
+   * widens what THEY receive, only what an app that opts into a binary
+   * upload can send.
+   */
+  body?: string | Uint8Array | null;
 }
 
 /**
@@ -113,6 +135,57 @@ export type SignHook = (
   input: { request: SignableRequest; credential: unknown },
   ctx: HookContext,
 ) => SignableRequest | Promise<SignableRequest>;
+
+/**
+ * A host-mediated byte stream. The sandbox holds this object, never an OS socket:
+ * every call is a message to the host, which owns the real connection.
+ */
+export interface SocketHandle {
+  /** Write bytes. Resolves once the host has written them. */
+  write(bytes: Uint8Array): Promise<void>;
+  /** Read up to `max` bytes (default host-chosen). Resolves `null` at EOF. */
+  read(max?: number): Promise<Uint8Array | null>;
+  /** Close the stream. Idempotent. */
+  close(): Promise<void>;
+}
+
+/**
+ * One step of an iterative, network-less handshake.
+ *
+ * The `done: true` arm's optional `leftover` carries bytes the HOST's final
+ * handshake `read()` received but the hook did not need to consume to
+ * recognize completion — a real server routinely batches the trailing
+ * protocol messages that follow the auth-confirmation frame in the same TCP
+ * segment (e.g. Postgres's `AuthenticationSASLFinal` + `AuthenticationOk` +
+ * `ParameterStatus` + `BackendKeyData` + `ReadyForQuery` in one burst). A hook
+ * that recognizes it only needed the leading bytes returns the remainder
+ * here so the host can hand it back on the FIRST post-handshake
+ * `ctx.socket.read()`, instead of silently discarding it. Additive and
+ * optional: a hook that never splits its `received` buffer (the sandbox side
+ * of every handshake shipped before this field existed) simply never
+ * populates it, and nothing else about this type changes.
+ */
+export type HandshakeStep =
+  | { done: false; send: Uint8Array; state?: unknown }
+  | { done: true; send?: Uint8Array; leftover?: Uint8Array };
+
+/**
+ * Auth `handshake` — the protocol-agnostic generalization of `sign`.
+ * Holds the credential; has NO network (its `ctx.fetch` and `ctx.socket` are both
+ * absent). It produces the auth frame; the HOST sends it and feeds the reply back.
+ */
+export type HandshakeHook = (
+  input: {
+    credential: unknown;
+    /** Read-only. The hook may READ the target but can never influence it. */
+    target: ConnectionTarget;
+    /** Absent on the first call; otherwise the server's reply to the previous `send`. */
+    received?: Uint8Array;
+    /** Whatever the previous step returned as `state`. Absent on the first call. */
+    state?: unknown;
+  },
+  ctx: HookContext,
+) => HandshakeStep | Promise<HandshakeStep>;
 
 /**
  * Health `check` — a declared, side-effect-free probe.

@@ -349,6 +349,20 @@ export function applyOverrides(
   }
 
   if (overrides.body && Object.keys(overrides.body).length) {
+    // A5's third decision site: a binary body (DC-5) has no key space an
+    // override can merge into — the form/JSON paths below both assume text.
+    // Silently dropping the override would violate "enhancing, never
+    // negating" above; silently stringifying the bytes would corrupt them.
+    // Fail loudly instead (`.claude/docs/overrides.md`: "the parser fails
+    // loudly"), naming what happened.
+    if (body instanceof Uint8Array) {
+      throw new W6WError(
+        "param_invalid",
+        "resolution",
+        "Override targets the body of a request whose body is binary (ctx.fetch received a " +
+          "Uint8Array/ArrayBufferView); body overrides only apply to text bodies.",
+      );
+    }
     const contentType = (headerValue(headers, "content-type") ?? "").toLowerCase();
     body = contentType.includes("application/x-www-form-urlencoded")
       ? applyFormOverrides(body, overrides.body)

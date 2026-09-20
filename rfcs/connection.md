@@ -40,6 +40,11 @@ A Connection is the **runtime view** of an Auth method. The Auth manifest is "ho
 
 The credential remains **opaque** to the platform. A Connection wraps it, but never introspects it. Auth's `sign` hook is still the only thing that ever reads the credential blob.
 
+A socket-backed Connection's `target` (below) is the opposite case on purpose: it is **not** opaque.
+The host must read `host`/`port`/`tlsMode` to perform the pre-connect check ([Hook Runtime RFC
+§The target check](./hook-runtime.md#the-target-check)), so it is a first-class, non-secret field —
+never folded into the opaque `credential` blob it sits beside.
+
 ### Lifecycle
 
 | State | Meaning | Entered when |
@@ -73,7 +78,13 @@ Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`
   "createdAt":       "2026-05-01T14:22:09Z",
   "lastTestedAt":    "2026-05-18T09:00:00Z",
   "lastRefreshedAt": "2026-05-15T03:11:00Z",
-  "expiresAt":       "2026-05-22T03:11:00Z"
+  "expiresAt":       "2026-05-22T03:11:00Z",
+  "target": {
+    "host": "db.internal.example.com",
+    "port": 5432,
+    "database": "app",
+    "tlsMode": "verify-full"
+  }
 }
 ```
 
@@ -92,7 +103,13 @@ The same record, as exposed to any userland code (Action `execute`, Workflow ste
   "label": "Alice — Acme",
   "createdAt": "2026-05-01T14:22:09Z",
   "lastTestedAt": "2026-05-18T09:00:00Z",
-  "expiresAt": "2026-05-22T03:11:00Z"
+  "expiresAt": "2026-05-22T03:11:00Z",
+  "target": {
+    "host": "db.internal.example.com",
+    "port": 5432,
+    "database": "app",
+    "tlsMode": "verify-full"
+  }
 }
 ```
 
@@ -117,6 +134,15 @@ Only Auth `sign` / `refresh` / `revoke` hooks ever receive the unredacted record
 | `lastTestedAt` | timestamp | ⬜ | Last successful `test`. |
 | `lastRefreshedAt` | timestamp | ⬜ | Last successful `refresh`. Redacted in the projection. |
 | `expiresAt` | timestamp | ⬜ | When known (e.g. OAuth `expires_in`). Drives proactive refresh scheduling. |
+| `target` | [`ConnectionTarget`](../packages/types/src/connection.ts) | ⬜ | Non-secret connect target (`host`/`port`/`database`/`tlsMode`/`caCert`/`allowPrivate`) for a socket-backed Connection. **Not** secret and **present in the redacted projection** — unlike `credential`, the host must be able to read it to run the [pre-connect target check](./hook-runtime.md#the-target-check). |
+
+**Provenance.** `target` is set at connect time **alongside `credential`**, from the user's
+Connection form — not the mechanism `display` uses. `display` is populated *after* connect by Auth's
+`afterConnect` hook; `target` is never hook-derived, because it is user-configured input the host
+needs *before* it can even attempt a connection (the pre-connect check reads it, and the handshake
+hook receives it as read-only input — see [Hook Runtime RFC §`ctx.socket`](./hook-runtime.md#ctxsocket)).
+*Persisting* `target` alongside the rest of the record on connect is a host storage concern this RFC
+does not wire — the same way it does not wire `credential`'s storage mechanics.
 
 ## Referencing a Connection
 
@@ -131,6 +157,10 @@ The Auth RFC declares credentials opaque. This RFC tightens that into testable i
 3. The blob is decrypted only to be passed to `sign`, `refresh`, or `revoke`.
 4. No userland surface — Action `execute`, Workflow expressions, editor previews, logs, traces — ever sees the blob.
 5. A Connection record exposed to userland MUST be the redacted projection.
+
+`target` does not weaken rule 3: the host reads `target` freely (it is not the blob) and still never
+introspects `credential` to do so — the pre-connect check and the `handshake` hook each read `target`
+directly off the Connection record, with `credential` handled exactly as rules 1-4 already require.
 
 ## Import
 
