@@ -339,6 +339,7 @@ The `@w6w/workflow` reference engine + its test fixtures constitute the executab
 2. **Variables convergence with Param.** `WorkflowVariable` today is a shallow shape. Migrate to the full [Param RFC](./param.md) so variables get validation, dynamic options, and `dependsOn` — at the cost of a manifest-version bump.
 3. **Sub-workflows.** Should a step be able to invoke another workflow (`uses.workflow`) as an alternative to `uses.action`? If so, how do sub-workflow retries and state nest into the parent run?
 4. **Per-run TTL and cleanup.** How long do completed `RunState` records live? Host-configurable; RFC-level default?
+5. **Node placement.** Should the host-level `x-w6w-placement` annotation — a top-level list of node labels a run requires, enforced today by the w6w host's run queue — be promoted to a first-class Workflow field? Promotion makes placement portable across hosts; it also commits every host to a node-label model.
 
 ## Status ladder
 
