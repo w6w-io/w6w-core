@@ -80,6 +80,19 @@ export interface InvokeOptions {
   onFileCreate?: (
     input: { bytes: Uint8Array; contentType: string; filename: string },
   ) => Promise<FileRef>;
+  /**
+   * Replace the `sign` hook AND host egress as ONE unit (rfcs/hook-runtime.md
+   * `ctx.fetch` steps 1-2: "the host" is both the spoke, which owns step 1, and
+   * this transport's implementer — the hub — which owns step 1 again plus
+   * step 2's `sign`). When set, `signingFetch` hands it the request
+   * post-override and pre-sign-checked, but UNSIGNED — the transport is the
+   * only thing that touches the wire, so no local `sign` hook runs and no
+   * local host egress happens. Every other credential-bearing path is refused
+   * while this is set: a Connection carrying a credential, a `needs_refresh`
+   * Connection (`refresh` never runs), and a Connection with a socket
+   * `target` (no connect is attempted). Unset, behaviour is unchanged.
+   */
+  egressTransport?: (request: SignableRequest) => Promise<WireResponse>;
 }
 
 export interface InvokeResult {
@@ -99,7 +112,7 @@ export function describe(app: LoadedApp): AppDescription {
 }
 
 /** Pick the LoadedAuth a Connection refers to (by `auth` key), else the app's sole auth. */
-function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined {
+export function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined {
   return app.auths.find((a) => a.auth.key === connection.auth) ?? app.auths[0];
 }
 
@@ -340,9 +353,11 @@ export function signingFetch(
         );
       }
     }
-    if (canSign && auth) {
+    if (canSign && auth && !opts.egressTransport) {
       // `sign` runs in its own worker with NO network, and is the only code
-      // given the (live, post-refresh) credential. It injects auth.
+      // given the (live, post-refresh) credential. It injects auth. Skipped
+      // when `egressTransport` is set: that transport replaces `sign` AND
+      // host egress as one unit, so no credential-bearing hook runs here.
       signed = await runHook<SignableRequest>({
         entryPath: app.entryPath,
         selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
@@ -355,7 +370,9 @@ export function signingFetch(
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {
-      const res = await hostFetch(allowlist, signed, opts.timeoutMs);
+      const res = opts.egressTransport
+        ? await opts.egressTransport(signed)
+        : await hostFetch(allowlist, signed, opts.timeoutMs);
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );
@@ -433,6 +450,25 @@ async function resolveConnection(
   auth: LoadedAuth | undefined,
   opts: InvokeOptions,
 ): Promise<ResolvedConnection> {
+  if (opts.egressTransport) {
+    // `egressTransport` replaces `sign` AND host egress as one unit; no
+    // credential-bearing path may run under it. Strict `!== undefined` (not
+    // `!= null`): a proxy-mode Connection OMITS the field entirely.
+    if (conn.credential !== undefined) {
+      throw new W6WError(
+        "egress_transport_conflict",
+        "auth",
+        "egressTransport is set; the Connection must not carry a credential.",
+      );
+    }
+    if (conn.state === "needs_refresh") {
+      throw new W6WError(
+        "egress_transport_conflict",
+        "auth",
+        "egressTransport is set; a needs_refresh Connection cannot run the refresh hook here.",
+      );
+    }
+  }
   switch (conn.state) {
     case "connected":
       return { credential: conn.credential, redacted: redact(conn) };
@@ -650,6 +686,14 @@ export async function invoke(
   let value: unknown;
   try {
     if (opts.connection?.target) {
+      if (opts.egressTransport) {
+        throw new W6WError(
+          "egress_transport_conflict",
+          "execute",
+          `egressTransport is set; Connection "${opts.connection.id}" carries a socket ` +
+            `target, which cannot run under it.`,
+        );
+      }
       if (!app.manifest.capabilities?.socket) {
         throw new W6WError(
           "socket_unavailable",
