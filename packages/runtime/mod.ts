@@ -8,7 +8,14 @@
 export { loadApp } from "./src/loader.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
 
-export { describe, hostAllowed, invoke, runAuthHook } from "./src/runtime.ts";
+export {
+  authFor,
+  describe,
+  hostAllowed,
+  invoke,
+  runAuthHook,
+  signingFetch,
+} from "./src/runtime.ts";
 export type {
   AppDescription,
   CredentialHookKind,
@@ -17,6 +24,8 @@ export type {
   InvokeResult,
   RunAuthHookOptions,
 } from "./src/runtime.ts";
+export type { SignableRequest } from "@w6w/types";
+export type { WireResponse } from "./src/sandbox/protocol.ts";
 
 export {
   appScopedChecks,
