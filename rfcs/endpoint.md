@@ -1107,3 +1107,68 @@ published — a host introducing this gate for the first time is expected to tre
 the same way it already treats any other pre-existing state, not to retroactively strand every
 Endpoint that predates the concept. No field is removed, no field retyped, and the
 [Field reference](#field-reference) table gains no new row.
+
+## Amendment — 2026-10-02: `CallableRef`, and "callable" as the shared model
+
+> This section is **additive**. It renames nothing in the wire — every payload, field name and
+> discriminant value this RFC already specifies stays exactly as specified. It renames the
+> TypeScript side only: the reference union [Callable](#callable) defines is `CallableRef` in
+> code, and every earlier "Callable" — the reference union itself, and every
+> `[Callable](#callable)` link in this document — is to be read as `CallableRef` from here on.
+> This section is the reconciling note; it edits no earlier sentence in place.
+
+### `CallableRef`
+
+The [Callable](#callable) union this RFC defines is named `CallableRef` in TypeScript
+(`@w6w/workflow-types`, `packages/types/mod.ts`), reused verbatim across the Function, Endpoint
+and Workflow RFCs:
+
+```ts
+export type CallableRef =
+  | { kind: "function"; function: string }   // → fn_…
+  | { kind: "workflow"; workflow: string };  // → wf_…
+```
+
+Same two arms, same discriminant, same semantics — only the TypeScript name changed.
+`EndpointTarget` — the wider union `Endpoint.target` and an Alias's `target` draw from
+([Amendment — 2026-07-27: the `action` target
+arm](#amendment--2026-07-27-the-action-target-arm)) — has grown a further arm since that
+amendment showed a two-arm `Callable | ActionTarget`. As found in the code today:
+
+```ts
+export type EndpointTarget = CallableRef | ActionTarget | EndpointRefTarget;
+```
+
+`CallableRef`'s own two arms, the `action` arm 2026-07-27 added, and a third top-level arm,
+`EndpointRefTarget` (`{ kind: "endpoint"; endpoint: string }`), reserved for an **Alias's**
+`target` only — never legal on `Endpoint.target` itself (`POST /endpoints` refuses it). The
+`CallableRef` union itself is untouched by this growth.
+
+`CallableOnError` keeps its name. It types the callable's own failure policy — what a Function,
+an Endpoint, or a Workflow run does once `retry` and `reroute` are exhausted — not the reference,
+so it was never in scope for the `Callable` → `CallableRef` rename.
+
+### "Callable" as the shared model
+
+Independent of the rename above: "callable" now also names the model a Function, an Endpoint and
+a Workflow each share. Each is something a caller **runs** by id — through `POST /invoke/:urn`,
+every run recorded in `invocations` — not a resource (supporting material: data, links, secrets).
+Endpoint stays its own kind; no earlier sentence that already said so is rewritten. The fields the
+three share (`id`, `key`, `displayName`, `description`, `retry`, `onError`, `reroute`) are typed
+once, as `CallableBase` (`@w6w/workflow-types`, `packages/types/mod.ts`), and `Fn`, `Workflow` and
+`Endpoint` each extend it. The kind vocabulary that discriminates the three is `CallableKind`,
+whose values, as found in the code, are `"function" | "workflow" | "endpoint"` — a host-side
+storage type (`@w6w/server-db`, `server/packages/db/repos/callable-versions.ts`), not part of
+`@w6w/workflow-types`.
+
+Storage note (implementation-informative, not normative): a host may store all three kinds in one
+`callables` table discriminated by `kind`, with shared immutable version history in one
+`callable_versions` table. This RFC reserves no wire shape over that choice, exactly as it
+reserves none for `status`'s or `enabled`'s own storage.
+
+**Unchanged by this amendment.** Dispatch and the result envelope; the wire shape of `target`
+(every field name, discriminant value and JSON shape already specified); the two arms of the
+reference — only its outer TypeScript name changed; `ctx.invokeCallable`, which keeps its name and
+still takes a `CallableRef`, never an `EndpointTarget`; and the Endpoint, Function and Workflow
+lifecycle sections, in this RFC and in `function.md`/`workflow.md`. No field is removed, no field
+retyped, and the [Field reference](#field-reference) table gains no new row.
