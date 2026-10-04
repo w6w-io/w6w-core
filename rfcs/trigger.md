@@ -309,7 +309,7 @@ Errors from the workflow engine (e.g. `plan_error`, `invalid_variables`) are **n
 
 ### Ordering
 
-- **Within one subscription:** FIFO by `receivedAt`. The dispatcher processes older events before newer ones; concurrent dispatchers share the queue via the `drainPending` atomic claim.
+- **Within one subscription:** FIFO by `receivedAt` among events that are due — not waiting out a delivery-retry backoff (§Retry backoff). The dispatcher processes older due events before newer ones; an event still waiting out its wait from its last attempt is skipped by `drainPending` and does not hold back newer due events. Concurrent dispatchers share the queue via the `drainPending` atomic claim.
 - **Across subscriptions:** no ordering guarantee.
 
 ### Backpressure
