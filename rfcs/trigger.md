@@ -286,7 +286,7 @@ interface PendingEvent {
 | `unsubscribe` | ✅ | Calls `onUnsubscribe`. Persists deletion even if the hook fails (logs the error). Cascade-safe — dependent `trigger_events` may be preserved for audit or deleted per host policy. |
 | `getSubscription`, `listSubscriptionsForWorkflow` | ✅ | Read-only reflection for editors and dispatchers. |
 | `ingest` | ✅ | Calls `handleIngest`. Persists each returned event with `status: "received"` in one transaction with the "raw payload received" audit record. Returns after commit. |
-| `drainPending` | ✅ | Atomically claims up to `limit` `received` events, marks them `dispatching`, and returns them. Multiple dispatchers running concurrently MUST NOT return the same event twice. |
+| `drainPending` | ✅ | Atomically claims up to `limit` `received` events, marks them `dispatching`, and returns them. An event returned to `received` after a failed attempt is claimable only once its retry wait has elapsed (see [Retry backoff](#retry-backoff)). Multiple dispatchers running concurrently MUST NOT return the same event twice. |
 | `markDispatched` | ✅ | Terminal state transition. On `"ok"`, moves to `dispatched`. On error, increments `attempts`; if under the retry budget, returns to `received` with a delay (backoff); otherwise moves to `failed`. |
 
 ## Delivery semantics
@@ -303,7 +303,7 @@ The host does not attempt exactly-once. The engineering cost of true exactly-onc
 
 ### Retry backoff
 
-The dispatcher retries `dispatching → received` transitions with delays: **1s, 5s, 30s, 5m, 30m**. After 5 failed attempts, the event moves to `failed` (dead-letter). Dead-lettered events are visible in the UI and can be manually requeued (transition `failed → received`, reset `attempts = 0`).
+Delivery retry is the platform constant `{ maxAttempts: 5, backoff: "exponential", delayMs: 5000 }` — a [`RetryPolicy`](./workflow.md#retrypolicy) whose waits are computed by the same backoff formula a workflow step's `retry` uses. It is platform-owned: it is not authored per subscription, and no subscription can change it. An event gets 5 attempts in total. After a failed attempt, while the event has attempts left, it returns `dispatching → received`, and `drainPending` claims it again only once its wait has elapsed, measured from that event's last attempt: **5 s before attempt 2, 10 s before attempt 3, 20 s before attempt 4, 40 s before attempt 5**. Each of these waits is under the 300000 ms per-wait ceiling of [workflow.md's 2026-10-04 amendment](./workflow.md#amendment--2026-10-04-retrypolicy-well-formedness-and-the-per-wait-ceiling). After the 5th failed attempt, the event moves to `failed` (dead-letter). Dead-lettered events are visible in the UI and can be manually requeued (transition `failed → received`, reset `attempts = 0`).
 
 Errors from the workflow engine (e.g. `plan_error`, `invalid_variables`) are **non-retryable** and skip straight to `failed`. Errors classified as transient (network, timeout, host-side back-pressure) follow the backoff.
 
@@ -372,7 +372,7 @@ A host conforms to this RFC when:
 - **Registry** — `app_triggers` (or equivalent) mirrors `app_actions`; a registered app exposes its declared triggers via `GET /apps/:id`.
 - **Subscribe lifecycle** — `subscribe()` calls `onSubscribe`; if it throws, no subscription is persisted. `unsubscribe()` calls `onUnsubscribe` before deleting; hook failures are logged but do not block deletion.
 - **Persist-first ingest** — a `POST /triggers/webhooks/:subscriptionId` that returns 200 has produced at least one row in `trigger_events` with `status ∈ { received, dispatching, dispatched, failed }`.
-- **At-least-once dispatch** — for every persisted event with `status: received | dispatching`, the dispatcher eventually calls the subscriber (workflow start) or moves the event to `failed` after ≥ 5 attempts.
+- **At-least-once dispatch** — for every persisted event with `status: received | dispatching`, the dispatcher eventually calls the subscriber (workflow start) or moves the event to `failed` after its 5th failed attempt (5 attempts in total), or sooner for a non-retryable error (see [Retry backoff](#retry-backoff)).
 - **Retry classification** — engine-level errors classified as non-retryable skip retries.
 - **Concurrency safety** — two dispatchers running against the same event store return disjoint pending sets from `drainPending`.
 - **Workflow integration** — a workflow whose `trigger` is `{ type: "event", subscriptionId }` is started by the dispatcher with `run.trigger === "webhook"` (or a future-added tag) and the event's normalized payload accessible as `trigger.event` in the run scope.
