@@ -1170,9 +1170,11 @@ A host that implements this amendment MUST:
 ## Amendment — 2026-10-04: RetryPolicy well-formedness and the per-wait ceiling
 
 > This section is **additive** to the [RetryPolicy](#retrypolicy) table above. It adds no field and
-> changes no well-formed policy's behaviour; it pins three things the table left open — what shape
-> a host accepts, how long any one wait may be, and which step kinds ignore `Step.retry`. It
-> qualifies every site that reuses `RetryPolicy`, enumerated by grep —
+> changes no policy's shape. It pins two things the table left open — what shape a host accepts and
+> which step kinds ignore `Step.retry` — and it caps a third the table left unbounded: the table's
+> exponential doubling has no limit, and this section bounds each computed wait. That ceiling is its
+> one behaviour change to a well-formed policy: a computed wait above 300000 ms is cut to 300000 ms.
+> It qualifies every site that reuses `RetryPolicy`, enumerated by grep —
 > `/usr/bin/grep -n 'RetryPolicy\|"retry"\|backoff' rfcs/workflow.md rfcs/function.md rfcs/endpoint.md`,
 > run against the pre-amendment text (line numbers are of that text), plus the `delayMs` row the
 > pattern misses: the [RetryPolicy](#retrypolicy) table (`:150-156`, including the `delayMs` row's
@@ -1202,8 +1204,8 @@ A host MUST reject a malformed policy **on write**, with a `400` whose error nam
 field's path, wherever a `RetryPolicy` can be saved: `Step.retry` (on every step of a saved
 workflow), `Function.retry`, `Endpoint.retry`, `Workflow.retry`, and a spec-document import that
 carries any of them. A malformed policy is refused at the door rather than discovered at run time,
-where the only possible outcome would be a run that fails for a reason its author could have been
-told about when saving it.
+where it would otherwise fail the run or be silently coerced into something its author did not
+write — either way for a reason its author could have been told about when saving it.
 
 ### The per-wait ceiling
 
@@ -1211,8 +1213,10 @@ Any single computed wait between two attempts is capped at **300000 ms** (5 minu
 the smaller of the wait the policy computes and 300000 ms. The cap applies to every author-configured
 retry — `Step.retry`, `Function.retry`, `Endpoint.retry`, `Workflow.retry` — and to the platform's
 own trigger delivery constant ([trigger.md's Retry backoff](./trigger.md#retry-backoff)). It bounds
-each wait, not the ladder: a policy with many attempts still makes every one of them, at most five
-minutes apart once its computed waits pass the cap.
+each computed wait, not the ladder or the clock: a policy with many attempts still makes every one
+of them, with no computed wait between them longer than five minutes. The actual spacing between two
+attempts can be longer — an attempt takes time of its own, and the trigger dispatcher's wait is a
+minimum (it claims an event again only once its wait has elapsed), not a deadline.
 
 ### `@w6w/call` and `@w6w/control` steps
 
@@ -1231,7 +1235,8 @@ A host that implements this amendment MUST:
   `"exponential"` — with a `400` naming the offending field's path — at every save site listed above.
 - Accept an absent or `null` `retry` as no retry, and accept any integer `maxAttempts` >= 1 with no
   upper bound.
-- Never wait more than 300000 ms between two attempts of any retry ladder, authored or platform-owned.
+- Never compute a wait longer than 300000 ms between two attempts of any retry ladder, authored or
+  platform-owned: cap every computed wait at 300000 ms.
 
 The rest of this RFC — the [RetryPolicy](#retrypolicy) table, the example, the
 [2026-08-21 amendment](#amendment--2026-08-21-the-run-level-error-handler-workflowretryonerrorreroute)
