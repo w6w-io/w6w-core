@@ -382,3 +382,56 @@ third-party app; ownership conveys *availability*, never elevated trust.
 The owner scope is additive and defaults to global. A datastore that stores every app with an empty
 owner scope, and a caller that passes none, reproduce the pre-amendment single-global-catalog behavior
 exactly. `origin`/federation reservations are unchanged and orthogonal to ownership.
+
+## Amendment: id-set lookup (2026-10-04)
+
+> The original text above does not yet describe id-set lookup, `sort`, or `interface` — four spots
+> are each incomplete on these points: `registry.md:163-187` (the `ListQuery`/`Page<T>` block omits
+> `ids`, `sort` and `interface` entirely), `:196` (the `list(query)` operations-table row), `:230`
+> (`listLatest(query)` in the `DataStore` contract — missing both the `ids` field and the `opts?`
+> argument), and `:364` (`list(query, opts?)` in the owner-scoped registration amendment — correct on
+> `opts?`, silent on `ids`). Everything else in those sections, and in the file as a whole, otherwise
+> stands as written.
+
+`ListQuery` gains an optional `ids` field, honored by every `DataStore` implementation
+(`listLatest`) and by `Registry#list`, which forwards it unchanged:
+
+```ts
+interface ListQuery {
+  // … q / category / maturity / visibility / limit / cursor unchanged …
+
+  /** Ordering. Defaults to `"name"` — display name, A→Z. (Already shipped; was missing above.) */
+  sort?: AppSort; // "name" | "-name" | "recent" | "-recent"
+
+  /** Filter by declared Interface id. (Already shipped; was missing above.) */
+  interface?: string;
+
+  /**
+   * Resolve exactly this set of ids instead of a page. When present:
+   *  - the result is the **union with the caller's owner scope** — the same
+   *    rule `list`/`listLatest` already apply (global ∪ `caller.tenant`-owned
+   *    ∪ `caller.tenant,caller.subject`-owned); an id outside that union, or
+   *    one that does not exist, is silently omitted — never reported as an
+   *    error, the same as a page simply not containing it.
+   *  - the effective-visibility default is UNCHANGED (`["public",
+   *    "unlisted"]` unless the caller passes its own `visibility`), and every
+   *    other filter (`q`, `category`, `maturity`, `visibility`, `interface`)
+   *    still ANDs with the set.
+   *  - `limit`, `cursor` and `sort` are ignored: every visible member of the
+   *    set returns in ONE page; `nextCursor` is never set.
+   *  - an **empty array is itself a request** (`ids: []` → an empty page) —
+   *    never treated as "no id filter."
+   *  - capped at `MAX_IDS_PER_QUERY` (100) distinct ids, exported alongside
+   *    `MAX_PAGE_SIZE`; a datastore MAY assume a caller already enforced the
+   *    cap (the host enforces it at the wire, `GET /apps?ids=a,b,c` → 400
+   *    `too_many_ids` over the limit) but MUST still behave correctly if
+   *    handed more.
+   */
+  ids?: string[];
+}
+```
+
+`listLatest`/`list` both take an optional second argument, `opts?: ReadOpts` (`{ caller?:
+OwnerScope; unscoped?: boolean }`) — the owner-scope amendment above already defines its semantics
+in full; the two earlier sections' signatures (`listLatest(query)`, `list(query)`) predate that
+argument and are completed the same way here: `listLatest(query, opts?)`, `list(query, opts?)`.
