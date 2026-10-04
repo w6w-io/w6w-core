@@ -32,7 +32,7 @@ Zapier and n8n both implement this pattern with per-transport coupling and per-c
 - **Filter DSL.** Per-subscription filtering is a workflow concern — users add a filter step at the top of the graph. If pre-filter perf becomes an issue, extend `Subscription` with an optional `predicate?` field later (additive).
 - **Non-workflow subscribers.** v1 delivers only to workflows. Partner HTTP callbacks, arbitrary consumers, and event-store fan-out are deferred.
 - **Transport specifics.** HTTPS request framing, Kafka consumer-group semantics, cron scheduler internals — all host implementation. This RFC pins only the app + manager contracts.
-- **Ordering across subscriptions.** Within a subscription: FIFO by `receivedAt`. Across subscriptions: unordered.
+- **Ordering across subscriptions.** Within a subscription: FIFO by `receivedAt` among events that are due (see [Ordering](#ordering)). Across subscriptions: unordered.
 - **Exactly-once semantics.** Achieving exactly-once at the platform level adds cost without user value; every event carries an `event.id` and subscribers dedupe if they need to.
 - **The workflow engine's execution.** How the host resolves a delivered event into a run is specified in the [Workflow RFC](./workflow.md).
 
