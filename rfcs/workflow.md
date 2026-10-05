@@ -154,6 +154,7 @@ The engine never touches the outside world directly. Every operational effect �
 | `maxAttempts` | number | ✅ | Total attempts including the first. `1` = no retry. |
 | `backoff` | enum | ⬜ | `"fixed"` (default) or `"exponential"`. |
 | `delayMs` | number | ⬜ | Base delay in ms before the first retry. Defaults to `0`. Exponential doubles each attempt. |
+> See [Amendment — 2026-10-04](#amendment--2026-10-04-retrypolicy-well-formedness-and-the-per-wait-ceiling) for the shape rules a host enforces on write and the 300000 ms ceiling on any single computed wait.
 
 Retries are attempted only for errors the runtime classifies as **retryable**. `phase: "auth"` errors are never retried. `phase: "execute"` errors are retried only when the action declared `idempotent: true` or the error itself sets `retryable: true`.
 
@@ -1165,3 +1166,80 @@ A host that implements this amendment MUST:
   colliding save as a caller-visible conflict.
 - Never re-validate a stored `key` against the grammar on a save that does not itself change `key`.
 - Never enforce uniqueness on `name`.
+
+## Amendment — 2026-10-04: RetryPolicy well-formedness and the per-wait ceiling
+
+> This section is **additive** to the [RetryPolicy](#retrypolicy) table above. It adds no field and
+> changes no policy's shape. It pins two things the table left open — what shape a host accepts and
+> which step kinds ignore `Step.retry` — and it caps a third the table left unbounded: the table's
+> exponential doubling has no limit, and this section bounds each computed wait. That ceiling is its
+> one behaviour change to a well-formed policy: a computed wait above 300000 ms is cut to 300000 ms.
+> It qualifies every site that reuses `RetryPolicy`, enumerated by grep —
+> `/usr/bin/grep -n 'RetryPolicy\|"retry"\|backoff' rfcs/workflow.md rfcs/function.md rfcs/endpoint.md`,
+> run against the pre-amendment text (line numbers are of that text), plus the `delayMs` row the
+> pattern misses: the [RetryPolicy](#retrypolicy) table (`:150-156`, including the `delayMs` row's
+> "Exponential doubles each attempt"), the [Step](#step) `retry` row (`:120`), the example's
+> `"retry": { "maxAttempts": 3, "backoff": "exponential", "delayMs": 1000 }` (`:74`), the
+> [2026-08-21 amendment](#amendment--2026-08-21-the-run-level-error-handler-workflowretryonerrorreroute)'s
+> `Workflow.retry` (`:1038`) and its `retry` bullet, "with the same backoff `Step.retry` uses"
+> (`:1056-1057`), and the `retry` rows of [function.md](./function.md) (`:483`) and
+> [endpoint.md](./endpoint.md) (`:793`), each of which "Reuses the workflow Step's `RetryPolicy`
+> verbatim" and so inherits this section without an edit of its own. Which failures are retried —
+> the "retryable" paragraph under [RetryPolicy](#retrypolicy) — is outside this amendment and
+> unchanged by it.
+
+### Well-formedness
+
+A `RetryPolicy` is well-formed when:
+
+- `maxAttempts` is an **integer >= 1**. It carries **no upper bound**: the per-wait ceiling below,
+  not an attempt cap, is what keeps a long ladder from waiting unboundedly between two attempts.
+- `delayMs`, when present, is a **finite number >= 0**.
+- `backoff`, when present, is `"fixed"` or `"exponential"`.
+
+An absent or `null` `retry` is not a malformed policy: it means **no retry** — one attempt, exactly
+as the [Step](#step) `retry` row's "Defaults to no retry" already says.
+
+A host MUST reject a malformed policy **on write**, with a `400` whose error names the offending
+field's path, wherever a `RetryPolicy` can be saved: `Step.retry` (on every step of a saved
+workflow), `Function.retry`, `Endpoint.retry`, `Workflow.retry`, and a spec-document import that
+carries any of them. A malformed policy is refused at the door rather than discovered at run time,
+where it would otherwise fail the run or be silently coerced into something its author did not
+write — either way for a reason its author could have been told about when saving it.
+
+### The per-wait ceiling
+
+Any single computed wait between two attempts is capped at **300000 ms** (5 minutes): the host waits
+the smaller of the wait the policy computes and 300000 ms. The cap applies to every author-configured
+retry — `Step.retry`, `Function.retry`, `Endpoint.retry`, `Workflow.retry` — and to the platform's
+own trigger delivery constant ([trigger.md's Retry backoff](./trigger.md#retry-backoff)). It bounds
+each computed wait, not the ladder or the clock: a policy with many attempts still makes every one
+of them, with no computed wait between them longer than five minutes. The actual spacing between two
+attempts can be longer — an attempt takes time of its own, and the trigger dispatcher's wait is a
+minimum (it claims an event again only once its wait has elapsed), not a deadline.
+
+### `@w6w/call` and `@w6w/control` steps
+
+These two step kinds run no retry loop, as the 2026-07-29 amendment's **"Retries come first"**
+paragraph already states (see [Amendment — 2026-07-29: failure-conditioned
+edges](#amendment--2026-07-29-failure-conditioned-edges-edgewhen)); that paragraph governs. A
+`retry` declared on such a step is still subject to the well-formedness rules above, but it is never
+read. Authoring tools SHOULD NOT offer `retry` on these step kinds.
+
+### Conformance (additive)
+
+A host that implements this amendment MUST:
+
+- Reject, on write, a `RetryPolicy` whose `maxAttempts` is not an integer >= 1, whose `delayMs` is
+  present but not a finite number >= 0, or whose `backoff` is present but neither `"fixed"` nor
+  `"exponential"` — with a `400` naming the offending field's path — at every save site listed above.
+- Accept an absent or `null` `retry` as no retry, and accept any integer `maxAttempts` >= 1 with no
+  upper bound.
+- Never compute a wait longer than 300000 ms between two attempts of any retry ladder, authored or
+  platform-owned: cap every computed wait at 300000 ms.
+
+The rest of this RFC — the [RetryPolicy](#retrypolicy) table, the example, the
+[2026-08-21 amendment](#amendment--2026-08-21-the-run-level-error-handler-workflowretryonerrorreroute)
+and the "Retries come first" paragraph — stands unedited, apart from the one pointer line to this
+section added under the [RetryPolicy](#retrypolicy) table; this section qualifies that text rather
+than replacing it.

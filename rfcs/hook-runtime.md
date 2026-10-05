@@ -306,13 +306,13 @@ A small set of hooks return a result envelope instead of throwing — this is th
 - `param.validation.hook` returns `{ ok: true } | { ok: false; message: string }`.
 - `auth.test` returns `{ ok: true } | { ok: false; message?: string }`.
 
-A `false` result is a soft failure: the runtime converts it to a typed error (`param_invalid` or `connection_broken` respectively) and rejects the surrounding operation. A throw from these hooks is unexpected and becomes `hook_threw`.
+A `false` result is a soft failure: the runtime converts it to a typed error (`param_invalid` or `connection_broken` respectively) and rejects the surrounding operation. A throw from these hooks is unexpected and becomes `hook_failed`.
 
 ### Codes
 
 | Code | Phase | When |
 |---|---|---|
-| `hook_threw` | call-site's | Unexpected throw inside a hook. `details` carries the original message. |
+| `hook_failed` | call-site's | Unexpected throw inside a hook. `details` carries the original message. |
 | `hook_timeout` | call-site's | Hook ran past `timeoutMs`. |
 | `hook_returned_invalid` | call-site's | Hook returned a value the runtime cannot serialize or that fails the output type check. |
 | `param_invalid` | `resolution` | Declarative validation, validation hook `{ ok: false }`, or supplied value not in the resolved option set. |
@@ -331,6 +331,8 @@ so there is no partially-open socket to clean up beyond what that taxonomy alrea
 
 This table is closed for `manifestVersion: "1"`. New codes require an RFC bump.
 
+> **Amended 2026-10-04:** the `hook_failed` row above and its two prose mentions (§Result envelope, §Resource limits) were first published as `hook_threw`. The reference runtime (`run-hook.ts`), the MCP error taxonomy and the conformance tests emit `hook_failed`, so the text was corrected to match; the code itself, its phase and its meaning are unchanged, and no code was added to the table.
+
 ## Timeouts and cancellation
 
 Each hook invocation has a timeout in milliseconds. The runtime SHOULD apply a default of **30 000 ms** and MUST allow the host to override per call. When the timeout fires:
@@ -343,7 +345,7 @@ Cancellation by the caller is OPTIONAL for `manifestVersion: "1"`. A host that s
 
 ## Resource limits
 
-The reference runtime does not enforce CPU or memory caps — Deno workers don't expose those primitives portably. A spec-compliant host MAY enforce additional limits (memory, CPU time, output size) and MUST report them as `hook_threw` or a host-defined extension code with a clear `message`. Such limits MUST NOT cause silent truncation of a hook's return value.
+The reference runtime does not enforce CPU or memory caps — Deno workers don't expose those primitives portably. A spec-compliant host MAY enforce additional limits (memory, CPU time, output size) and MUST report them as `hook_failed` or a host-defined extension code with a clear `message`. Such limits MUST NOT cause silent truncation of a hook's return value.
 
 ## Sandbox posture
 
