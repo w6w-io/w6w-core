@@ -2,7 +2,7 @@ name: Docs dispatch
 
 # ---------------------------------------------------------------------------
 # On every push to main that touches this repo's published docs (docs/,
-# rfcs/ — 17 of the 22 sources the aggregator pins are RFCs — or the root
+# rfcs/ — the pages listed in docs/manifest.json — or the root
 # README), dispatches a rebuild of docs.w6w.io by triggering w6w-io/docs's
 # own "Build + Deploy" workflow by name. Mirrors
 # packages/apps/.github/workflows/reload-apps.yml:82-94's Mechanism B: a
