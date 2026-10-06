@@ -44,6 +44,7 @@ export type { LoadedHealthCheck } from "./src/loader.ts";
 export { resolveParams } from "./src/resolve.ts";
 export {
   applyOverrides,
+  dedupeSignedHeaders,
   deepMerge,
   isPath,
   mergeValue,

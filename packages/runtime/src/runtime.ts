@@ -28,7 +28,7 @@ import type {
 } from "@w6w/types";
 import { redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
-import { applyOverrides, selectsRequest } from "./overrides.ts";
+import { applyOverrides, dedupeSignedHeaders, selectsRequest } from "./overrides.ts";
 import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
@@ -314,10 +314,13 @@ export function signingFetch(
   let index = 0;
   let writeIndex = 0;
   return async (request: SignableRequest): Promise<WireResponse> => {
-    // Caller overrides are merged BEFORE `sign` runs, and that ordering is the
-    // security property: whatever header the app's auth injects overwrites one
-    // supplied here, so an override can add a header but never hijack
-    // authentication.
+    // Caller overrides are merged BEFORE `sign` runs, but ordering alone does
+    // not keep an override from riding beside auth: header keys are
+    // case-sensitive in JS while Fetch comma-joins case variants, so an
+    // override `Authorization` survives next to a `sign` that writes
+    // `authorization`. The post-sign `dedupeSignedHeaders` below (case-
+    // insensitive, signer's write wins) is what guarantees an override can add
+    // a header but never hijack authentication.
     let outgoing = request;
     if (overrides && selectsRequest(overrides, request, { index, writeIndex })) {
       outgoing = applyOverrides(request, overrides);
@@ -367,6 +370,10 @@ export function signingFetch(
         // no onFetch -> the sign worker cannot make network calls.
       });
     }
+    // Unconditional: also covers callers that never pass overrides (the hub
+    // signer hands in a spoke-merged request). When `sign` did not run,
+    // `signed === outgoing` and this is a no-op.
+    signed = dedupeSignedHeaders(outgoing, signed);
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {

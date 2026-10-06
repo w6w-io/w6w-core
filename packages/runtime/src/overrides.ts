@@ -457,6 +457,54 @@ function applyFormOverrides(
   return params.toString();
 }
 
+/**
+ * After `sign` returns, keep only the signer's value for any header it wrote.
+ *
+ * Why it is needed: JS object keys are case-sensitive, but HTTP header names
+ * are not, and Fetch comma-joins case variants into ONE header value. A caller
+ * override `{ Authorization: x }` merged before `sign` therefore survives
+ * beside a `sign` that writes lower-case `authorization`, and reaches the wire
+ * as `x, <real>`. Merging before `sign` alone does not protect auth.
+ *
+ * Rule: a key of `signed.headers` is SIGN-WRITTEN iff `outgoing.headers` (the
+ * request `sign` was handed) lacks that exact spelling or holds a different
+ * value under it. Group `signed.headers` by lower-cased name; in a group of two
+ * or more keys with at least one sign-written key, keep the LAST sign-written
+ * key under its OWN spelling (never re-cased) and drop the rest. A group with
+ * no sign-written key is left untouched. Comparing against `outgoing` (not
+ * iteration order) is what makes this sound for a `sign` that returns
+ * `{ authorization: x, ...request.headers }`.
+ *
+ * Generic over header name; no auth denylist. Never mutates either argument;
+ * returns `signed` itself when nothing is dropped.
+ */
+export function dedupeSignedHeaders(
+  outgoing: SignableRequest,
+  signed: SignableRequest,
+): SignableRequest {
+  const before = outgoing.headers ?? {};
+  const after = signed.headers ?? {};
+  const groups = new Map<string, string[]>();
+  for (const key of Object.keys(after)) {
+    const lower = key.toLowerCase();
+    const group = groups.get(lower);
+    if (group) group.push(key);
+    else groups.set(lower, [key]);
+  }
+  const drop = new Set<string>();
+  for (const keys of groups.values()) {
+    if (keys.length < 2) continue;
+    const written = keys.filter((k) => !Object.hasOwn(before, k) || before[k] !== after[k]);
+    if (written.length === 0) continue;
+    const keep = written[written.length - 1];
+    for (const k of keys) if (k !== keep) drop.add(k);
+  }
+  if (drop.size === 0) return signed;
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(after)) if (!drop.has(k)) headers[k] = v;
+  return { ...signed, headers };
+}
+
 function headerValue(headers: Record<string, string>, name: string): string | undefined {
   const key = Object.keys(headers ?? {}).find((h) => h.toLowerCase() === name);
   return key ? headers[key] : undefined;

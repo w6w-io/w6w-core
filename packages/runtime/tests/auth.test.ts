@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
-import { describe, invoke, loadApp, W6WError } from "../mod.ts";
+import { describe, invoke, loadApp, signingFetch, W6WError } from "../mod.ts";
 import type { Connection, Invocation } from "@w6w/types";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
@@ -280,6 +280,89 @@ Deno.test("overrides cannot hijack the auth header the sign hook owns", async ()
   // The merge runs BEFORE `sign`, so the app's auth overwrites it. An override
   // can add a header; it can never replace authentication.
   assertEquals(get()!.headers.get("authorization"), "Bearer test-key-123");
+});
+
+Deno.test("a differently-cased override cannot ride beside the signer's auth header (E1)", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        ...sendInvocation(`http://127.0.0.1:${port}`),
+        overrides: { headers: { Authorization: "Bearer attacker-supplied" } },
+      },
+      { connection: CONNECTION },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  // Exact value: a comma-joined "attacker, real" would fail here.
+  assertEquals(get()!.headers.get("authorization"), "Bearer test-key-123");
+});
+
+Deno.test("a differently-cased override cannot ride beside a non-Authorization signed header (E2)", async () => {
+  const egressDir = fromFileUrl(new URL("../../../fixtures/apps/egress", import.meta.url));
+  const app = await loadApp(egressDir);
+  const connection: Connection = {
+    manifestVersion: "1",
+    id: "conn_test",
+    app: "io.w6w.egress",
+    auth: "api-key-header",
+    owner: "user_1",
+    state: "connected",
+    credential: { apiKey: "live-secret-abc123" },
+    createdAt: "2026-05-24T00:00:00Z",
+  };
+  const { server, port, get } = fullCaptureServer();
+  try {
+    await invoke(
+      app,
+      {
+        manifestVersion: "1",
+        app: "io.w6w.egress",
+        action: "call",
+        connection: connection.id,
+        params: { url: `http://127.0.0.1:${port}/x` },
+        overrides: { headers: { "X-Api-Key": "attacker-supplied" } },
+      },
+      { connection },
+    );
+  } finally {
+    await server.shutdown();
+  }
+  assertEquals(get()!.headers.get("x-api-key"), "live-secret-abc123");
+});
+
+Deno.test("signingFetch with no overrides still dedupes, on the wire and in the egress capture (E3)", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = fullCaptureServer();
+  const infos: { requestHeaders?: Record<string, string> }[] = [];
+  try {
+    const fetcher = signingFetch(
+      app,
+      app.auths[0],
+      CONNECTION.credential,
+      {
+        connection: CONNECTION,
+        captureEgress: true,
+        onEgress: (info) => infos.push(info),
+      },
+    );
+    await fetcher({
+      url: `http://127.0.0.1:${port}/x`,
+      method: "GET",
+      headers: { Authorization: "Bearer attacker-supplied" },
+    });
+  } finally {
+    await server.shutdown();
+  }
+  assertEquals(get()!.headers.get("authorization"), "Bearer test-key-123");
+  assertEquals(infos.length, 1);
+  const names = Object.keys(infos[0].requestHeaders ?? {}).filter(
+    (k) => k.toLowerCase() === "authorization",
+  );
+  assertEquals(names, ["authorization"]);
 });
 
 Deno.test("overrides cannot redirect the request off the allowlisted host", async () => {
