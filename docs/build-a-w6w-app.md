@@ -1,3 +1,22 @@
+---
+id: null
+key: "build-a-w6w-app"
+title: "Build a w6w app"
+section: "build-apps"
+order: 0
+description: "Agent-ready instructions for authoring a correct w6w App."
+format: "markdown"
+shared: true
+sourceRepo: null
+sourcePath: null
+sourceSha: null
+sourceRefSha: null
+sourceUrl: null
+syncedAt: null
+createdAt: null
+updatedAt: null
+---
+
 # Build a w6w App — Agent Instructions
 
 > **Audience: an LLM / coding agent building a w6w App.** This file is written to be pasted into an
