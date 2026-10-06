@@ -323,7 +323,7 @@ V1 implementations:
 
 > Adds per-**tenant** and per-**user** private apps alongside the global catalog. Motivated by
 > embedded-tenant onboarding (a partner installs its own apps tenant-wide; its users bring their own).
-> Companion design + rollout: [`.claude/docs/app-install-scoping.md`](../../.claude/docs/app-install-scoping.md).
+> Companion design + rollout: `.claude/docs/app-install-scoping.md`.
 
 ### Owner scope
 

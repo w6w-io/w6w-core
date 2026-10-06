@@ -76,10 +76,10 @@ The platform is built from a small set of primitives. Each one has (or will have
 | **Function** | A saved operation with a **stable declared interface** over a **swappable implementation** — `inputs`/`output` stay fixed while `impl` changes. Switch vendors without breaking callers. | [`rfcs/function.md`](./rfcs/function.md) |
 | **Endpoint** | A named entry point dispatching to a Callable (Function or Workflow), sync or async. How anything outside calls in. | [`rfcs/endpoint.md`](./rfcs/endpoint.md) |
 | **Health Check** | Declared, side-effect-free probes an App publishes so a host can answer "is this working?" without guessing — vendor status, credential liveness, quota, and dependencies the customer owns. | [`rfcs/healthcheck.md`](./rfcs/healthcheck.md) — Draft |
-| **Registry** | Host-side service: the collection of registered Apps, versioned and lifecycle-managed. Datastore-pluggable; reference impl lives in [`w6w-registry`](../registry/). | [`rfcs/registry.md`](./rfcs/registry.md) — Draft |
+| **Registry** | Host-side service: the collection of registered Apps, versioned and lifecycle-managed. Datastore-pluggable; reference impl lives in `w6w-registry`. | [`rfcs/registry.md`](./rfcs/registry.md) — Draft |
 | **Trigger** | What starts a run — inbound event or schedule. | [`rfcs/trigger.md`](./rfcs/trigger.md) |
 | **Workflow** | The graph of steps the platform executes. | [`rfcs/workflow.md`](./rfcs/workflow.md), [`rfcs/node-types.md`](./rfcs/node-types.md) |
-| **Engine** | The contract a conforming workflow engine implements. Reference impl: [`w6w-workflow`](../w6w-workflow/). | [`rfcs/engine.md`](./rfcs/engine.md) |
+| **Engine** | The contract a conforming workflow engine implements. Reference impl: `w6w-workflow`. | [`rfcs/engine.md`](./rfcs/engine.md) |
 | **Webhook** | Inbound event delivery from an App. | TBD |
 | **Run** | A single execution of a workflow. | TBD |
 
