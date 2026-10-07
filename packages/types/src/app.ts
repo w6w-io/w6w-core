@@ -95,6 +95,8 @@ export interface AppManifest {
     /** This app's actions expect a host-mediated `ctx.socket`. */
     socket?: boolean;
   };
+  /** Optional. Default port counts for every Action of this App. */
+  ports?: Ports;
 }
 
 /**
@@ -137,8 +139,6 @@ export interface AppDefinition {
    * health surface. See the Health Check RFC.
    */
   healthChecks?: HealthCheckDefinition[];
-  /** Optional. Default port counts for every Action of this App. */
-  ports?: Ports;
   /**
    * Optional. This App's assertions that its own Actions satisfy one or more
    * Interfaces — named, versioned contracts multiple Apps may each implement.
