@@ -692,3 +692,53 @@ language a step's `code` runs as; it gains no second axis for "run once per item
 workflow author who needs that wraps the `@w6w/script` step in a `foreach` sub-block — ordinary
 graph composition already available via `@w6w/control`, not a property this amendment adds to
 `language` itself. No spec field is added for a per-item mode.
+
+## Amendment — 2026-10-07: unbounded `out`, `PortCount`, and field-wise ports resolution (P-1)
+
+> This section is **additive**. It **supersedes** the following base text in
+> [Ports & cardinality](#ports--cardinality), each quoted exactly; the base is left in place:
+>
+> 1. "By default a node has **one** input port and **one** output port: it accepts a single incoming edge and exposes a single outgoing port."
+> 2. Field-table row `ports`: "Omitted ⇒ `{ in: 1, out: 1 }`."
+> 3. Field-table row `ports.in`: "Max incoming edges this node accepts. Defaults to `1`." (the `in` default of `1` is **kept**; the type is now `PortCount`).
+> 4. Field-table row `ports.out`: "Number of outgoing ports this node exposes. Defaults to `1`."
+> 5. Semantics bullet "**Omitted ⇒ `{ in: 1, out: 1 }`.** The default reproduces today's single-in / single-out step exactly".
+> 6. Semantics bullet "`out` defaults to `1`; a node exposes one outgoing port unless it declares otherwise." and its parenthetical "`out` describes the node's static port count, not its dynamic fan-out."
+> 7. "A host that does not understand `ports` reads a step as `{ in: 1, out: 1 }`, which is exactly the pre-existing behavior." (a host that ignores `ports` now reads `{ in: 1, out: "many" }`; since the engine never reads ports, runtime behavior is unchanged).
+> 8. The field type `number` on `ports.in` / `ports.out` (now `PortCount`).
+>
+> Wherever the base text above asserts `out: 1`, read this amendment instead. Every other line of the
+> base section, including the example and the "Additive & backward-compatible" paragraph, stands
+> unedited, except as read through items 1–8.
+
+### Types
+
+```ts
+type PortCount = number | "many";
+interface Ports { in?: PortCount; out?: PortCount }
+```
+
+A `PortCount` is an integer ≥ 0 or the sentinel `"many"` (unbounded). The sentinel is the only
+serialized spelling of "unbounded"; tools may use `Infinity` in memory but MUST NOT serialize it.
+
+### Defaults and meaning
+
+| Field | Absent ⇒ | Meaning |
+| --- | --- | --- |
+| `in` | `1` | Max inbound edges the node accepts. `0` = **no inbound edge** is accepted (a root/trigger-like node). `> 1` or `"many"` = fan-in. |
+| `out` | `"many"` | Max outgoing edges **per lane** (the success lane and the error lane are counted separately). A finite `out` is a cap; `"many"` is unbounded. |
+
+So an omitted `ports` now means `{ in: 1, out: "many" }`: a step may feed any number of successors
+(how they run is governed by [`Step.fanOut`](./workflow.md)), but still accepts one inbound edge.
+
+### Resolution
+
+Resolution is **field-wise**, per field, first present wins:
+`Step.ports.x → Action.ports.x → App.ports.x → default`. An Action or App MAY declare `ports`
+([action.md](./action.md), [app.md](./app.md)); a step-level field overrides only that field.
+
+### Enforcement
+
+Port counts are enforced by the **editor** and by **import validation** only. The engine never reads
+`ports`; an edge past a finite `out` cap is refused at authoring/import time with a reason, not
+silently dropped.
