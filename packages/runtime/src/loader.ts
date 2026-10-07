@@ -365,7 +365,22 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     if (!trigger?.key) {
       throw new LoadError("invalid_trigger", `A trigger in ${entryPath} is missing a \`key\`.`);
     }
-    triggers.set(trigger.key, { trigger, hooks: new Set(hooks) });
+    const declared = new Set(hooks);
+    if (declared.has("onSubscribe") && !declared.has("onUnsubscribe")) {
+      throw new LoadError(
+        "invalid_trigger",
+        `Trigger "${trigger.key}" in ${entryPath} declares \`onSubscribe\` without \`onUnsubscribe\`: whatever is registered must be destroyable.`,
+      );
+    }
+    if (declared.has("poll") && declared.has("onSubscribe")) {
+      throw new LoadError(
+        "invalid_trigger",
+        `Trigger "${trigger.key}" in ${entryPath} declares both \`poll\` and \`onSubscribe\`: a trigger is a webhook or a poll, not both.`,
+      );
+    }
+    // Host-derived: overwrite whatever the author wrote.
+    trigger.type = declared.has("poll") ? "poll" : "webhook";
+    triggers.set(trigger.key, { trigger, hooks: declared });
   }
 
   const netAllowlist = computeAllowlist(manifest, auths);
