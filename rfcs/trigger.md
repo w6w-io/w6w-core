@@ -394,6 +394,8 @@ The reference test fixtures for the manager + HTTPS adapter constitute the execu
 >
 > - "A transport adapter (v1: HTTPS endpoint at `POST /triggers/webhooks/:subscriptionId`) receives raw input." (Concept step 1) and the HTTPS adapter's `POST /triggers/webhooks/:subscriptionId` route line: the listener accepts any method.
 > - "`POST /triggers/webhooks/:subscriptionId` that returns 200 has produced at least one row in `trigger_events` with `status ∈ { received, dispatching, dispatched, failed }`" (Conformance): the status set also contains `ignored`, and the method is any.
+> - "**Response**: 200 on successful commit, 400 if `handleIngest` throws (body carries the error), 404 if the subscription is unknown, 429 on host back-pressure." (HTTPS adapter, Response): an ingest-parser throw is no longer a 400. The call is recorded as one `failed` row in `trigger_events` and the listener answers 200.
+> - "POST   /triggers/webhooks/:subscriptionId       — public inbound webhook (no auth header; id is the secret)" (route list): the listener accepts any method on that path, not `POST` only.
 > - The `onUnsubscribe` row, "Optional; MUST be provided when `onSubscribe` allocates external resources.": `onUnsubscribe` MUST be provided whenever `onSubscribe` is.
 > - The `handleIngest` row, "string (path) \| function | ✅": `handleIngest` is optional.
 > - "Request body: passed to `handleIngest(raw: <parsed JSON or text>)`." and the `handleIngest` input `raw: unknown; // whatever the transport adapter received`: `raw` is the whole call, not the body only.
