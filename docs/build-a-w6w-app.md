@@ -347,9 +347,22 @@ Four things to know:
 
 ## Triggers (advanced / optional)
 
-Apps may also declare `triggers` (what _starts_ a workflow) via `TriggerDefinition` with
-`onSubscribe` / `onUnsubscribe` / `handleIngest` hooks. The starter templates do **not** include
-triggers; add them only when asked, and read [`rfcs/trigger.md`](../rfcs/trigger.md) first.
+Apps may also declare `triggers` (what _starts_ a workflow) via `TriggerDefinition`. A trigger is
+one of two forms, and the loader derives which (`type`) from the hooks you declare:
+
+- **Webhook** — `onSubscribe` registers with the third party (it receives the `callbackUrl` to hand
+  over) and `onUnsubscribe` destroys that registration. They MUST pair: the loader rejects
+  `onSubscribe` without `onUnsubscribe` (`invalid_trigger`). The optional `handleIngest` turns the
+  whole inbound call (`{ method, path, query, headers, body }`) into 0..N events; without it the
+  body is the event. A trigger with no hooks is a plain receiver.
+- **Poll** — `poll({ params, state, subscriptionId }, ctx)` returns `{ events, nextState? }` and the
+  host calls it on an interval (`minIntervalMs` is your floor; the host may set a higher one). Dedupe
+  from your own cursor in `state`. A poll trigger MUST NOT declare `onSubscribe`.
+
+Either form may add `parseOutput`, which reshapes a stored event into the run's `trigger.event`.
+That is five hooks in all: `onSubscribe`, `onUnsubscribe`, `handleIngest`, `poll`, `parseOutput`.
+The starter templates do **not** include triggers; add them only when asked, and read
+[`rfcs/trigger.md`](../rfcs/trigger.md) first.
 
 ## Definition-of-done checklist
 

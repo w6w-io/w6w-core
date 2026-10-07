@@ -747,10 +747,13 @@ export async function invoke(
  * same way as for actions: the trigger sees a redacted connection; outbound
  * fetches route through the auth `sign` hook when the app declares one.
  *
- * Callers:
- *   - server's TriggerManager.subscribe   → invokeTriggerHook(kind="onSubscribe")
- *   - server's HTTPS webhook adapter      → invokeTriggerHook(kind="handleIngest")
- *   - server's TriggerManager.unsubscribe → invokeTriggerHook(kind="onUnsubscribe")
+ * Hook-generic: any of the five `TRIGGER_HOOK_KINDS` the trigger declares.
+ * Host callers:
+ *   - registration (subscription create / publish) → "onSubscribe"
+ *   - destroy (subscription delete / any dependency deleted) → "onUnsubscribe"
+ *   - the HTTPS listener, per inbound call → "handleIngest" (input `raw` is the whole call)
+ *   - the poll ticker, per due subscription → "poll"
+ *   - the dispatcher, before starting a run → "parseOutput"
  */
 export interface InvokeTriggerHookOptions extends InvokeOptions {
   triggerKey: string;
