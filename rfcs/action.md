@@ -405,3 +405,21 @@ resolves to the `FileRef` — the same six-field JSON object the action produced
 underlying bytes. A step that needs the bytes themselves reads them explicitly through
 [`ctx.file.read`](./hook-runtime.md#amendment--2026-09-19-ctxfile-and-binary-capable-signablerequestbody),
 passing the resolved `FileRef` (or its bare `id`).
+
+## Amendment — 2026-10-07: an Action may declare `ports` (P-1)
+
+> This section is **additive**. It **supersedes** the 2026-07-23 amendment line "**Node input/output
+> cardinality** is a property of the workflow **`Step`**, not of the action — an optional
+> `Step.ports?: { in?: number; out?: number }` (omitted ⇒ `{ in: 1, out: 1 }`)" (quoted from
+> [Node cardinality (note)](#node-cardinality-note)). The sentence "Actions are unaffected by how
+> many edges reach the node that uses them" still holds for execution: an action still receives
+> exactly one resolved `with` input. The base text is left in place and read through this amendment.
+
+An Action MAY declare an optional `ports?: Ports` (`Ports = { in?: PortCount; out?: PortCount }`,
+`PortCount = number | "many"`; see [Node Types — P-1 amendment](./node-types.md#amendment--2026-10-07-unbounded-out-portcount-and-field-wise-ports-resolution-p-1)).
+It is the action's declared default cardinality for any step that uses it. Resolution is field-wise:
+`Step.ports.x → Action.ports.x → App.ports.x → default` (`in` ⇒ `1`, `out` ⇒ `"many"`). The step
+remains the most specific layer; the superseded "omitted ⇒ `{ in: 1, out: 1 }`" is replaced by
+`{ in: 1, out: "many" }`. `describe()` serves each action with `ports = { ...app.ports, ...action.ports }`
+when either is declared (absent otherwise). Ports are an authoring/import-time concern; the runtime
+never reads them.
