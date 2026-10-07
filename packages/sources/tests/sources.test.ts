@@ -559,3 +559,137 @@ Deno.test("bitbucketAuthHeaders: Basic only when user + token set", () => {
     );
   });
 });
+
+// --- resolveViaTarball: in-flight dedup + stale eviction ---
+
+const tarballOk = () =>
+  Promise.resolve(new Response(buildTarball("repo-x", { "a.txt": "a" }), { status: 200 }));
+
+Deno.test("resolveViaTarball: concurrent cold resolves share exactly one fetch", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    let fetches = 0;
+    const dirs = await withFetch(
+      () => {
+        fetches++;
+        return tarballOk();
+      },
+      () =>
+        Promise.all(
+          Array.from({ length: 8 }, () =>
+            resolveViaTarball(
+              { cacheKey: ["t", "dedup"], url: "https://example.test/t.tar.gz", subpath: "." },
+              { cacheDir: tmp },
+            )),
+        ),
+    );
+    assertEquals(fetches, 1);
+    assertEquals(new Set(dirs).size, 1);
+    // No leftover staging dirs.
+    const names = [...Deno.readDirSync(join(tmp, "t"))].map((e) => e.name);
+    assertEquals(names, ["dedup"]);
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: a failed fetch rejects every waiter and is not cached", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const src = { cacheKey: ["t", "fail"], url: "https://example.test/t.tar.gz" };
+    let fetches = 0;
+    const results = await withFetch(
+      () => {
+        fetches++;
+        return Promise.resolve(new Response("nope", { status: 500 }));
+      },
+      () =>
+        Promise.allSettled(
+          Array.from({ length: 4 }, () => resolveViaTarball(src, { cacheDir: tmp })),
+        ),
+    );
+    assertEquals(fetches, 1);
+    assert(results.every((r) => r.status === "rejected"));
+
+    const dir = await withFetch(tarballOk, () => resolveViaTarball(src, { cacheDir: tmp }));
+    assertEquals(await Deno.readTextFile(join(dir, "a.txt")), "a");
+    assertEquals(fetches, 1);
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: force waits for an in-flight non-force fetch, then refetches", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const src = { cacheKey: ["t", "force-wait"], url: "https://example.test/t.tar.gz" };
+    let fetches = 0;
+    await withFetch(
+      () => {
+        fetches++;
+        return tarballOk();
+      },
+      async () => {
+        const plain = resolveViaTarball(src, { cacheDir: tmp });
+        const forced = resolveViaTarball(src, { cacheDir: tmp, force: true });
+        await Promise.all([plain, forced]);
+      },
+    );
+    assertEquals(fetches, 2);
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: evictStale removes old siblings, keeps young ones and staging", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const parent = join(tmp, "t", "evict");
+    const old = join(parent, "oldsha");
+    const young = join(parent, "youngsha");
+    const youngStaging = join(parent, "newsha.tmp-other");
+    const oldStaging = join(parent, "deadsha.tmp-abc");
+    for (const d of [old, young, youngStaging, oldStaging]) {
+      await Deno.mkdir(d, { recursive: true });
+    }
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    await Deno.utime(old, past, past);
+    await Deno.utime(oldStaging, past, past);
+
+    const dir = await withFetch(tarballOk, () =>
+      resolveViaTarball(
+        {
+          cacheKey: ["t", "evict", "newsha"],
+          url: "https://example.test/t.tar.gz",
+          evictStale: true,
+        },
+        { cacheDir: tmp },
+      ));
+    const exists = (p: string) => Deno.stat(p).then(() => true, () => false);
+    assert(await exists(dir));
+    assert(!(await exists(old)));
+    assert(!(await exists(oldStaging)));
+    assert(await exists(young));
+    assert(await exists(youngStaging));
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
+
+Deno.test("resolveViaTarball: without evictStale, old siblings are untouched", async () => {
+  const tmp = await Deno.makeTempDir();
+  try {
+    const old = join(tmp, "t", "noevict", "oldref");
+    await Deno.mkdir(old, { recursive: true });
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    await Deno.utime(old, past, past);
+    await withFetch(tarballOk, () =>
+      resolveViaTarball(
+        { cacheKey: ["t", "noevict", "main"], url: "https://example.test/t.tar.gz" },
+        { cacheDir: tmp },
+      ));
+    assert((await Deno.stat(old)).isDirectory);
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
+});
