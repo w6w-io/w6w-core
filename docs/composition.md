@@ -38,18 +38,17 @@ Use the `@w6w/control` `merge` step to join branches back into one value. `mode`
 ```json
 {
   "steps": [
-    { "id": "start", "app": "@w6w/trigger", "fanOut": "parallel" },
-    { "id": "a", "app": "crm", "action": "getUser" },
-    { "id": "b", "app": "billing", "action": "getPlan" },
+    { "id": "start", "uses": { "app": "@w6w/trigger", "action": "trigger" }, "fanOut": "parallel" },
+    { "id": "a", "uses": { "app": "crm", "action": "getUser", "connection": "conn_crm" } },
+    { "id": "b", "uses": { "app": "billing", "action": "getPlan", "connection": "conn_bill" } },
     {
       "id": "join",
-      "app": "@w6w/control",
-      "action": "merge",
-      "params": {
+      "uses": { "app": "@w6w/control", "action": "merge" },
+      "with": {
         "mode": "object",
         "entries": [
-          { "key": "user", "value": "{{a.output}}" },
-          { "key": "plan", "value": "{{b.output}}" }
+          { "key": "user", "value": { "$": "steps.a.output" } },
+          { "key": "plan", "value": { "$": "steps.b.output" } }
         ]
       }
     }

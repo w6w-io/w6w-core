@@ -322,6 +322,9 @@ The reference engine's execution model is documented in the workflow repo's `REA
 > - the canonical-controls list ("the four control actions listed here", the `if`, `foreach`,
 >   `parallel`, `wait` enumeration in Summary, Goals and Conformance 5) — the canonical set also
 >   contains **`aggregate`** (added by the 2026-07-23 additive section but never listed) and **`merge`**;
+> - base line 35, "Extending the control set beyond the canonical four" — the canonical set is no longer
+>   four; and base line 287 (Conformance 5), "All four canonical controls interpret as specified" —
+>   read "all canonical controls", including `aggregate` and `merge`;
 > - the `aggregate` section's description as a standalone control — it is now `merge` without entries
 >   (see below). It stays valid forever, hidden from palettes.
 >
