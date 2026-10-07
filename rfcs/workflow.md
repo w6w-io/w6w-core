@@ -1243,3 +1243,48 @@ The rest of this RFC — the [RetryPolicy](#retrypolicy) table, the example, the
 and the "Retries come first" paragraph — stands unedited, apart from the one pointer line to this
 section added under the [RetryPolicy](#retrypolicy) table; this section qualifies that text rather
 than replacing it.
+
+## Amendment — 2026-10-07: `Step.fanOut` and parallel scheduling
+
+> **Additive.** Adds one Step field and the scheduling semantics behind it. Nothing above is edited;
+> this section **supersedes** the following base text, which is left in place:
+>
+> - the Step table row for `ports` ("Omitted ⇒ `{ in: 1, out: 1 }`") — the default is now
+>   `{ in: 1, out: "many" }`, see the [Node Types RFC 2026-10-07 amendment](./node-types.md#ports--cardinality);
+> - the sentence "v0 executes them sequentially; parallel scheduling of independent branches is an
+>   engine-level enhancement that consumes the same plan" — a step opts into parallel execution of its
+>   successors with `fanOut: "parallel"`; absent, execution stays sequential.
+>
+> [Open question 1](#open-questions) (a workflow-level default concurrency) **remains open**.
+> `fanOut` is the **per-step** answer; it does not decide the workflow-level one.
+
+### Step field
+
+| Field | Type | Req | Description |
+|---|---|---|---|
+| `fanOut` | `"sequential" \| "parallel"` | ⬜ | How the step's **direct successors** run. Absent ⇒ `"sequential"`. Governs the successors on **both** lanes (the normal lane and the `Edge.when` failure lane). |
+
+### Semantics
+
+- **Absent / sequential.** A plan containing no `parallel` step executes exactly as before: the
+  plan's `order`, one step at a time. Engines MUST keep this path observably identical.
+- **Strands.** Otherwise the engine runs **strands**. One strand runs the roots. A strand runs one step
+  at a time — always the earliest-in-plan-order step that is ready and assigned to it. A step is
+  **ready** when every inbound edge is *resolved* (its source reached a terminal status, or the edge was
+  skipped).
+- **Opening strands.** When a `parallel` step completes, its newly-ready direct successors, in plan
+  order, S1…Sk: S1 continues the strand, S2…Sk each open a new strand. The newly-ready successors of a
+  sequential step stay on its strand.
+- **Join once.** A step with indegree > 1 runs **once**, on the strand of its earliest-plan-order inbound
+  source. There is no concurrency cap.
+- **Checkpoints** are serialized: one call in flight at a time, in completion order. `RunStatePatch` is
+  unchanged.
+- **Drain.** On a plain `fail`, a `wait` suspension or an abort the engine stops launching new steps,
+  lets in-flight steps finish, then finalizes.
+- **Deterministic reporting.** The reported error is the first failure **by plan order**. A suspension
+  returns one token — that of the first suspended step by plan order; other `wait`s re-run after resume.
+  `lastOutput` is the output of the last succeeded step by plan order. These do not depend on timing.
+- **Replay.** `from` replays that step **plus all its graph descendants**; the positional rule
+  ("that step and every later plan step") is the special case for a sequential plan.
+- **Ports.** `fanOut` and `ports.out` are independent: `out` bounds how many edges may leave a lane
+  (enforced by editor and import only); `fanOut` decides how those successors run.

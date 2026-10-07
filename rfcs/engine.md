@@ -314,3 +314,58 @@ The reference engine's execution model is documented in the workflow repo's `REA
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for `manifestVersion: "2"` (matches the Workflow RFC). Breaking changes require a new RFC and a `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-10-07: the scheduler and `@w6w/control` · `merge`
+
+> **Additive.** Nothing above is edited. This amendment **supersedes** the following base text:
+>
+> - the canonical-controls list ("the four control actions listed here", the `if`, `foreach`,
+>   `parallel`, `wait` enumeration in Summary, Goals and Conformance 5) — the canonical set also
+>   contains **`aggregate`** (added by the 2026-07-23 additive section but never listed) and **`merge`**;
+> - the `aggregate` section's description as a standalone control — it is now `merge` without entries
+>   (see below). It stays valid forever, hidden from palettes.
+>
+> Open question 1 of the [Workflow RFC](./workflow.md#open-questions) stays open.
+
+### Scheduler
+
+Planning is unchanged. Execution depends on [`Step.fanOut`](./workflow.md#amendment--2026-10-07-stepfanout-and-parallel-scheduling):
+
+- A plan with **no** `fanOut: "parallel"` step MUST run the plain `plan.order` loop, observably identical
+  to before this amendment.
+- Otherwise the engine runs the **strand scheduler**: a strand runs one step at a time, always the
+  earliest-in-plan-order ready step assigned to it; a step is ready when every inbound edge is resolved
+  (source terminal or edge skipped). When a `parallel` step completes, its newly-ready direct successors
+  in plan order S1…Sk are placed: S1 continues the strand, S2…Sk open new strands. A join runs once, on
+  the strand of its earliest-plan-order inbound source. No concurrency cap.
+- Checkpoint calls are serialized (one in flight, completion order); `RunStatePatch` is unchanged.
+- On `fail` / `wait` suspension / abort the engine stops launching, drains in-flight steps, then
+  finalizes. Reported error = first failure by plan order; suspend token = first suspended step by plan
+  order; `lastOutput` = last succeeded step by plan order. Replay `from` = the step and all its graph
+  descendants.
+- The engine never reads `ports` (enforcement is editor + import only).
+
+### `@w6w/control` · `merge`
+
+The fan-in join with optional explicit entries. No new reserved `@w6w/*` id; no new host primitive.
+
+**Params:**
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `mode` | enum | ✅ | `"array"` or `"object"`. |
+| `entries` | `{ key?: string; value: unknown }[]` | ⬜ | Explicit entries. Absent or empty ⇒ the `aggregate` behaviour. |
+
+**Output:** `{ result }`, referenceable as `steps.<id>.output.result`.
+
+- **No / empty `entries`** — exactly `aggregate`: `array` ⇒ inbound source outputs in incoming-edge
+  order, `undefined` dropped; `object` ⇒ inbound outputs shallow-merged, later edge wins.
+- **With `entries`** — `array` ⇒ the entry values in order, `undefined` dropped; `object` ⇒
+  `{ [key]: value }` in order, `undefined` values omitted. In `object` mode an empty or duplicate `key`
+  raises `param_invalid`.
+- **Single-reference rule (type-preserving).** An entry `value` that is exactly ONE reference — an
+  `ExprValue`, or a template string whose only part is a single run-scope `var` marker with no
+  surrounding text — resolves to the referenced value **type-preserved** (as `{ "$": ref }` does:
+  numbers, objects, arrays, booleans stay themselves). Any other value resolves like every `with`
+  value (templates yield strings).
+- **Equivalence.** `aggregate` ≡ `merge` without entries. Engines SHOULD share one join function.
