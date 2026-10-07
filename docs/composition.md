@@ -33,7 +33,7 @@ A step can have more than one outgoing edge. `fanOut` on the step says how those
 - `"sequential"` (the default) — branches run one after another, in plan order.
 - `"parallel"` — branches run concurrently. The run waits for all of them, and a downstream step with several inbound edges runs once, after every branch has arrived.
 
-Use the `@w6w/control` `merge` step to join branches back into one value. `mode` is `"array"` (the branch outputs in incoming-edge order) or `"object"` (outputs shallow-merged, the later edge wins). Optional `entries` (`{ key?, value }`) pick exactly what goes in; without `entries`, `merge` behaves as `aggregate`. If an entry's `value` is a single reference, its type is preserved rather than turned into a string.
+Use the `@w6w/control` `merge` step to join branches back into one value. `mode` is `"array"` (the branch outputs in incoming-edge order) or `"object"` (outputs shallow-merged, the later edge wins). Optional `entries` (`{ key?, value }`) pick exactly what goes in; without `entries`, `merge` behaves as `aggregate`. If an entry's `value` is a single reference, its type is preserved rather than turned into a string. An entry (its `key` or `value`) that reads a vault secret is refused, and the merge step fails with a parameter error, because merge output is stored with the run.
 
 ```json
 {
