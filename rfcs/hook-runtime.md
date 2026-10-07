@@ -261,6 +261,11 @@ The complete set of hook kinds, their input/output shapes, and the lifecycle pha
 | `auth.handshake` | [Auth RFC](./auth.md) | `{ credential, target, received?, state? }` | `HandshakeStep` | `execute` | **Yes** |
 | `auth.refresh` | [Auth RFC](./auth.md) | `{ credential }` | opaque credential | `auth` | **Yes** |
 | `auth.revoke` | [Auth RFC](./auth.md) | `{ credential }` | `void` | `auth` | **Yes** |
+| `trigger.onSubscribe` | [Trigger RFC](./trigger.md) | `{ params, subscriptionId, callbackUrl, hostUrl }` | opaque state | `execute` | **Yes** |
+| `trigger.onUnsubscribe` | [Trigger RFC](./trigger.md) | `{ params, state, subscriptionId }` | `void` | `execute` | **Yes** |
+| `trigger.handleIngest` | [Trigger RFC](./trigger.md) | `{ raw: TriggerCall, params, state, subscriptionId }` | `Event[]` | `execute` | No |
+| `trigger.poll` | [Trigger RFC](./trigger.md) | `{ params, state, subscriptionId }` | `{ events, nextState? }` | `execute` | **Yes** |
+| `trigger.parseOutput` | [Trigger RFC](./trigger.md) | `{ call, normalized, subscriptionId }` | output value | `execute` | No |
 
 Inputs and outputs MUST be **structured-cloneable** (the union of plain data, ArrayBuffers, Maps, Sets, Dates — no functions, no DOM nodes, no class instances with private state). This is what makes hooks transportable across worker boundaries and serialization-agnostic.
 

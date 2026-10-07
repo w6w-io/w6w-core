@@ -245,13 +245,47 @@ export type OnUnsubscribeHook<P = Record<string, unknown>, S = unknown> = (
 ) => void | Promise<void>;
 
 /**
- * Trigger `handleIngest` — the transport-agnostic ingest hook. Converts a raw
- * inbound payload (HTTPS body, Kafka value, poll result) into zero or more
- * normalized events the host persists and dispatches to subscribed workflows.
- * Returning `[]` acknowledges the delivery but produces nothing to dispatch —
- * the right choice for pings and duplicates.
+ * One inbound call to a webhook trigger, as the host captured it. Credential
+ * headers are masked (`[redacted]`) in the STORED copy; `handleIngest` receives
+ * the unmasked call.
+ */
+export type TriggerCall = {
+  method: string;
+  path: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  body: unknown;
+};
+
+/**
+ * Trigger `handleIngest` — the ingest parser. Converts the whole inbound call
+ * (method, path, query, headers, body) into zero or more normalized events the
+ * host persists and dispatches to subscribed workflows. Returning `[]`
+ * acknowledges the delivery but produces nothing to dispatch — the right choice
+ * for pings and duplicates. Optional: without it the call body is the event.
  */
 export type HandleIngestHook<P = Record<string, unknown>, S = unknown, E = unknown> = (
-  input: { raw: unknown; params: P; state: S; subscriptionId: string },
+  input: { raw: TriggerCall; params: P; state: S; subscriptionId: string },
   ctx: HookContext,
 ) => E[] | Promise<E[]>;
+
+/**
+ * Trigger `poll` — one check of a poll trigger. Returns the new events and,
+ * optionally, the next cursor state; the host persists `nextState` atomically
+ * with the events. The app dedupes from its own cursor.
+ */
+export type PollHook<P = Record<string, unknown>, S = unknown, E = unknown> = (
+  input: { params: P; state: S; subscriptionId: string },
+  ctx: HookContext,
+) => { events: E[]; nextState?: S } | Promise<{ events: E[]; nextState?: S }>;
+
+/**
+ * Trigger `parseOutput` — the run-time output parser. Maps a stored event to
+ * the value that becomes the run's `trigger.event`. For a webhook-type row
+ * `call` is the stored, masked `TriggerCall`; for a poll-type row it is the
+ * polled event.
+ */
+export type ParseOutputHook<E = unknown, O = unknown> = (
+  input: { call: unknown; normalized: E; subscriptionId: string },
+  ctx: HookContext,
+) => O | Promise<O>;

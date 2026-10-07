@@ -13,6 +13,7 @@ export {
   describe,
   hostAllowed,
   invoke,
+  invokeTriggerHook,
   runAuthHook,
   signingFetch,
 } from "./src/runtime.ts";
@@ -22,6 +23,7 @@ export type {
   EgressInfo,
   InvokeOptions,
   InvokeResult,
+  InvokeTriggerHookOptions,
   RunAuthHookOptions,
 } from "./src/runtime.ts";
 export type { SignableRequest } from "@w6w/types";
