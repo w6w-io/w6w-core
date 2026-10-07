@@ -44,6 +44,10 @@ export interface PackAppEntry {
    * Optional SemVer pin. If present, the installer asserts the App's manifest
    * version matches — a mismatch is a hard error. Handy for a Pack that wants
    * to reproducibly install known-good versions.
+   *
+   * The reserved word `"latest"` skips that check: the installer takes whatever
+   * the source holds at install time, and when its content changed at a version
+   * already registered, bumps past the registered latest instead of refusing.
    */
   version?: string;
   /**
