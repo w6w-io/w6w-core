@@ -3,7 +3,7 @@
  * See rfcs/app.md.
  */
 import type { ImageObject } from "./image.ts";
-import type { ActionDefinition } from "./action.ts";
+import type { ActionDefinition, Ports } from "./action.ts";
 import type { AuthDefinition } from "./auth.ts";
 import type { TriggerDefinition } from "./trigger.ts";
 import type { HealthCheckDefinition } from "./health.ts";
@@ -137,6 +137,8 @@ export interface AppDefinition {
    * health surface. See the Health Check RFC.
    */
   healthChecks?: HealthCheckDefinition[];
+  /** Optional. Default port counts for every Action of this App. */
+  ports?: Ports;
   /**
    * Optional. This App's assertions that its own Actions satisfy one or more
    * Interfaces — named, versioned contracts multiple Apps may each implement.
