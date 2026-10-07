@@ -103,7 +103,13 @@ export interface InvokeResult {
 export function describe(app: LoadedApp): AppDescription {
   return {
     app: app.manifest,
-    actions: [...app.actions.values()].map((a) => a.definition),
+    actions: [...app.actions.values()].map((a) => {
+      const appPorts = app.manifest.ports;
+      const actionPorts = a.definition.ports;
+      if (appPorts === undefined && actionPorts === undefined) return a.definition;
+      // Field-wise fold (action wins); a copy — never mutate the loaded definition.
+      return { ...a.definition, ports: { ...appPorts, ...actionPorts } };
+    }),
     auth: app.auths.map((a) => a.auth),
     triggers: [...app.triggers.values()].map((t) => t.trigger),
     health: [...app.healthChecks.values()].map((h) => h.check),
