@@ -7,7 +7,7 @@
  * Runs host-side (full Deno perms) — resolvers are a wrapper concern, never
  * sandboxed.
  */
-import { dirname, join, normalize, resolve as resolvePath } from "jsr:@std/path@^1.0.0";
+import { basename, dirname, join, normalize, resolve as resolvePath } from "jsr:@std/path@^1.0.0";
 import { UntarStream } from "jsr:@std/tar@^0.1";
 import { type ResolveOptions, SourceError } from "./types.ts";
 import { applySubpath } from "./subpath.ts";
@@ -61,7 +61,39 @@ export interface TarballSource {
   label?: string;
   /** Optional `#subpath` fragment: a repo-relative dir to select post-extract. */
   subpath?: string;
+  /**
+   * Opt in to evicting stale sibling cache dirs (older SHAs) after a successful
+   * extract. ONLY set this when the LAST `cacheKey` segment is an immutable id
+   * (a commit SHA): siblings are then provably superseded. Moving-ref keys
+   * (branch/tag) must not set it — a sibling there is a different live ref.
+   */
+  evictStale?: boolean;
+  /** Minimum sibling age (mtime) before eviction. Default {@link DEFAULT_EVICT_GRACE_MS}. */
+  evictGraceMs?: number;
 }
+
+/** Siblings younger than this are kept so an in-progress read of an older tree isn't yanked. */
+export const DEFAULT_EVICT_GRACE_MS = 10 * 60 * 1000;
+
+interface InFlight {
+  promise: Promise<string>;
+  force: boolean;
+}
+
+/**
+ * In-flight download+extract per resolved `dest`, so N concurrent misses on one
+ * cacheKey share ONE fetch and ONE staging copy instead of N (which OOMs on
+ * in-memory /tmp). Entries are removed when the promise settles, so a failure
+ * is never cached; every waiter sees the same rejection.
+ *
+ * Force semantics: a non-force call joins ANY in-flight op (a forced one is at
+ * least as fresh). A force call joins an in-flight FORCED op, but if only a
+ * non-force op is in flight it first waits for that to settle (ignoring its
+ * outcome) and then runs its own fetch — it never `rm -rf`s a dir an in-flight
+ * non-force call is about to rename into place or return. Later non-force calls
+ * join the forced op.
+ */
+const inFlight = new Map<string, InFlight>();
 
 /**
  * Resolve a tarball-backed source to a cached local directory. Returns the
@@ -73,12 +105,29 @@ export async function resolveViaTarball(
 ): Promise<string> {
   const cacheDir = resolvePath(opts.cacheDir ?? defaultCacheDir());
   const dest = join(cacheDir, ...src.cacheKey.map((s) => s.replace(/[^\w.-]/g, "_")));
+  const force = !!opts.force;
 
-  if (opts.force) {
+  // No await between the map lookups and `set`, so registration is atomic.
+  for (;;) {
+    const cur = inFlight.get(dest);
+    if (!cur) break;
+    if (!force || cur.force) return applySubpath(await cur.promise, src.subpath);
+    await cur.promise.catch(() => {});
+  }
+  const promise = loadTarball(src, dest, force).finally(() => {
+    if (inFlight.get(dest)?.promise === promise) inFlight.delete(dest);
+  });
+  inFlight.set(dest, { promise, force });
+  return applySubpath(await promise, src.subpath);
+}
+
+/** Cache-check / fetch / extract into `dest`; resolves to `dest` (no subpath applied). */
+async function loadTarball(src: TarballSource, dest: string, force: boolean): Promise<string> {
+  if (force) {
     await Deno.remove(dest, { recursive: true }).catch(() => {});
   } else {
     try {
-      if ((await Deno.stat(dest)).isDirectory) return applySubpath(dest, src.subpath);
+      if ((await Deno.stat(dest)).isDirectory) return dest;
     } catch { /* not cached yet */ }
   }
 
@@ -116,5 +165,31 @@ export async function resolveViaTarball(
     await Deno.remove(staging, { recursive: true }).catch(() => {});
     if (!destIsDir) throw renameErr;
   }
-  return applySubpath(dest, src.subpath);
+  if (src.evictStale) {
+    await evictStaleSiblings(dest, src.evictGraceMs ?? DEFAULT_EVICT_GRACE_MS).catch((e) => {
+      console.warn(`[sources] stale cache eviction failed: ${e}`);
+    });
+  }
+  return dest;
+}
+
+/**
+ * Delete sibling cache dirs of `dest` (older SHAs, abandoned staging dirs) whose
+ * mtime is older than `graceMs`. Never touches `dest` or its own staging dirs.
+ * Per-entry failures are swallowed.
+ */
+async function evictStaleSiblings(dest: string, graceMs: number): Promise<void> {
+  const parent = dirname(dest);
+  const self = basename(dest);
+  const now = Date.now();
+  for await (const entry of Deno.readDir(parent)) {
+    if (entry.name === self || entry.name.startsWith(`${self}.tmp-`)) continue;
+    if (!entry.isDirectory) continue;
+    const path = join(parent, entry.name);
+    try {
+      const { mtime } = await Deno.stat(path);
+      if (!mtime || now - mtime.getTime() < graceMs) continue;
+      await Deno.remove(path, { recursive: true });
+    } catch { /* best effort */ }
+  }
 }

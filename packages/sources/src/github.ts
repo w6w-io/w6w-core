@@ -158,6 +158,8 @@ export const githubResolver: Resolver = {
         headers,
         label: "GitHub",
         subpath,
+        // Keyed by an immutable commit SHA, so older sibling SHAs are superseded.
+        evictStale: true,
       },
       opts,
     );
