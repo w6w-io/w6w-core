@@ -5,7 +5,13 @@
  */
 import type { Param } from "./param.ts";
 import type { Output } from "./action.ts";
-import type { HandleIngestHook, OnSubscribeHook, OnUnsubscribeHook } from "./hooks.ts";
+import type {
+  HandleIngestHook,
+  OnSubscribeHook,
+  OnUnsubscribeHook,
+  ParseOutputHook,
+  PollHook,
+} from "./hooks.ts";
 
 /**
  * The lifecycle hook names a trigger may declare, in a fixed order so
@@ -13,8 +19,21 @@ import type { HandleIngestHook, OnSubscribeHook, OnUnsubscribeHook } from "./hoo
  * module. Kept small — non-hook fields (params, output, requiresAuth) come off
  * the serializable Trigger config.
  */
-export const TRIGGER_HOOK_KINDS = ["onSubscribe", "onUnsubscribe", "handleIngest"] as const;
+export const TRIGGER_HOOK_KINDS = [
+  "onSubscribe",
+  "onUnsubscribe",
+  "handleIngest",
+  "poll",
+  "parseOutput",
+] as const;
 export type TriggerHookKind = typeof TRIGGER_HOOK_KINDS[number];
+
+/**
+ * The two trigger forms. `webhook` triggers register with the third party
+ * (`onSubscribe` / `onUnsubscribe`) and receive calls; `poll` triggers are
+ * checked by the host on an interval via `poll`.
+ */
+export type TriggerType = "webhook" | "poll";
 
 /**
  * A Trigger's serializable configuration — its metadata minus the hook
@@ -39,12 +58,25 @@ export interface Trigger {
    * when it doesn't.
    */
   requiresAuth?: boolean;
+  /**
+   * The trigger's form. Host-derived, never authored: the loader sets it to
+   * `"poll"` iff the module declares `poll`, else `"webhook"`, overwriting any
+   * value the author wrote.
+   */
+  type?: TriggerType;
+  /**
+   * Vendor floor (ms) for a poll trigger's check interval. The host applies its
+   * own floor on top; the larger wins.
+   */
+  minIntervalMs?: number;
 }
 
 /**
  * A trigger module's default export: config and behavior co-located.
- * `handleIngest` is the only required hook; `onSubscribe` / `onUnsubscribe`
- * are optional for triggers with no third-party setup step.
+ * Two forms (see rfcs/trigger.md): a webhook trigger declares `onSubscribe` +
+ * `onUnsubscribe` (which MUST pair) and an optional `handleIngest`; a poll
+ * trigger declares `poll` and MUST NOT declare `onSubscribe`. Any trigger may
+ * declare `parseOutput`. A trigger with no hooks is a plain webhook receiver.
  *
  * ```ts
  * const newMessage: TriggerDefinition = {
@@ -52,7 +84,7 @@ export interface Trigger {
  *   params: [...],
  *   onSubscribe(input, ctx) { ... },      // register the webhook with Slack
  *   onUnsubscribe(state, ctx) { ... },    // tear down
- *   handleIngest({ raw }, ctx) { ... },   // parse raw → 0..N events
+ *   handleIngest({ raw }, ctx) { ... },   // parse the whole call → 0..N events
  * };
  * export default newMessage;
  * ```
@@ -64,5 +96,7 @@ export interface TriggerDefinition<
 > extends Trigger {
   onSubscribe?: OnSubscribeHook<P, S>;
   onUnsubscribe?: OnUnsubscribeHook<P, S>;
-  handleIngest: HandleIngestHook<P, S, E>;
+  handleIngest?: HandleIngestHook<P, S, E>;
+  poll?: PollHook<P, S, E>;
+  parseOutput?: ParseOutputHook<E>;
 }

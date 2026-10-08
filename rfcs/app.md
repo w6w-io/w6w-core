@@ -178,3 +178,17 @@ These field names are **reserved** by this spec. Hosts MUST NOT repurpose them; 
 | Deprecation lifecycle | `classification.maturity: "deprecated"` plus optional `classification.successor` (reverse-DNS id). |
 | Asset resolution | Paths resolve **relative to the manifest file** by default; the optional top-level `assetsRoot` overrides the base directory. Absolute URLs are passed through. |
 | Signing & provenance | **Deferred** to a follow-up RFC. `signature` and `attestations` are reserved as field names. |
+
+## Amendment — 2026-10-07: App-level `ports` defaults (P-1)
+
+> This section is **additive**; no existing line is changed. It extends the manifest `Shape`
+> with one optional field.
+
+An App MAY declare an optional top-level `ports?: Ports` (`Ports = { in?: PortCount; out?: PortCount }`,
+`PortCount = number | "many"`; see [Node Types — P-1 amendment](./node-types.md#amendment--2026-10-07-unbounded-out-portcount-and-field-wise-ports-resolution-p-1)).
+App ports are **defaults**, folded **per field** into every action the app serves: an action's own
+`ports.x` wins over `App.ports.x`, which wins over the global default (`in` ⇒ `1`, `out` ⇒ `"many"`),
+and a `Step.ports.x` wins over all. Concretely `describe()` serves each action with
+`ports = { ...app.ports, ...action.ports }` when either is declared (absent otherwise), so
+consumers of an app's actions see the folded value without resolving the app themselves. This
+supersedes, for apps, the 2026-07-23 action.md position that cardinality belongs to the `Step` alone.

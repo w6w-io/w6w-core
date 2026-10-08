@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
 import {
   applyOverrides,
+  dedupeSignedHeaders,
   deepMerge,
   mergeValue,
   parseOverrideKey,
@@ -360,4 +361,47 @@ Deno.test("selectsRequest: `all` selects every request, `match` narrows by URL",
     }),
     false,
   );
+});
+
+// --- dedupeSignedHeaders (F-14): the signer's write wins over any case variant ---
+
+const hreq = (headers: Record<string, string>): SignableRequest => req({ headers });
+
+Deno.test("dedupeSignedHeaders: signer's lower-case write beats a caller's Authorization (U1)", () => {
+  const outgoing = hreq({ Authorization: "attacker" });
+  const signed = hreq({ Authorization: "attacker", authorization: "real" });
+  assertEquals(dedupeSignedHeaders(outgoing, signed).headers, { authorization: "real" });
+});
+
+Deno.test("dedupeSignedHeaders: holds when the signer's key iterates first (U2)", () => {
+  const outgoing = hreq({ Authorization: "attacker" });
+  const signed = hreq({ authorization: "real", Authorization: "attacker" });
+  assertEquals(dedupeSignedHeaders(outgoing, signed).headers, { authorization: "real" });
+});
+
+Deno.test("dedupeSignedHeaders: generic over name, survivor keeps its own spelling (U3)", () => {
+  const outgoing = hreq({ "x-api-key": "attacker", "X-Trace": "t" });
+  const signed = hreq({ "x-api-key": "attacker", "X-Trace": "t", "X-Api-Key": "real" });
+  assertEquals(dedupeSignedHeaders(outgoing, signed).headers, {
+    "X-Trace": "t",
+    "X-Api-Key": "real",
+  });
+});
+
+Deno.test("dedupeSignedHeaders: a case-twin the signer did not write survives (U4)", () => {
+  const headers = { "X-Dup": "a", "x-dup": "b" };
+  const outgoing = hreq({ ...headers });
+  const signed = hreq({ ...headers, authorization: "real" });
+  assertEquals(dedupeSignedHeaders(outgoing, signed).headers, {
+    ...headers,
+    authorization: "real",
+  });
+});
+
+Deno.test("dedupeSignedHeaders: mutates neither argument (U5)", () => {
+  const outgoing = hreq({ Authorization: "attacker" });
+  const signed = hreq({ Authorization: "attacker", authorization: "real" });
+  dedupeSignedHeaders(outgoing, signed);
+  assertEquals(outgoing.headers, { Authorization: "attacker" });
+  assertEquals(signed.headers, { Authorization: "attacker", authorization: "real" });
 });

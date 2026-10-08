@@ -1,3 +1,165 @@
 {
-  "docs": []
+  "roots": [
+    "rfcs",
+    "README.md"
+  ],
+  "docs": [
+    {
+      "path": "app-contract.md",
+      "slug": "app-contract",
+      "section": "reference-spec",
+      "title": "App contract",
+      "order": 0,
+      "summary": "The contract an App publisher ships and a host may assume: Apps, Actions, params, auth, connections, health checks, categories and images."
+    },
+    {
+      "path": "../rfcs/app.md",
+      "slug": "app-contract/app",
+      "section": "reference-spec",
+      "title": "App",
+      "order": 0
+    },
+    {
+      "path": "../rfcs/action.md",
+      "slug": "app-contract/action",
+      "section": "reference-spec",
+      "title": "Action",
+      "order": 10
+    },
+    {
+      "path": "../rfcs/param.md",
+      "slug": "app-contract/param",
+      "section": "reference-spec",
+      "title": "Param",
+      "order": 20
+    },
+    {
+      "path": "../rfcs/auth.md",
+      "slug": "app-contract/auth",
+      "section": "reference-spec",
+      "title": "Auth",
+      "order": 30
+    },
+    {
+      "path": "../rfcs/connection.md",
+      "slug": "app-contract/connection",
+      "section": "reference-spec",
+      "title": "Connection",
+      "order": 40
+    },
+    {
+      "path": "../rfcs/healthcheck.md",
+      "slug": "app-contract/healthcheck",
+      "section": "reference-spec",
+      "title": "Health Check",
+      "order": 50
+    },
+    {
+      "path": "../rfcs/categories.md",
+      "slug": "app-contract/categories",
+      "section": "reference-spec",
+      "title": "Categories",
+      "order": 60
+    },
+    {
+      "path": "../rfcs/image-object.md",
+      "slug": "app-contract/image-object",
+      "section": "reference-spec",
+      "title": "ImageObject",
+      "order": 70
+    },
+    {
+      "path": "composition.md",
+      "slug": "composition",
+      "section": "reference-spec",
+      "title": "Composition",
+      "order": 10,
+      "summary": "How one call becomes a reusable operation, an entry point or a graph: Functions, Endpoints, Workflows, node types and triggers."
+    },
+    {
+      "path": "../rfcs/function.md",
+      "slug": "composition/function",
+      "section": "reference-spec",
+      "title": "Function",
+      "order": 0
+    },
+    {
+      "path": "../rfcs/endpoint.md",
+      "slug": "composition/endpoint",
+      "section": "reference-spec",
+      "title": "Endpoint",
+      "order": 10
+    },
+    {
+      "path": "../rfcs/workflow.md",
+      "slug": "composition/workflow",
+      "section": "reference-spec",
+      "title": "Workflow",
+      "order": 20
+    },
+    {
+      "path": "../rfcs/node-types.md",
+      "slug": "composition/node-types",
+      "section": "reference-spec",
+      "title": "Node Types",
+      "order": 30
+    },
+    {
+      "path": "../rfcs/trigger.md",
+      "slug": "composition/trigger",
+      "section": "reference-spec",
+      "title": "Trigger",
+      "order": 40
+    },
+    {
+      "path": "host-runtime.md",
+      "slug": "host-runtime",
+      "section": "reference-spec",
+      "title": "Host & runtime",
+      "order": 20,
+      "summary": "The contracts that make an App portable across implementations: hook runtime, invocations, the registry and the engine."
+    },
+    {
+      "path": "../rfcs/hook-runtime.md",
+      "slug": "host-runtime/hook-runtime",
+      "section": "reference-spec",
+      "title": "Hook Runtime",
+      "order": 0
+    },
+    {
+      "path": "../rfcs/invocation.md",
+      "slug": "host-runtime/invocation",
+      "section": "reference-spec",
+      "title": "Invocation",
+      "order": 10
+    },
+    {
+      "path": "../rfcs/registry.md",
+      "slug": "host-runtime/registry",
+      "section": "reference-spec",
+      "title": "Registry",
+      "order": 20
+    },
+    {
+      "path": "../rfcs/engine.md",
+      "slug": "host-runtime/engine",
+      "section": "reference-spec",
+      "title": "Engine",
+      "order": 30
+    },
+    {
+      "path": "build-a-w6w-app.md",
+      "slug": "build-a-w6w-app",
+      "section": "build-apps",
+      "title": "Build a w6w app",
+      "order": 0
+    },
+    {
+      "path": "../README.md",
+      "slug": "core",
+      "section": "reference-packages",
+      "title": "w6w-core",
+      "order": 0
+    }
+  ]
 }

@@ -13,6 +13,7 @@ export {
   describe,
   hostAllowed,
   invoke,
+  invokeTriggerHook,
   runAuthHook,
   signingFetch,
 } from "./src/runtime.ts";
@@ -22,6 +23,7 @@ export type {
   EgressInfo,
   InvokeOptions,
   InvokeResult,
+  InvokeTriggerHookOptions,
   RunAuthHookOptions,
 } from "./src/runtime.ts";
 export type { SignableRequest } from "@w6w/types";
@@ -44,6 +46,7 @@ export type { LoadedHealthCheck } from "./src/loader.ts";
 export { resolveParams } from "./src/resolve.ts";
 export {
   applyOverrides,
+  dedupeSignedHeaders,
   deepMerge,
   isPath,
   mergeValue,

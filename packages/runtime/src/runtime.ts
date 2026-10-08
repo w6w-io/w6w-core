@@ -28,7 +28,7 @@ import type {
 } from "@w6w/types";
 import { redact } from "@w6w/types";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
-import { applyOverrides, selectsRequest } from "./overrides.ts";
+import { applyOverrides, dedupeSignedHeaders, selectsRequest } from "./overrides.ts";
 import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
@@ -103,7 +103,13 @@ export interface InvokeResult {
 export function describe(app: LoadedApp): AppDescription {
   return {
     app: app.manifest,
-    actions: [...app.actions.values()].map((a) => a.definition),
+    actions: [...app.actions.values()].map((a) => {
+      const appPorts = app.manifest.ports;
+      const actionPorts = a.definition.ports;
+      if (appPorts === undefined && actionPorts === undefined) return a.definition;
+      // Field-wise fold (action wins); a copy — never mutate the loaded definition.
+      return { ...a.definition, ports: { ...appPorts, ...actionPorts } };
+    }),
     auth: app.auths.map((a) => a.auth),
     triggers: [...app.triggers.values()].map((t) => t.trigger),
     health: [...app.healthChecks.values()].map((h) => h.check),
@@ -314,10 +320,13 @@ export function signingFetch(
   let index = 0;
   let writeIndex = 0;
   return async (request: SignableRequest): Promise<WireResponse> => {
-    // Caller overrides are merged BEFORE `sign` runs, and that ordering is the
-    // security property: whatever header the app's auth injects overwrites one
-    // supplied here, so an override can add a header but never hijack
-    // authentication.
+    // Caller overrides are merged BEFORE `sign` runs, but ordering alone does
+    // not keep an override from riding beside auth: header keys are
+    // case-sensitive in JS while Fetch comma-joins case variants, so an
+    // override `Authorization` survives next to a `sign` that writes
+    // `authorization`. The post-sign `dedupeSignedHeaders` below (case-
+    // insensitive, signer's write wins) is what guarantees an override can add
+    // a header but never hijack authentication.
     let outgoing = request;
     if (overrides && selectsRequest(overrides, request, { index, writeIndex })) {
       outgoing = applyOverrides(request, overrides);
@@ -367,6 +376,10 @@ export function signingFetch(
         // no onFetch -> the sign worker cannot make network calls.
       });
     }
+    // Unconditional: also covers callers that never pass overrides (the hub
+    // signer hands in a spoke-merged request). When `sign` did not run,
+    // `signed === outgoing` and this is a no-op.
+    signed = dedupeSignedHeaders(outgoing, signed);
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {
@@ -734,10 +747,13 @@ export async function invoke(
  * same way as for actions: the trigger sees a redacted connection; outbound
  * fetches route through the auth `sign` hook when the app declares one.
  *
- * Callers:
- *   - server's TriggerManager.subscribe   → invokeTriggerHook(kind="onSubscribe")
- *   - server's HTTPS webhook adapter      → invokeTriggerHook(kind="handleIngest")
- *   - server's TriggerManager.unsubscribe → invokeTriggerHook(kind="onUnsubscribe")
+ * Hook-generic: any of the five `TRIGGER_HOOK_KINDS` the trigger declares.
+ * Host callers:
+ *   - registration (subscription create / publish) → "onSubscribe"
+ *   - destroy (subscription delete / any dependency deleted) → "onUnsubscribe"
+ *   - the HTTPS listener, per inbound call → "handleIngest" (input `raw` is the whole call)
+ *   - the poll ticker, per due subscription → "poll"
+ *   - the dispatcher, before starting a run → "parseOutput"
  */
 export interface InvokeTriggerHookOptions extends InvokeOptions {
   triggerKey: string;

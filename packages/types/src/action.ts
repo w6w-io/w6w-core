@@ -32,6 +32,15 @@ export type Output = OutputField[] | DynamicOutput;
  * It is the `ActionDefinition` with `execute` stripped (functions don't
  * serialize and never leave the sandbox).
  */
+/** A port count: a non-negative integer, or `"many"` (unbounded). */
+export type PortCount = number | "many";
+
+/** How many inputs/outputs a node exposes. Absent fields fall back to defaults. */
+export interface Ports {
+  in?: PortCount;
+  out?: PortCount;
+}
+
 export interface Action {
   /** Machine name. Unique within the App. Lowercase, kebab-case. */
   key: string;
@@ -60,6 +69,8 @@ export interface Action {
    * a host invokes it with `{}`.
    */
   healthCheck?: ActionHealthTag;
+  /** Optional. Port counts for this Action; overrides the App's `ports` field-wise. */
+  ports?: Ports;
 }
 
 /**

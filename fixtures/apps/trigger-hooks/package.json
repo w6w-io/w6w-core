@@ -1,0 +1,15 @@
+{
+  "name": "@w6w-fixtures/trigger-hooks",
+  "version": "1.0.0",
+  "description": "Fixture app declaring one webhook and one poll trigger; no auth, no network.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.trigger-hooks",
+    "displayName": "Trigger Hooks",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "entry": "./index.ts"
+  }
+}

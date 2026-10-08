@@ -135,6 +135,21 @@ class Ctx {
   }
 }
 
+function checkPorts(ctx: Ctx, ports: unknown, path: string): void {
+  if (ports === undefined) return;
+  if (!isObject(ports)) {
+    ctx.err(path, "must be an object");
+    return;
+  }
+  for (const side of ["in", "out"]) {
+    const v = ports[side];
+    if (v === undefined || v === "many") continue;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+      ctx.err(`${path}.${side}`, 'must be an integer >= 0 or "many"');
+    }
+  }
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -196,6 +211,8 @@ function validateActionInto(ctx: Ctx, action: unknown, path: string): void {
   ctx.enum(action.type, ACTION_TYPES, `${path}.type`);
   ctx.reqString(action.title, `${path}.title`);
   checkParams(ctx, action.params, `${path}.params`);
+
+  checkPorts(ctx, action.ports, `${path}.ports`);
 
   // A tagged Action is projected into the health surface and invoked with `{}`,
   // so it has to be safe to call unattended.
@@ -437,6 +454,8 @@ export function validateApp(manifest: unknown): ValidationResult {
   } else if (manifest.categories.length > 3) {
     ctx.err("categories", "must have at most 3 entries");
   }
+
+  checkPorts(ctx, manifest.ports, "ports");
 
   if (!isObject(manifest.appearance)) {
     ctx.err("appearance", "is required");

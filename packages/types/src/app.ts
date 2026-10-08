@@ -3,7 +3,7 @@
  * See rfcs/app.md.
  */
 import type { ImageObject } from "./image.ts";
-import type { ActionDefinition } from "./action.ts";
+import type { ActionDefinition, Ports } from "./action.ts";
 import type { AuthDefinition } from "./auth.ts";
 import type { TriggerDefinition } from "./trigger.ts";
 import type { HealthCheckDefinition } from "./health.ts";
@@ -95,6 +95,8 @@ export interface AppManifest {
     /** This app's actions expect a host-mediated `ctx.socket`. */
     socket?: boolean;
   };
+  /** Optional. Default port counts for every Action of this App. */
+  ports?: Ports;
 }
 
 /**
