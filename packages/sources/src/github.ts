@@ -16,6 +16,7 @@ import {
   splitRef,
 } from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
+import { assertSafeGitRef, isSafeSegment } from "./refcheck.ts";
 
 export interface GithubRef {
   owner: string;
@@ -35,11 +36,16 @@ export function parseGithubRef(ref: string): GithubRef {
   if (scheme !== "github") {
     throw new SourceError("bad_scheme", `Not a github ref: ${ref}`);
   }
-  const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.+))?$/);
+  const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.*))?$/);
   if (!m) {
     throw new SourceError("bad_ref", `Expected "github:owner/repo[@ref][#subpath]", got: ${ref}`);
   }
-  return { owner: m[1], repo: m[2], ref: m[3] ?? "HEAD" };
+  const [, owner, repo, gitRef] = m;
+  if (!isSafeSegment(owner) || !isSafeSegment(repo)) {
+    throw new SourceError("bad_ref", `Invalid owner or repo in source ref: ${ref}`);
+  }
+  if (gitRef !== undefined) assertSafeGitRef(gitRef, ref);
+  return { owner, repo, ref: gitRef ?? "HEAD" };
 }
 
 /** codeload serves a gzipped tarball directly (public, anonymous). */

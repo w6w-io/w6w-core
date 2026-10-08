@@ -16,6 +16,7 @@ import {
   splitRef,
 } from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
+import { assertSafeGitRef, isSafeSegment } from "./refcheck.ts";
 
 export interface GitlabRef {
   /** Full project path, e.g. `group/subgroup/repo`. */
@@ -45,6 +46,10 @@ export function parseGitlabRef(ref: string): GitlabRef {
       `Expected "gitlab:namespace/project[@ref][#subpath]", got: ${ref}`,
     );
   }
+  if (!path.split("/").every(isSafeSegment)) {
+    throw new SourceError("bad_ref", `Invalid group or project in source ref: ${ref}`);
+  }
+  if (at >= 0) assertSafeGitRef(gitRef, ref);
   return { path, ref: gitRef };
 }
 
