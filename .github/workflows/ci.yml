@@ -12,6 +12,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Every packages/*/ holding both manifests must carry one version; a drift
+      # fails publish-types.yml's release verify job only after the tag is cut.
+      - name: package.json and deno.json versions agree
+        run: |
+          rc=0
+          for d in packages/*/; do
+            if [ ! -f "$d/package.json" ] || [ ! -f "$d/deno.json" ]; then
+              continue
+            fi
+            p=$(jq -r .version "$d/package.json")
+            n=$(jq -r .version "$d/deno.json")
+            if [ "$p" != "$n" ]; then
+              echo "::error::$d package.json $p != deno.json $n"
+              rc=1
+            else
+              echo "ok $d $p"
+            fi
+          done
+          exit $rc
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
