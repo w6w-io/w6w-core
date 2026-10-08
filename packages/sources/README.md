@@ -24,6 +24,14 @@ const b = await resolve("file:./fixtures/apps/hello"); // bare paths work too
 
 Dispatch is by scheme; bare paths fall to the local resolver.
 
+**Ref validation.** The `github:`, `gitlab:` and `bitbucket:` parsers refuse an owner/repo (or
+group/project) outside `[A-Za-z0-9_.-]+`, a dot-only name, and an empty, `.` or `..` segment in
+`@ref`, with `SourceError("bad_ref")` (`src/refcheck.ts`: `isSafeSegment`, `isSafeGitRef`). The
+tarball cache path is built from the ref, so it is also checked before any filesystem operation —
+including the `force` removal — and must sit strictly inside the cache dir, else
+`SourceError("unsafe_cache_path")` (`src/tarball.ts`, the `unsafe_cache_path` throw). The check is
+lexical, not symlink-aware.
+
 ## Pluggable
 
 `resolve()` picks the first registered `Resolver` whose `canResolve(ref)` is true. Add your own
