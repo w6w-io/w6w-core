@@ -1,0 +1,12 @@
+{
+  "name": "@w6w/app-build",
+  "version": "0.0.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "imports": {
+    "@w6w/types": "../types/mod.ts",
+    "@w6w/runtime": "../runtime/mod.ts"
+  }
+}

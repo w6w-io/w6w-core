@@ -5,7 +5,8 @@
     "./packages/sources",
     "./packages/validator",
     "./packages/expr",
-    "./packages/schema"
+    "./packages/schema",
+    "./packages/app-build"
   ],
   "imports": {
     "@w6w/types": "./packages/types/mod.ts"
