@@ -11,8 +11,15 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
 import { invoke, loadApp, runHook, W6WError } from "../mod.ts";
 import { runWorker } from "../src/sandbox/run-hook.ts";
+import type { LoadedApp } from "../src/loader.ts";
 import type { WireResponse } from "../src/sandbox/protocol.ts";
 import type { Invocation } from "@w6w/types";
+
+/** The fixture is loaded by `loadApp`, so it is always the `dir` arm of `LoadedApp.code`. */
+function dirCode(app: LoadedApp) {
+  if (app.code.kind !== "dir") throw new Error("expected a dir-loaded app");
+  return app.code;
+}
 
 const DIR = fromFileUrl(new URL("../../../fixtures/apps/socket-posture", import.meta.url));
 
@@ -46,10 +53,10 @@ Deno.test("ctx.socket proxies write/read through onSocket with the exact bytes",
   const app = await loadApp(DIR);
   const written: Uint8Array[] = [];
   const result = await runHook<{ socketPresent: boolean; echoed: string | null }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "proxied-echo" },
     input: { message: "hello wire" },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onSocket: (req) => {
       if (req.op === "write") {
         written.push(req.bytes);
@@ -81,14 +88,14 @@ Deno.test("ctx.socket calls reject (not hang) when enableSocket is true but onSo
       runWorker<unknown>({
         type: "start",
         op: "call",
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "proxied-echo" },
         input: { message: "x" },
         enableFetch: false,
         enableSocket: true,
         enableFile: false,
       }, {
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         timeoutMs: 2_000,
         // onSocket intentionally omitted.
       }),
@@ -105,10 +112,10 @@ Deno.test("ctx.socket calls reject (not hang) when enableSocket is true but onSo
 Deno.test("ctx.fetch and ctx.socket.read() interleaved each resolve with their own reply", async () => {
   const app = await loadApp(DIR);
   const result = await runHook<{ echoed: string | null; fetched?: string }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "proxied-echo" },
     input: { message: "socket-value", fetchUrl: "https://example.invalid/whatever" },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onFetch: () => Promise.resolve(fakeFetchResponse("fetch-value")),
     onSocket: (req) => {
       if (req.op === "write") return Promise.resolve({ op: "write" });
@@ -129,10 +136,10 @@ Deno.test("ctx.fetch and ctx.socket.read() interleaved each resolve with their o
 Deno.test("ctx.socket is undefined when enableSocket is false", async () => {
   const app = await loadApp(DIR);
   const result = await runHook<{ socketPresent: boolean; echoed: string | null }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "proxied-echo" },
     input: { message: "unused" },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
   });
   assertEquals(result.socketPresent, false);
   assertEquals(result.echoed, null);
@@ -145,10 +152,10 @@ Deno.test("a throwing onSocket callback rejects the hook's ctx.socket call with 
   const err = await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "proxied-echo" },
         input: { message: "x" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onSocket: () => {
           throw new Error("host socket exploded");
         },

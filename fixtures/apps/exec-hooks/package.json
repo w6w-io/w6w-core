@@ -1,0 +1,16 @@
+{
+  "name": "@w6w-fixtures/exec-hooks",
+  "version": "1.0.0",
+  "description": "One import-free fixture loadable as a dir AND as exec code: every hook site, a read probe, non-ASCII.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.exec-hooks",
+    "displayName": "Exec Hooks",
+    "appearance": { "icon": { "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"/>" } },
+    "network": { "allow": ["127.0.0.1"] },
+    "entry": "./app.js"
+  }
+}

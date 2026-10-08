@@ -7,6 +7,7 @@
 import { isAbsolute, join, resolve } from "jsr:@std/path@^1.0.0";
 import type {
   Action,
+  AppArtifactManifest,
   AppManifest,
   Auth,
   AuthHookKind,
@@ -17,7 +18,9 @@ import type {
   TriggerHookKind,
   W6WPackageMetadata,
 } from "@w6w/types";
+import { verifySha256 } from "@w6w/types";
 import { LoadError } from "./errors.ts";
+import type { DescribedApp } from "./sandbox/protocol.ts";
 import { describeApp } from "./sandbox/run-hook.ts";
 
 export interface LoadedAction {
@@ -51,11 +54,38 @@ export interface LoadedTrigger {
   hooks: Set<TriggerHookKind>;
 }
 
-export interface LoadedApp {
+/** An app whose code lives on disk: hooks import `entryPath`, read-scoped to `dir`. */
+export interface DirCode {
+  kind: "dir";
   /** Absolute app root directory. */
   dir: string;
   /** Absolute path to the entry module. Imported in the sandbox to run any hook. */
   entryPath: string;
+}
+
+/** An app built into one self-contained bundle: hooks import it from a `data:` URL, read-less. */
+export interface ExecCode {
+  kind: "exec";
+  /** sha-256 (lowercase hex) of the UTF-8 bytes of `code`. */
+  sha256: string;
+  /** The bundled, import-free ES module source. */
+  code: string;
+}
+
+export type AppCode = DirCode | ExecCode;
+
+export interface LoadedApp {
+  /** Where this app's code comes from; every hook spawn routes through `hookSource`. */
+  code: AppCode;
+  /**
+   * @deprecated Read `code` instead. Kept only for consumers that predate `code`
+   * (the server's asset inliner reads `loadedApp.dir` at runtime). Present ONLY on
+   * dir-kind apps, as own properties equal to `code.dir` / `code.entryPath`; an
+   * exec-kind app never carries them — a dir is never faked for an exec.
+   */
+  readonly dir?: string;
+  /** @deprecated See `dir`. */
+  readonly entryPath?: string;
   manifest: AppManifest;
   actions: Map<string, LoadedAction>;
   auths: LoadedAuth[];
@@ -72,7 +102,7 @@ export interface LoadedApp {
   netAllowlist: string[];
 }
 
-interface PackageJson {
+export interface AppPackageJson {
   name?: string;
   version?: string;
   description?: string;
@@ -88,6 +118,18 @@ interface PackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+}
+
+/**
+ * The one place a hook spawn learns where the app's code is. A dir app yields the
+ * path + read scope; an exec app yields its code, which `run-hook.ts` turns into a
+ * `data:` URL and a read-less Worker. Spread into every `runHook` call.
+ */
+export function hookSource(
+  app: { code: AppCode },
+): { entryPath: string; readScope: string } | { code: ExecCode } {
+  const c = app.code;
+  return c.kind === "dir" ? { entryPath: c.entryPath, readScope: c.dir } : { code: c };
 }
 
 /** Strip an npm scope: `@acme/slack` -> `slack`. */
@@ -113,7 +155,7 @@ function firstUrl(field: string | { url?: string } | undefined): string | undefi
 }
 
 /** Build an AppManifest from package.json, reusing native fields and the `w6w` block. */
-function manifestFromPackageJson(pkg: PackageJson): AppManifest {
+export function manifestFromPackageJson(pkg: AppPackageJson): AppManifest {
   const w = pkg.w6w ?? ({} as W6WPackageMetadata);
 
   const require = <T>(value: T | undefined, field: string): T => {
@@ -230,7 +272,7 @@ async function hasVendoredNodeModules(dir: string, depth: number): Promise<boole
   return false;
 }
 
-async function assertNoNpmDependencies(root: string, pkg: PackageJson): Promise<void> {
+export async function assertNoNpmDependencies(root: string, pkg: AppPackageJson): Promise<void> {
   if (await hasVendoredNodeModules(root, 0)) {
     throw new LoadError(
       "npm_dependencies_forbidden",
@@ -323,34 +365,27 @@ export function healthAllowlist(appAllowlist: string[], check: HealthCheck): str
   return [...new Set([...appAllowlist, ...extra])];
 }
 
+/** The entry module of an app directory: `w6w.entry`, else package `main`, else `./index.ts`. */
+export function resolveAppEntry(root: string, pkg: AppPackageJson): string {
+  return resolveRef(root, pkg.w6w?.entry ?? pkg.main ?? "./index.ts");
+}
+
 /**
- * Load an app from a local directory.
- *
- * Identity comes from `package.json` (the `w6w` block plus native fields), or a
- * standalone file via `w6w.manifest`. Behavior comes from the entry module
- * (`w6w.entry`, else package `main`, else `./index.ts`), imported in the sandbox
- * so its config can be extracted without running untrusted code on the host.
+ * Turn a described app + identity manifest + code source into a `LoadedApp`. Shared by
+ * `loadApp` (label = entry path) and `loadedAppFromArtifact` (label = `sha256:<hex>`).
+ * Never mutates `described` objects it did not create: triggers are cloned before the
+ * host overwrites `type`.
  */
-export async function loadApp(dir: string): Promise<LoadedApp> {
-  const root = resolve(dir);
-  const pkg = await readJson<PackageJson>(join(root, "package.json"), "missing_package_json");
-  await assertNoNpmDependencies(root, pkg);
-
-  let manifest: AppManifest;
-  if (pkg.w6w?.manifest) {
-    manifest = await readJson<AppManifest>(resolveRef(root, pkg.w6w.manifest), "missing_manifest");
-    if (!manifest.id) throw new LoadError("invalid_manifest", "App manifest is missing `id`.");
-  } else {
-    manifest = manifestFromPackageJson(pkg);
-  }
-
-  const entryPath = resolveRef(root, pkg.w6w?.entry ?? pkg.main ?? "./index.ts");
-  const described = await describeApp(entryPath, root);
-
+export function assembleLoadedApp(
+  described: DescribedApp,
+  manifest: AppManifest,
+  code: AppCode,
+  label: string,
+): LoadedApp {
   const actions = new Map<string, LoadedAction>();
   for (const definition of described.actions) {
     if (!definition?.key) {
-      throw new LoadError("invalid_action", `An action in ${entryPath} is missing a \`key\`.`);
+      throw new LoadError("invalid_action", `An action in ${label} is missing a \`key\`.`);
     }
     actions.set(definition.key, { definition });
   }
@@ -361,21 +396,22 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
   }));
 
   const triggers = new Map<string, LoadedTrigger>();
-  for (const { trigger, hooks } of described.triggers) {
-    if (!trigger?.key) {
-      throw new LoadError("invalid_trigger", `A trigger in ${entryPath} is missing a \`key\`.`);
+  for (const { trigger: given, hooks } of described.triggers) {
+    if (!given?.key) {
+      throw new LoadError("invalid_trigger", `A trigger in ${label} is missing a \`key\`.`);
     }
+    const trigger = { ...given };
     const declared = new Set(hooks);
     if (declared.has("onSubscribe") && !declared.has("onUnsubscribe")) {
       throw new LoadError(
         "invalid_trigger",
-        `Trigger "${trigger.key}" in ${entryPath} declares \`onSubscribe\` without \`onUnsubscribe\`: whatever is registered must be destroyable.`,
+        `Trigger "${trigger.key}" in ${label} declares \`onSubscribe\` without \`onUnsubscribe\`: whatever is registered must be destroyable.`,
       );
     }
     if (declared.has("poll") && declared.has("onSubscribe")) {
       throw new LoadError(
         "invalid_trigger",
-        `Trigger "${trigger.key}" in ${entryPath} declares both \`poll\` and \`onSubscribe\`: a trigger is a webhook or a poll, not both.`,
+        `Trigger "${trigger.key}" in ${label} declares both \`poll\` and \`onSubscribe\`: a trigger is a webhook or a poll, not both.`,
       );
     }
     // Host-derived: overwrite whatever the author wrote.
@@ -393,13 +429,13 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     if (!check?.key) {
       throw new LoadError(
         "invalid_health_check",
-        `A health check in ${entryPath} is missing a \`key\`.`,
+        `A health check in ${label} is missing a \`key\`.`,
       );
     }
     if (healthChecks.has(check.key)) {
       throw new LoadError(
         "invalid_health_check",
-        `Duplicate health check key "${check.key}" in ${entryPath}.`,
+        `Duplicate health check key "${check.key}" in ${label}.`,
       );
     }
     healthChecks.set(check.key, {
@@ -417,8 +453,8 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
   }
 
   return {
-    dir: root,
-    entryPath,
+    code,
+    ...(code.kind === "dir" ? { dir: code.dir, entryPath: code.entryPath } : {}),
     manifest,
     actions,
     auths,
@@ -427,4 +463,64 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
     interfaces: described.interfaces,
     netAllowlist,
   };
+}
+
+/**
+ * Load an app from a local directory.
+ *
+ * Identity comes from `package.json` (the `w6w` block plus native fields), or a
+ * standalone file via `w6w.manifest`. Behavior comes from the entry module
+ * (`w6w.entry`, else package `main`, else `./index.ts`), imported in the sandbox
+ * so its config can be extracted without running untrusted code on the host.
+ */
+export async function loadApp(dir: string): Promise<LoadedApp> {
+  const root = resolve(dir);
+  const pkg = await readJson<AppPackageJson>(join(root, "package.json"), "missing_package_json");
+  await assertNoNpmDependencies(root, pkg);
+
+  let manifest: AppManifest;
+  if (pkg.w6w?.manifest) {
+    manifest = await readJson<AppManifest>(resolveRef(root, pkg.w6w.manifest), "missing_manifest");
+    if (!manifest.id) throw new LoadError("invalid_manifest", "App manifest is missing `id`.");
+  } else {
+    manifest = manifestFromPackageJson(pkg);
+  }
+
+  const entryPath = resolveAppEntry(root, pkg);
+  const described = await describeApp(entryPath, root);
+  return assembleLoadedApp(described, manifest, { kind: "dir", dir: root, entryPath }, entryPath);
+}
+
+/**
+ * Build a `LoadedApp` from a stored artifact manifest + its exec bundle, with no Worker:
+ * definitions come from the STORED manifest, and the code is only verified (sha-256 of its
+ * UTF-8 bytes) so a `LoadedApp` can never carry an identity its code does not have.
+ * The input manifest is not mutated.
+ */
+export async function loadedAppFromArtifact(
+  manifest: AppArtifactManifest,
+  code: string,
+): Promise<LoadedApp> {
+  const sha256 = manifest.exec.sha256;
+  if (!(await verifySha256(new TextEncoder().encode(code), sha256))) {
+    throw new LoadError(
+      "exec_sha_mismatch",
+      `Exec code does not match the manifest's sha256 (${sha256}).`,
+      { sha256 },
+    );
+  }
+  const clone = structuredClone(manifest);
+  const described: DescribedApp = {
+    actions: clone.actions,
+    auth: clone.auth,
+    triggers: clone.triggers,
+    healthChecks: clone.healthChecks,
+    interfaces: clone.interfaces,
+  };
+  return assembleLoadedApp(
+    described,
+    clone.manifest,
+    { kind: "exec", sha256, code },
+    `sha256:${sha256}`,
+  );
 }

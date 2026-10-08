@@ -27,6 +27,7 @@ import type {
   TriggerHookKind,
 } from "@w6w/types";
 import { redact } from "@w6w/types";
+import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
 import { applyOverrides, dedupeSignedHeaders, selectsRequest } from "./overrides.ts";
 import { resolveParams } from "./resolve.ts";
@@ -368,10 +369,9 @@ export function signingFetch(
       // when `egressTransport` is set: that transport replaces `sign` AND
       // host egress as one unit, so no credential-bearing hook runs here.
       signed = await runHook<SignableRequest>({
-        entryPath: app.entryPath,
+        ...hookSource(app),
         selector: { kind: "auth", key: auth.auth.key, hook: "sign" },
         input: { request: outgoing, credential },
-        readScope: app.dir,
         timeoutMs: opts.timeoutMs,
         // no onFetch -> the sign worker cannot make network calls.
       });
@@ -509,10 +509,9 @@ async function resolveConnection(
         // fetch (to reach the token endpoint). On success it returns the new
         // credential; any failure transitions the connection to broken.
         credential = await runHook({
-          entryPath: app.entryPath,
+          ...hookSource(app),
           selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
           input: { credential: conn.credential },
-          readScope: app.dir,
           timeoutMs: opts.timeoutMs,
           onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs),
         });
@@ -599,10 +598,9 @@ export async function runAuthHook<T = unknown>(
   let deniedByAllowlist = false;
   try {
     return await runHook<T>({
-      entryPath: app.entryPath,
+      ...hookSource(app),
       selector: { kind: "auth", key: auth.auth.key, hook },
       input: { credential },
-      readScope: app.dir,
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
       onFetch: async (req) => {
@@ -718,10 +716,9 @@ export async function invoke(
       socket = await openConnectionSocket(app, auth, opts.connection.target, credential, opts);
     }
     value = await runHook({
-      entryPath: app.entryPath,
+      ...hookSource(app),
       selector: { kind: "action", key: loaded.definition.key },
       input: resolved,
-      readScope: app.dir,
       connection: redacted,
       invocation: invocation.context,
       timeoutMs: opts.timeoutMs,
@@ -791,10 +788,9 @@ export async function invokeTriggerHook(
 
   try {
     return await runHook({
-      entryPath: app.entryPath,
+      ...hookSource(app),
       selector: { kind: "trigger", key: opts.triggerKey, hook: opts.hook },
       input: opts.input,
-      readScope: app.dir,
       connection: redacted,
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
