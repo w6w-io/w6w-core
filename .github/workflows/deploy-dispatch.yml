@@ -1,0 +1,67 @@
+name: Deploy dispatch
+
+# ---------------------------------------------------------------------------
+# On every push to main, asks w6w-io/w6w to redeploy the cloud services whose
+# image contains this repo, by triggering the root's deploy workflows by name.
+# Mirrors packages/studio/.github/workflows/studio-dispatch.yml: a short-lived,
+# per-call GitHub App installation token scoped to ONLY w6w-io/w6w, never a
+# stored PAT and never the ambient GITHUB_TOKEN.
+#
+# INERT until the org-level APP_ID / APP_PRIVATE_KEY secrets exist (HITL-2 of
+# the cloud-deploy-rehearsal project). Until then the job only emits a
+# warning and succeeds, so it never turns a merge red.
+#
+# Every merge that fires this deploys `main` of EVERY source of that image,
+# migrations included — not just this repo's change. See w6w-io/w6w deploy/CD.md.
+# ---------------------------------------------------------------------------
+
+on:
+  # Manual re-run — the dispatch is idempotent (the target rebuilds from
+  # scratch), so this is the retry path for a transient failure.
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# A superseded dispatch is harmless — the target rebuilds from scratch on the
+# next one (and has its own non-cancelling group) — so cancel a stale run.
+concurrency:
+  group: deploy-dispatch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    # Fork guard: this reaches a sibling repo and a personal fork carries none
+    # of the secrets it needs. Mirrors studio-dispatch.yml's own guard.
+    if: github.repository == 'w6w-io/w6w-core'
+    name: Dispatch cloud deploys
+    runs-on: ubuntu-latest
+    env:
+      HAS_APP_SECRETS: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Skip while the org App secrets are missing
+        if: env.HAS_APP_SECRETS != 'true'
+        run: |
+          echo "::warning::deploy-dispatch skipped: org secrets APP_ID/APP_PRIVATE_KEY are not set (see w6w-io/w6w deploy/CD.md)"
+
+      # Least privilege per call, one shared App registration.
+      - name: Mint a token scoped to w6w-io/w6w
+        id: app-token
+        if: env.HAS_APP_SECRETS == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: w6w-io
+          repositories: w6w
+
+      - name: Trigger Deploy w6w API
+        if: env.HAS_APP_SECRETS == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh workflow run "Deploy w6w API" --repo w6w-io/w6w --ref main
+
+      - name: Trigger Deploy w6w Studio
+        if: ${{ !cancelled() && steps.app-token.outcome == 'success' && env.HAS_APP_SECRETS == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh workflow run "Deploy w6w Studio" --repo w6w-io/w6w --ref main
