@@ -77,6 +77,15 @@ export type AppCode = DirCode | ExecCode;
 export interface LoadedApp {
   /** Where this app's code comes from; every hook spawn routes through `hookSource`. */
   code: AppCode;
+  /**
+   * @deprecated Read `code` instead. Kept only for consumers that predate `code`
+   * (the server's asset inliner reads `loadedApp.dir` at runtime). Present ONLY on
+   * dir-kind apps, as own properties equal to `code.dir` / `code.entryPath`; an
+   * exec-kind app never carries them — a dir is never faked for an exec.
+   */
+  readonly dir?: string;
+  /** @deprecated See `dir`. */
+  readonly entryPath?: string;
   manifest: AppManifest;
   actions: Map<string, LoadedAction>;
   auths: LoadedAuth[];
@@ -445,6 +454,7 @@ export function assembleLoadedApp(
 
   return {
     code,
+    ...(code.kind === "dir" ? { dir: code.dir, entryPath: code.entryPath } : {}),
     manifest,
     actions,
     auths,
