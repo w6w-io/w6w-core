@@ -67,13 +67,22 @@ export type Selector =
   | { kind: "trigger"; key: string; hook: TriggerHookKind }
   | { kind: "health"; key: string };
 
+/**
+ * Where the Worker imports the app from: exactly one of a file path (dir apps) or a
+ * `data:` URL (exec apps). The host decides the Worker's read permission from which
+ * arm it is (`run-hook.ts` `runWorker`); the Worker decides nothing.
+ */
+export type EntryRef = { entryPath: string; entryUrl?: never } | {
+  entryUrl: string;
+  entryPath?: never;
+};
+
 /** Host -> worker. */
 export type HostMessage =
   // Import the entry module and call a located function (action.execute / auth.<hook>).
   | {
     type: "start";
     op: "call";
-    entryPath: string;
     selector: Selector;
     input: unknown;
     connection?: unknown;
@@ -89,9 +98,9 @@ export type HostMessage =
     enableSocket: boolean;
     /** When true, `ctx.file` proxies through the host; otherwise both methods reject. */
     enableFile: boolean;
-  }
+  } & EntryRef
   // Import the entry module and return its actions/auth config (no functions).
-  | { type: "start"; op: "describe-app"; entryPath: string }
+  | ({ type: "start"; op: "describe-app" } & EntryRef)
   | { type: "fetch-response"; id: number; response: WireResponse }
   | { type: "fetch-error"; id: number; message: string }
   // Socket replies. There is no "socket-open" request/reply pair: the host

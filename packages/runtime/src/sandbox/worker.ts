@@ -214,8 +214,11 @@ function proxyFile(enabled: boolean): FileCapability {
   };
 }
 
-async function importApp(entryPath: string): Promise<AppDefinition> {
-  const mod = await import(`file://${entryPath}`);
+async function importApp(
+  msg: { entryPath?: string; entryUrl?: string },
+): Promise<AppDefinition> {
+  const entryPath = msg.entryUrl ?? msg.entryPath;
+  const mod = await import(msg.entryUrl ?? `file://${msg.entryPath}`);
   const app = mod.default ?? mod.app;
   if (!app || typeof app !== "object") {
     throw new Error(`Entry module "${entryPath}" must default-export an AppDefinition object.`);
@@ -256,7 +259,7 @@ function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) =>
 }
 
 async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
-  const app = await importApp(msg.entryPath);
+  const app = await importApp(msg);
   const fn = locate(app, msg.selector);
   if (!fn) {
     const s = msg.selector;
@@ -283,7 +286,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
 }
 
 async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" }>) {
-  const app = await importApp(msg.entryPath);
+  const app = await importApp(msg);
 
   // Strip all functions to plain config via JSON round-trip.
   const actions = (app.actions ?? []).map((a) =>

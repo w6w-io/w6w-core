@@ -7,6 +7,17 @@
  */
 export { loadApp } from "./src/loader.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
+export {
+  assembleLoadedApp,
+  assertNoNpmDependencies,
+  hookSource,
+  loadedAppFromArtifact,
+  manifestFromPackageJson,
+  resolveAppEntry,
+} from "./src/loader.ts";
+export type { AppCode, AppPackageJson, DirCode, ExecCode } from "./src/loader.ts";
+export { describeApp, describeExec } from "./src/sandbox/run-hook.ts";
+export type { DescribedApp } from "./src/sandbox/protocol.ts";
 
 export {
   authFor,

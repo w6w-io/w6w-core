@@ -19,6 +19,7 @@ import type {
   HealthState,
 } from "@w6w/types";
 import { healthCredential, healthScope, healthSeverity, redact } from "@w6w/types";
+import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
 import { W6WError } from "./errors.ts";
 import { runHook } from "./sandbox/run-hook.ts";
@@ -289,10 +290,9 @@ function runHealthHook(
     : undefined;
 
   return runHook<unknown>({
-    entryPath: app.entryPath,
+    ...hookSource(app),
     selector: { kind: "health", key: loaded.check.key },
     input,
-    readScope: app.dir,
     timeoutMs: opts.timeoutMs,
     onLog: opts.onLog,
     // `none` sees no Connection at all — a status page has no business knowing
