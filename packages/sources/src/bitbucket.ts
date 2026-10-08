@@ -16,6 +16,7 @@ import {
   splitRef,
 } from "./types.ts";
 import { resolveViaTarball } from "./tarball.ts";
+import { assertSafeGitRef, isSafeSegment } from "./refcheck.ts";
 
 export interface BitbucketRef {
   owner: string;
@@ -34,14 +35,19 @@ export function parseBitbucketRef(ref: string): BitbucketRef {
   if (scheme !== "bitbucket") {
     throw new SourceError("bad_scheme", `Not a bitbucket ref: ${ref}`);
   }
-  const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.+))?$/);
+  const m = rest.match(/^([^/]+)\/([^/@]+)(?:@(.*))?$/);
   if (!m) {
     throw new SourceError(
       "bad_ref",
       `Expected "bitbucket:owner/repo[@ref][#subpath]", got: ${ref}`,
     );
   }
-  return { owner: m[1], repo: m[2], ref: m[3] ?? "HEAD" };
+  const [, owner, repo, gitRef] = m;
+  if (!isSafeSegment(owner) || !isSafeSegment(repo)) {
+    throw new SourceError("bad_ref", `Invalid owner or repo in source ref: ${ref}`);
+  }
+  if (gitRef !== undefined) assertSafeGitRef(gitRef, ref);
+  return { owner, repo, ref: gitRef ?? "HEAD" };
 }
 
 /** Bitbucket Cloud archive tarball URL. */
