@@ -11,6 +11,7 @@ import { basename, dirname, join, normalize, resolve as resolvePath } from "jsr:
 import { UntarStream } from "jsr:@std/tar@^0.1";
 import { type ResolveOptions, SourceError } from "./types.ts";
 import { applySubpath } from "./subpath.ts";
+import { isStrictlyInside } from "./refcheck.ts";
 
 /** Default cache root: `$W6W_CACHE`, else `${TMPDIR}/w6w-sources`, else /tmp. */
 export function defaultCacheDir(): string {
@@ -104,8 +105,11 @@ export async function resolveViaTarball(
   opts: ResolveOptions = {},
 ): Promise<string> {
   const cacheDir = resolvePath(opts.cacheDir ?? defaultCacheDir());
-  const dest = join(cacheDir, ...src.cacheKey.map((s) => s.replace(/[^\w.-]/g, "_")));
+  const key = src.cacheKey.map((s) => s.replace(/[^\w.-]/g, "_"));
+  const dest = join(cacheDir, ...key);
   const force = !!opts.force;
+  // Refuse before any stat/remove/mkdir/rename: `dest` must be strictly inside the cache.
+  assertCacheDest(cacheDir, dest, key);
 
   // No await between the map lookups and `set`, so registration is atomic.
   for (;;) {
@@ -114,15 +118,39 @@ export async function resolveViaTarball(
     if (!force || cur.force) return applySubpath(await cur.promise, src.subpath);
     await cur.promise.catch(() => {});
   }
-  const promise = loadTarball(src, dest, force).finally(() => {
+  const promise = loadTarball(src, cacheDir, dest, force).finally(() => {
     if (inFlight.get(dest)?.promise === promise) inFlight.delete(dest);
   });
   inFlight.set(dest, { promise, force });
   return applySubpath(await promise, src.subpath);
 }
 
+/**
+ * Throw `unsafe_cache_path` unless `dest` is strictly inside `cacheDir` and no
+ * sanitized key segment is path-special (`""`, `.`, `..` — the only ones that
+ * survive sanitizing). The segment rule catches in-cache wipes (`cache/gitlab/<host>`)
+ * that containment alone cannot see. The message never echoes `cacheDir` or `dest`.
+ */
+function assertCacheDest(cacheDir: string, dest: string, key: string[]): void {
+  if (key.some((s) => s === "" || s === "." || s === "..") || !isStrictlyInside(cacheDir, dest)) {
+    throw new SourceError(
+      "unsafe_cache_path",
+      `Cache key escapes the cache directory: ${JSON.stringify(key)}`,
+    );
+  }
+}
+
 /** Cache-check / fetch / extract into `dest`; resolves to `dest` (no subpath applied). */
-async function loadTarball(src: TarballSource, dest: string, force: boolean): Promise<string> {
+async function loadTarball(
+  src: TarballSource,
+  cacheDir: string,
+  dest: string,
+  force: boolean,
+): Promise<string> {
+  // Re-assert: first statement, before any remove/stat.
+  if (!isStrictlyInside(cacheDir, dest)) {
+    throw new SourceError("unsafe_cache_path", "Cache destination escapes the cache directory");
+  }
   if (force) {
     await Deno.remove(dest, { recursive: true }).catch(() => {});
   } else {
