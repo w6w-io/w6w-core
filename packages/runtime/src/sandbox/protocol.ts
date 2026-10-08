@@ -5,13 +5,18 @@
 import type {
   Action,
   AuthHookKind,
+  DescribedAuth,
+  DescribedHealthCheck,
+  DescribedTrigger,
   FileRef,
-  HealthCheck,
   InterfaceConformance,
   SignableRequest,
-  Trigger,
   TriggerHookKind,
 } from "@w6w/types";
+
+// The three pair types live in `@w6w/types` (the artifact manifest carries them);
+// re-exported so runtime importers are untouched.
+export type { DescribedAuth, DescribedHealthCheck, DescribedTrigger };
 
 /** A response carried back across the boundary after the host performs a fetch. */
 export interface WireResponse {
@@ -20,18 +25,6 @@ export interface WireResponse {
   headers: Record<string, string>;
   /** Body bytes. Empty for no-body responses. */
   body: Uint8Array;
-}
-
-/** One auth method's extracted config plus the names of the hooks it actually defines. */
-export interface DescribedAuth {
-  auth: import("@w6w/types").Auth;
-  hooks: AuthHookKind[];
-}
-
-/** One trigger's extracted config plus the names of the hooks it actually defines. */
-export interface DescribedTrigger {
-  trigger: Trigger;
-  hooks: TriggerHookKind[];
 }
 
 /**
@@ -57,13 +50,6 @@ export type SocketResult =
   | { op: "write" }
   | { op: "read"; bytes: Uint8Array | null }
   | { op: "close" };
-
-/** A health check's config plus whether it actually carries a probe. */
-export interface DescribedHealthCheck {
-  check: HealthCheck;
-  /** False for an `unavailable` declaration, which has nothing to run. */
-  hasHook: boolean;
-}
 
 /** The app's behavior, extracted from the entry module as serializable data. */
 export interface DescribedApp {
