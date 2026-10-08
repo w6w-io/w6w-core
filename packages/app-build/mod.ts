@@ -13,3 +13,12 @@ export { buildApp, MAX_APP_ASSET_BYTES, MAX_ASSET_BYTES } from "./src/build.ts";
 export type { BuildOptions, BuildResult } from "./src/build.ts";
 export { BuildError } from "./src/errors.ts";
 export { computeSourceDigest } from "./src/source-digest.ts";
+export { buildApps, buildPack, DEFAULT_PACK_CONCURRENCY } from "./src/pack.ts";
+export type {
+  PackBuildOptions,
+  PackIndex,
+  PackIndexApp,
+  PackIndexFailure,
+  PackReport,
+} from "./src/pack.ts";
+export { compareDescribed } from "./src/parity.ts";
