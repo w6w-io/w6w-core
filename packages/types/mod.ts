@@ -20,3 +20,5 @@ export * from "./src/overrides.ts";
 export * from "./src/value.ts";
 export * from "./src/pack.ts";
 export * from "./src/file.ts";
+export * from "./src/artifact.ts";
+export * from "./src/digest.ts";

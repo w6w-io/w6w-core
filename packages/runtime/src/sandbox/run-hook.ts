@@ -9,6 +9,7 @@
  */
 import type { FileRef, InvocationContext, RedactedConnection, SignableRequest } from "@w6w/types";
 import { W6WError } from "../errors.ts";
+import type { ExecCode } from "../loader.ts";
 import type {
   DescribedApp,
   HostMessage,
@@ -36,7 +37,11 @@ const NO_NET_PERMS = {
  * own derivation ties `enableSocket` to `onSocket`'s presence 1:1.
  */
 export interface WorkerRunOptions {
-  readScope: string;
+  /**
+   * Read scope for an `entryPath` (dir) start. IGNORED for an `entryUrl` (exec) start,
+   * whose Worker never gets read permission — see `workerReadPermission`.
+   */
+  readScope?: string;
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
@@ -63,6 +68,52 @@ export interface WorkerRunOptions {
   ) => Promise<FileRef>;
 }
 
+const dataUrls = new WeakMap<ExecCode, string>();
+
+/** `data:` URL for exec code: base64 of the UTF-8 bytes (never `btoa(code)`), memoised per object. */
+function execDataUrl(code: ExecCode): string {
+  let url = dataUrls.get(code);
+  if (url === undefined) {
+    const bytes = new TextEncoder().encode(code.code);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    url = `data:text/javascript;base64,${btoa(bin)}`;
+    dataUrls.set(code, url);
+  }
+  return url;
+}
+
+const EXEC_URL_PREFIX = "data:text/javascript;base64,";
+
+/**
+ * THE sink for the Worker's read permission. An `entryUrl` start (exec code) gets
+ * `false` — any `readScope` is ignored, and the URL must be a `data:` module so
+ * nothing on disk is ever imported; an `entryPath` start gets exactly `[readScope]`.
+ */
+function workerReadPermission(start: HostMessage, readScope: string | undefined): false | string[] {
+  if (start.type !== "start") throw new Error("runWorker: first message must be a start message.");
+  if (start.entryUrl !== undefined) {
+    if (!start.entryUrl.startsWith(EXEC_URL_PREFIX)) {
+      throw new W6WError(
+        "hook_crashed",
+        "execute",
+        `Refusing to spawn: entryUrl must begin "${EXEC_URL_PREFIX}".`,
+      );
+    }
+    return false;
+  }
+  if (typeof start.entryPath !== "string" || !readScope) {
+    throw new W6WError(
+      "hook_crashed",
+      "execute",
+      "Refusing to spawn: an entryPath start requires a readScope.",
+    );
+  }
+  return [readScope];
+}
+
 /**
  * Spawn a sandbox worker, drive one start message to completion, return its
  * result. Exported (alongside the convenience wrappers below) because
@@ -74,11 +125,13 @@ export interface WorkerRunOptions {
  */
 export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  // Decided here, host-side, from the start message alone — never from a caller option.
+  const read = workerReadPermission(start, opts.readScope);
 
   const worker = new Worker(import.meta.resolve("./worker.ts"), {
     type: "module",
     // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
-    deno: { permissions: { read: [opts.readScope], ...NO_NET_PERMS } },
+    deno: { permissions: { read, ...NO_NET_PERMS } },
   });
 
   return new Promise<T>((resolvePromise, reject) => {
@@ -288,9 +341,15 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
   });
 }
 
-export interface RunHookOptions extends WorkerRunOptions {
-  /** Absolute path to the app's entry module. */
-  entryPath: string;
+export type RunHookOptions =
+  & Omit<WorkerRunOptions, "readScope">
+  & HookSourceOptions
+  & RunHookFields;
+
+/** Where the code is: a dir (path + read scope) or exec code (`data:` URL, read-less). */
+export type HookSourceOptions = { entryPath: string; readScope: string } | { code: ExecCode };
+
+interface RunHookFields {
   /** Which callable inside the exported app object to run. */
   selector: Selector;
   /** Value passed as the call's first argument. */
@@ -301,12 +360,16 @@ export interface RunHookOptions extends WorkerRunOptions {
   invocation?: InvocationContext;
 }
 
+function entryRef(src: HookSourceOptions): { entryPath: string } | { entryUrl: string } {
+  return "code" in src ? { entryUrl: execDataUrl(src.code) } : { entryPath: src.entryPath };
+}
+
 /** Import the entry module in the sandbox and call a located function. */
 export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
   return runWorker<T>({
     type: "start",
     op: "call",
-    entryPath: opts.entryPath,
+    ...entryRef(opts),
     selector: opts.selector,
     input: opts.input,
     connection: opts.connection,
@@ -326,5 +389,17 @@ export function describeApp(
   return runWorker<DescribedApp>(
     { type: "start", op: "describe-app", entryPath },
     { readScope, timeoutMs },
+  );
+}
+
+/** Import exec code (a `data:` module, read-less Worker) and extract its serializable app config. */
+export function describeExec(code: string, timeoutMs?: number): Promise<DescribedApp> {
+  return runWorker<DescribedApp>(
+    {
+      type: "start",
+      op: "describe-app",
+      entryUrl: execDataUrl({ kind: "exec", sha256: "", code }),
+    },
+    { timeoutMs },
   );
 }

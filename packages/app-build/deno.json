@@ -1,0 +1,17 @@
+{
+  "name": "@w6w/app-build",
+  "version": "0.0.1",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./cli": "./cli.ts"
+  },
+  "imports": {
+    "@w6w/types": "../types/mod.ts",
+    "@w6w/runtime": "../runtime/mod.ts"
+  },
+  "tasks": {
+    "build": "deno run -A --unstable-worker-options cli.ts",
+    "parity": "deno run -A --unstable-worker-options scripts/parity.ts"
+  }
+}

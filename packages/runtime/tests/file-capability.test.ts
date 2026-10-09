@@ -12,8 +12,15 @@ import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/asse
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
 import { applyOverrides, loadApp, runHook, W6WError } from "../mod.ts";
 import { egressInfo } from "../src/egress.ts";
+import type { LoadedApp } from "../src/loader.ts";
 import type { WireResponse } from "../src/sandbox/protocol.ts";
 import type { FileRef, RequestOverrides, SignableRequest } from "@w6w/types";
+
+/** The fixture is loaded by `loadApp`, so it is always the `dir` arm of `LoadedApp.code`. */
+function dirCode(app: LoadedApp) {
+  if (app.code.kind !== "dir") throw new Error("expected a dir-loaded app");
+  return app.code;
+}
 
 const FILE_DIR = fromFileUrl(new URL("../../../fixtures/apps/file", import.meta.url));
 
@@ -63,10 +70,10 @@ Deno.test("A1: Object.keys(ctx.file) is exactly ['read', 'create']", async () =>
   const app = await loadApp(FILE_DIR);
   const { onFileCreate, onFileRead } = makeFileStore();
   const result = await runHook<{ keys: string[] }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "capabilities" },
     input: {},
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onFileRead,
     onFileCreate,
   });
@@ -86,10 +93,10 @@ Deno.test("A2: ctx.file.read rejects when the host supplies neither callback", a
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "read-file" },
         input: { ref: "whatever" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
       }),
     W6WError,
     NO_CAPABILITY,
@@ -101,10 +108,10 @@ Deno.test("A2: ctx.file.create rejects when the host supplies neither callback",
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "create-file" },
         input: { bytes: [1, 2, 3], contentType: "text/plain", filename: "a.txt" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
       }),
     W6WError,
     NO_CAPABILITY,
@@ -119,10 +126,10 @@ Deno.test("A2: supplying only one of the two callbacks still leaves ctx.file rej
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "read-file" },
         input: { ref: "whatever" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFileCreate, // onFileRead deliberately omitted
       }),
     W6WError,
@@ -137,10 +144,10 @@ Deno.test("A3: create -> read round-trips binary bytes byte-identically", async 
   const { onFileCreate, onFileRead } = makeFileStore();
 
   const created = await runHook<{ ref: FileRef }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "create-file" },
     input: { bytes: BINARY_PAYLOAD, contentType: "application/octet-stream", filename: "p.bin" },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onFileRead,
     onFileCreate,
   });
@@ -151,10 +158,10 @@ Deno.test("A3: create -> read round-trips binary bytes byte-identically", async 
   assertEquals(created.ref.size, BINARY_PAYLOAD.length);
 
   const read = await runHook<{ ref: FileRef; bytes: number[] }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "read-file" },
     input: { ref: created.ref.id },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onFileRead,
     onFileCreate,
   });
@@ -176,10 +183,10 @@ Deno.test("A4: a Uint8Array ctx.fetch body reaches onFetch as real bytes, not a 
   };
 
   const result = await runHook<{ status: number }>({
-    entryPath: app.entryPath,
+    entryPath: dirCode(app).entryPath,
     selector: { kind: "action", key: "send-binary" },
     input: { url: "https://example.test/upload", bytes: BINARY_PAYLOAD },
-    readScope: app.dir,
+    readScope: dirCode(app).dir,
     onFetch: (request) => {
       captured = request;
       return Promise.resolve(emptyResponse);
@@ -232,12 +239,12 @@ Deno.test("B1: ctx.file.read rejects an object ref whose .id is itself an object
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         // The exact evaluator shape: a nested object carrying a path/token
         // payload, never a string id and never a well-formed FileRef.
         selector: { kind: "action", key: "read-file" },
         input: { ref: { id: { path: "/etc/passwd", token: "hunter2" } } },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFileRead,
         onFileCreate,
       }),
@@ -259,14 +266,14 @@ Deno.test("B1: ctx.file.create rejects a non-Uint8Array bytes payload, never rea
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         // `create-file-raw` forwards `bytes` unmodified (no `new
         // Uint8Array(...)` wrapping like `create-file` does), so a plain
         // JS string reaches `proxyFile.create` exactly as the evaluator's
         // `ctx.file.create("i am a string", …)` reproduction did.
         selector: { kind: "action", key: "create-file-raw" },
         input: { bytes: "i am a string", contentType: "text/plain", filename: "a.txt" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFileRead,
         onFileCreate,
       }),
@@ -299,10 +306,10 @@ Deno.test("B4: a getter-TOCTOU file ref is refused, onFileRead never invoked", a
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "evil" },
         input: { mode: "getter-ref" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFileRead,
         onFileCreate,
       }),
@@ -324,10 +331,10 @@ Deno.test("B4: a fake-branded Uint8Array create payload is refused, onFileCreate
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "evil" },
         input: { mode: "fake-u8" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFileRead,
         onFileCreate,
       }),
@@ -347,10 +354,10 @@ Deno.test("B4: a fake-branded Uint8Array ctx.fetch body is refused, onFetch neve
   await assertRejects(
     () =>
       runHook({
-        entryPath: app.entryPath,
+        entryPath: dirCode(app).entryPath,
         selector: { kind: "action", key: "evil" },
         input: { mode: "fake-u8-fetch" },
-        readScope: app.dir,
+        readScope: dirCode(app).dir,
         onFetch,
       }),
     W6WError,

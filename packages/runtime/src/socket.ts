@@ -11,6 +11,7 @@
  * this callback's owner's job (T1.2.2)").
  */
 import type { ConnectionTarget } from "@w6w/types";
+import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { SocketRequest, SocketResult } from "./sandbox/protocol.ts";
@@ -418,10 +419,9 @@ export async function runHandshake(
     let result: { done: boolean; send?: Uint8Array; state?: unknown; leftover?: Uint8Array };
     try {
       result = await runHook({
-        entryPath: app.entryPath,
+        ...hookSource(app),
         selector: { kind: "auth", key: auth.auth.key, hook: "handshake" },
         input: { credential, target, received, state },
-        readScope: app.dir,
         timeoutMs: opts.timeoutMs,
         // no onFetch, no onSocket — DC-1: the handshake hook is network-less.
       });

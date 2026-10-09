@@ -5,13 +5,18 @@
 import type {
   Action,
   AuthHookKind,
+  DescribedAuth,
+  DescribedHealthCheck,
+  DescribedTrigger,
   FileRef,
-  HealthCheck,
   InterfaceConformance,
   SignableRequest,
-  Trigger,
   TriggerHookKind,
 } from "@w6w/types";
+
+// The three pair types live in `@w6w/types` (the artifact manifest carries them);
+// re-exported so runtime importers are untouched.
+export type { DescribedAuth, DescribedHealthCheck, DescribedTrigger };
 
 /** A response carried back across the boundary after the host performs a fetch. */
 export interface WireResponse {
@@ -20,18 +25,6 @@ export interface WireResponse {
   headers: Record<string, string>;
   /** Body bytes. Empty for no-body responses. */
   body: Uint8Array;
-}
-
-/** One auth method's extracted config plus the names of the hooks it actually defines. */
-export interface DescribedAuth {
-  auth: import("@w6w/types").Auth;
-  hooks: AuthHookKind[];
-}
-
-/** One trigger's extracted config plus the names of the hooks it actually defines. */
-export interface DescribedTrigger {
-  trigger: Trigger;
-  hooks: TriggerHookKind[];
 }
 
 /**
@@ -58,13 +51,6 @@ export type SocketResult =
   | { op: "read"; bytes: Uint8Array | null }
   | { op: "close" };
 
-/** A health check's config plus whether it actually carries a probe. */
-export interface DescribedHealthCheck {
-  check: HealthCheck;
-  /** False for an `unavailable` declaration, which has nothing to run. */
-  hasHook: boolean;
-}
-
 /** The app's behavior, extracted from the entry module as serializable data. */
 export interface DescribedApp {
   actions: Action[];
@@ -81,13 +67,22 @@ export type Selector =
   | { kind: "trigger"; key: string; hook: TriggerHookKind }
   | { kind: "health"; key: string };
 
+/**
+ * Where the Worker imports the app from: exactly one of a file path (dir apps) or a
+ * `data:` URL (exec apps). The host decides the Worker's read permission from which
+ * arm it is (`run-hook.ts` `runWorker`); the Worker decides nothing.
+ */
+export type EntryRef = { entryPath: string; entryUrl?: never } | {
+  entryUrl: string;
+  entryPath?: never;
+};
+
 /** Host -> worker. */
 export type HostMessage =
   // Import the entry module and call a located function (action.execute / auth.<hook>).
   | {
     type: "start";
     op: "call";
-    entryPath: string;
     selector: Selector;
     input: unknown;
     connection?: unknown;
@@ -103,9 +98,9 @@ export type HostMessage =
     enableSocket: boolean;
     /** When true, `ctx.file` proxies through the host; otherwise both methods reject. */
     enableFile: boolean;
-  }
+  } & EntryRef
   // Import the entry module and return its actions/auth config (no functions).
-  | { type: "start"; op: "describe-app"; entryPath: string }
+  | ({ type: "start"; op: "describe-app" } & EntryRef)
   | { type: "fetch-response"; id: number; response: WireResponse }
   | { type: "fetch-error"; id: number; message: string }
   // Socket replies. There is no "socket-open" request/reply pair: the host
