@@ -1,0 +1,88 @@
+name: Publish @w6w/expr
+
+# Publishes @w6w/expr (built ESM + .d.ts) to npm — tokenless, via OIDC.
+# No NPM_TOKEN / secrets: each run mints a short-lived credential.
+#
+# Release flow:
+#   1. bump "version" in packages/expr/package.json AND packages/expr/deno.json
+#      (and add a CHANGELOG.md entry)
+#   2. commit
+#   3. publish a GitHub Release with tag "expr-vX.Y.Z"
+#      (only `expr-v…` tags run this workflow; `types-v…` tags run publish-types.yml)
+#
+# One-time setup (a brand-new package name cannot have a Trusted Publisher until it exists):
+#   1. Manual first publish, from a clean checkout of the tagged commit:
+#        cd packages/expr && npm publish --access public      (no --provenance: not in CI)
+#   2. Attach the Trusted Publisher (org/repo "w6w-io/w6w-core", workflow "publish-expr.yml"):
+#        npm trust github @w6w/expr --file publish-expr.yml --repo w6w-io/w6w-core --allow-publish
+#      The workflow FILENAME is part of the credential — renaming this file breaks publishing
+#      until the Trusted Publisher is re-attached.
+
+on:
+  release:
+    types: [published]
+
+# Required for OIDC. This is what replaces stored tokens.
+permissions:
+  contents: read
+  id-token: write
+
+defaults:
+  run:
+    working-directory: packages/expr
+
+jobs:
+  verify:
+    # Fork guard (no secrets on a personal fork) AND own tag prefix only.
+    if: github.repository == 'w6w-io/w6w-core' && startsWith(github.event.release.tag_name, 'expr-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Release tag must match package.json and deno.json versions
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VER="${TAG#expr-v}"
+          PKG="$(node -p "require('./package.json').version")"
+          DEN="$(node -p "require('./deno.json').version")"
+          echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"
+          if [ "$VER" != "$PKG" ] || [ "$VER" != "$DEN" ]; then
+            echo "::error::Release tag '$TAG' (version $VER) must match package.json ($PKG) and deno.json ($DEN)"
+            exit 1
+          fi
+
+  npm:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Test
+        run: deno test -A tests/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing (OIDC) requires npm >= 11.5.1.
+      - run: npm install --global npm@latest
+      - run: npm run build
+      - name: Pack smoke (tarball contents + ESM/require from a scratch consumer)
+        run: bash scripts/pack-smoke.sh
+      - run: npm publish --dry-run
+      - name: Skip publish if this version is already on the registry
+        id: exists
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VER="${TAG#expr-v}"
+          if npm view "@w6w/expr@$VER" version >/dev/null 2>&1; then
+            echo "::notice::@w6w/expr@$VER is already published; skipping publish"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      # No NODE_AUTH_TOKEN: npm detects the OIDC trusted publisher automatically.
+      - if: steps.exists.outputs.published != 'true'
+        run: npm publish --provenance --access public

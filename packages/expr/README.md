@@ -6,6 +6,20 @@ a bespoke mini-language in the ROADMAP.
 
 Part of the [`core`](../../README.md) workspace.
 
+## Install
+
+```sh
+npm install @w6w/expr
+```
+
+The npm package is **ESM-only**, built to `dist/` with `.d.ts` declarations. `require("@w6w/expr")`
+also works on Node >= 20.19 / 22.12 (`require(esm)`). Deno and in-repo consumers keep importing
+`mod.ts` by path.
+
+The package also exposes a `w6w-source` export condition that resolves to `./mod.ts`. Only this
+repo's own tools (the `@w6w/ui` and studio bundlers/typecheckers, which read the source tree) set
+it; npm consumers never do, so they get `dist`.
+
 ## Usage
 
 ```ts

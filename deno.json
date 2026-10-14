@@ -8,6 +8,7 @@
     "./packages/schema",
     "./packages/app-build"
   ],
+  "exclude": ["**/dist/"],
   "imports": {
     "@w6w/types": "./packages/types/mod.ts"
   },
