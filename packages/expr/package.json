@@ -1,7 +1,7 @@
 {
   "name": "@w6w/expr",
-  "version": "0.0.1",
-  "description": "The w6w platform's expression engine \u2014 a JSONLogic evaluator. Pure, dependency-free TypeScript.",
+  "version": "0.1.0",
+  "description": "The w6w platform's expression engine — a JSONLogic evaluator. Pure, dependency-free TypeScript.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,19 +11,25 @@
   "homepage": "https://github.com/w6w-io/w6w-core/tree/main/packages/expr#readme",
   "bugs": "https://github.com/w6w-io/w6w-core/issues",
   "type": "module",
-  "types": "./mod.ts",
+  "types": "./dist/mod.d.ts",
   "exports": {
     ".": {
-      "types": "./mod.ts",
-      "default": "./mod.ts"
+      "w6w-source": "./mod.ts",
+      "types": "./dist/mod.d.ts",
+      "default": "./dist/mod.js"
     }
   },
   "files": [
-    "mod.ts",
-    "src",
-    "LICENSE"
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
+  "scripts": {
+    "build": "npx --yes -p typescript@5.8.3 tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
+  },
   "publishConfig": {
     "access": "public"
   }
