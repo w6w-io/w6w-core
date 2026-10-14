@@ -4,7 +4,7 @@ The platform's **expression engine** — a [JSONLogic](https://jsonlogic.com) ev
 Param `showIf` visibility (and, later, output→input mapping in workflows). JSONLogic was chosen over
 a bespoke mini-language in the ROADMAP.
 
-Part of the [`core`](../../README.md) workspace.
+Part of the [`core`](https://github.com/w6w-io/w6w-core#readme) workspace.
 
 ## Install
 
@@ -59,7 +59,9 @@ serializeTemplate([{ kind: "expr", expr: { "??": [{ var: "vars.count" }, "0"] } 
 
 `||` maps to JSONLogic's `or`; `??` maps to the `??` operator above. The chain refuses to build —
 falling through to an ordinary `var` reference — if it mixes `||` and `??`, has an empty operand, or
-any operand begins `secrets.`; see `rfcs/workflow.md`'s 2026-08-20 amendment for the full grammar.
+any operand begins `secrets.`; see
+[`rfcs/workflow.md`](https://github.com/w6w-io/w6w-core/blob/main/rfcs/workflow.md)'s 2026-08-20
+amendment for the full grammar.
 
 ## API
 
