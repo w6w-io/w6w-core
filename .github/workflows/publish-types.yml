@@ -34,7 +34,8 @@ jobs:
     # Fork guard: this workflow reaches PRODUCTION (see the header) and a personal fork
     # carries none of the secrets it needs, so on `segevsh/*` it fails on every push instead of
     # doing nothing. Mirrors `w6w-io/w6w`'s deploy workflows, which have carried this since day one.
-    if: github.repository == 'w6w-io/w6w-core'
+    # Own tag prefix only: an `expr-v…` release must not run this workflow (and vice versa).
+    if: github.repository == 'w6w-io/w6w-core' && startsWith(github.event.release.tag_name, 'types-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -42,7 +43,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          VER="${TAG#types-v}"; VER="${VER#v}"
+          VER="${TAG#types-v}"
           PKG="$(node -p "require('./package.json').version")"
           DEN="$(node -p "require('./deno.json').version")"
           echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"

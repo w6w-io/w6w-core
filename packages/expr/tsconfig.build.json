@@ -1,0 +1,22 @@
+{
+  // Build for npm: only mod.ts's import graph is compiled (tests/ never is).
+  // Source imports use `.ts` extensions (Deno); rewriteRelativeImportExtensions
+  // turns them into `.js` in the emitted JS and .d.ts.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022"],
+    "types": [],
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "files": ["mod.ts"]
+}
