@@ -453,9 +453,10 @@ valid implementation.
 
 ### Types
 
-`ListQuery` gains **no field**. `snapshot`, `offset` and `limit` are the wire parameters of a host
-that paginates with snapshots, not members of the registry's query type; the page-addressing state
-travels in `cursor` (which already exists) or in the host's own parameters.
+`ListQuery` gains **no field**. `snapshot` and `offset` are a snapshot host's own wire parameters,
+not members of the registry's query type; `limit` is the existing `ListQuery.limit`
+(`registry.md:176`), reused unchanged as the page size. The page-addressing state travels in
+`cursor` (which already exists) or in the host's own parameters.
 
 `Page<T>` gains four optional fields (shown in full):
 
@@ -466,7 +467,7 @@ interface Page<T> {
   total?: number; // size of the whole filtered result, when known
   snapshot?: string; // token of the snapshot this page was cut from
   offset?: number; // position of items[0] within that result
-  expiresAt?: string; // ISO-8601 instant the snapshot stops answering if left idle
+  expiresAt?: string; // ISO-8601 earliest instant the snapshot stops answering (idle window or absolute cap)
 }
 ```
 
@@ -487,6 +488,8 @@ interface ReadOpts {
   policy?: ListPolicySets;
 }
 ```
+
+The `policy` field extends the `{ caller?; unscoped? }` shape described at `registry.md:434`.
 
 The rule, applied identically by every store that is handed `opts.policy`:
 
