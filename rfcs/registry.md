@@ -435,3 +435,125 @@ interface ListQuery {
 OwnerScope; unscoped?: boolean }`) — the owner-scope amendment above already defines its semantics
 in full; the two earlier sections' signatures (`listLatest(query)`, `list(query)`) predate that
 argument and are completed the same way here: `listLatest(query, opts?)`, `list(query, opts?)`.
+
+## Amendment: pinned pagination (2026-10-16)
+
+> This amendment re-reads `Page<T>` and the `cursor` / `nextCursor` contract (`registry.md:176`,
+> `registry.md:177`, `registry.md:178`, `registry.md:181`, `registry.md:183`, `registry.md:185`),
+> the `list` operation row (`registry.md:196`), the `DataStore#listLatest` signature
+> (`registry.md:230`), the host-policy out-of-scope line (`registry.md:342`), the `ids` arm's
+> "one page" rule (`registry.md:401`, `registry.md:420`, `registry.md:421`) and the `ReadOpts`
+> argument (`registry.md:434`). Everything else above stands as written.
+
+Pagination so far promised only an opaque `Cursor` and a `nextCursor` that is omitted on the last
+page. A host that lists a changing catalog needs more: a page boundary that does not move while a
+client is paging, and a way to say "page 7 of 12". This amendment adds both as **optional** fields
+and shared cursor forms. A store that does none of it (the in-memory store, a CLI host) remains a
+valid implementation.
+
+### Types
+
+`ListQuery` gains **no field**. `snapshot` and `offset` are a snapshot host's own wire parameters,
+not members of the registry's query type; `limit` is the existing `ListQuery.limit`
+(`registry.md:176`), reused unchanged as the page size. The page-addressing state travels in
+`cursor` (which already exists) or in the host's own parameters.
+
+`Page<T>` gains four optional fields (shown in full):
+
+```ts
+interface Page<T> {
+  items: T[];
+  nextCursor?: Cursor; // omit when no more pages
+  total?: number; // size of the whole filtered result, when known
+  snapshot?: string; // token of the snapshot this page was cut from
+  offset?: number; // position of items[0] within that result
+  expiresAt?: string; // ISO-8601 earliest instant the snapshot stops answering (idle window or absolute cap)
+}
+```
+
+`total`, when set, counts the whole filtered result (after query fields, owner scope and policy),
+never just the current page.
+
+Policy reaches a store as data, never as a callback:
+
+```ts
+interface ListPolicySets {
+  blocked: readonly string[];
+  allowOnly?: readonly string[];
+}
+
+interface ReadOpts {
+  caller?: OwnerScope;
+  unscoped?: boolean;
+  policy?: ListPolicySets;
+}
+```
+
+The `policy` field extends the `{ caller?; unscoped? }` shape described at `registry.md:434`.
+
+The rule, applied identically by every store that is handed `opts.policy`:
+
+- ids in `blocked` are never listed;
+- when `allowOnly` is present it restricts the result to those ids, **except** rows owned by the
+  caller;
+- "owned" means `owner_tenant <> ''` and `owner_tenant = caller.tenant` and (`owner_subject = ''`
+  or `owner_subject = caller.subject`), which mirrors the owner-scope amendment's
+  `isOwnedByCaller`;
+- an owned row is never exempt from `blocked`.
+
+Host policy *decisions* (which ids a tenant may see) stay out of scope, consistent with
+`registry.md:342`; the store only applies the sets it is handed.
+
+### Filters before paging
+
+`DataStore#listLatest` and `Registry#list` apply every filter (the query fields, the owner scope and
+`opts.policy`) **before** the page boundary is drawn. Pages are full except the last, and `total`
+counts the whole filtered result. The `ids` arm is exactly as the id-set amendment defines it: one
+page, no `nextCursor`, never snapshotted.
+
+### Cursor
+
+`type Cursor = string` stays opaque to callers. Two forms exist:
+
+- the **legacy offset cursor**, written `o:N` (base64 of `o:<n>`): unpinned and live, the form a
+  `DataStore`'s own `listLatest` issues;
+- a **snapshot cursor**, issued by a host that paginates with snapshots, encoding (snapshot, offset,
+  limit). Its byte layout is not specified.
+
+A snapshot host answers a legacy `o:N` by opening (or reusing) a snapshot for the request's own
+filters and serving offset N. A malformed cursor is rejected with `invalid_cursor`; it never
+silently restarts at offset 0.
+
+### Snapshot model
+
+This section binds hosts that paginate with snapshots, not every host.
+
+- **Creation.** A request with no token runs the full filtered and sorted query, stores the result,
+  and returns page 1 with `snapshot`, `total`, `offset`, the effective `limit`, `expiresAt` and
+  `nextCursor`.
+- **Navigation.** Two styles address one snapshot: `snapshot` + `offset` + `limit` (random access),
+  or `cursor` = the previous `nextCursor` (sequential). `limit` may change between requests.
+  Sending `snapshot` and `cursor` together is `invalid_cursor`.
+- **Binding.** The token binds the query and the caller scope. Filter and sort parameters sent with
+  a token must be absent or identical to the creating query, else `snapshot_query_mismatch`.
+- **No existence oracle.** A token that belongs to another caller answers exactly as an unknown one
+  (`unknown_snapshot`). The checks run in the order scope, then expiry, then query.
+- **Frozen.** Membership, order, `total` and item data do not change after creation. A snapshot
+  never grants access: whether an item may be invoked is still decided live.
+- **Lifetime.** A snapshot lives for an idle (sliding) window bounded by an absolute cap, both
+  chosen by the host. Past either, it answers `snapshot_expired`. A reference host uses 30 minutes
+  idle and 2 hours absolute; those values MAY be cited and are not requirements. A client treats
+  `snapshot_expired` and `unknown_snapshot` alike and restarts from page 1.
+- **End of list.** `nextCursor` is absent if and only if `offset + items.length >= total`. An offset
+  past `total` returns an empty page. A short page never by itself signals the end.
+
+A host MAY share one stored snapshot between requests whose query, scope, catalog revision and
+policy are equal.
+
+### Where snapshots live
+
+Snapshot storage is a host concern and is not part of `Registry` or `DataStore`. Scope
+(tenant, subject, account), lifetime, sweeping and the de-duplication of equal queries (including
+policy) exist only in the host, and `Registry` is also a library for in-memory and CLI hosts. The
+registry surface gains only the optional `Page<T>` fields, the `ReadOpts.policy` data carrier and
+the shared cursor forms above; no method is added to either interface.
