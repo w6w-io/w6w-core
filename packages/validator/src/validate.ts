@@ -440,6 +440,16 @@ function validateAuthInto(ctx: Ctx, auth: unknown, path: string): void {
     } else {
       checkUrl(ctx, o.authorizationUrl, `${path}.oauth2.authorizationUrl`);
       checkUrl(ctx, o.tokenUrl, `${path}.oauth2.tokenUrl`);
+      if (o.tokenAuthMethod !== undefined) {
+        ctx.enum(
+          o.tokenAuthMethod,
+          ["client_secret_post", "client_secret_basic"],
+          `${path}.oauth2.tokenAuthMethod`,
+        );
+      }
+      if (o.tokenBodyFormat !== undefined) {
+        ctx.enum(o.tokenBodyFormat, ["form", "json"], `${path}.oauth2.tokenBodyFormat`);
+      }
       checkOAuth2Setup(ctx, o.setup, `${path}.oauth2.setup`);
     }
   }

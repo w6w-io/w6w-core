@@ -1,6 +1,6 @@
 {
   "name": "@w6w/validator",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "exports": "./mod.ts",
   "imports": {
     "@w6w/types": "../types/mod.ts"
