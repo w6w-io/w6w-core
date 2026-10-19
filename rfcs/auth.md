@@ -285,6 +285,8 @@ Hooks make these first-class instead of workarounds.
 | ------------------ | -------- | -------- | ------------------------------------------------------ |
 | `authorizationUrl` | URL      | ✅       | Authorization endpoint.                                |
 | `tokenUrl`         | URL      | ✅       | Token exchange endpoint.                               |
+| `tokenAuthMethod`  | string   | ⬜       | `client_secret_post` (default) or `client_secret_basic` for host token exchange. |
+| `tokenBodyFormat`  | string   | ⬜       | `form` (default) or `json` for the token request body. |
 | `refreshUrl`       | URL      | ⬜       | Refresh endpoint (defaults to `tokenUrl` if omitted).  |
 | `revokeUrl`        | URL      | ⬜       | Revocation endpoint used on disconnect.                |
 | `scopes`           | string[] | ⬜       | Default scopes requested.                              |

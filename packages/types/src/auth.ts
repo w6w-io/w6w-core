@@ -24,6 +24,10 @@ export type AuthType =
 export interface OAuth2Config {
   authorizationUrl: string;
   tokenUrl: string;
+  /** How the host authenticates at the token endpoint. Defaults to client_secret_post. */
+  tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
+  /** Encoding of the token request. Defaults to form; Notion requires JSON. */
+  tokenBodyFormat?: "form" | "json";
   refreshUrl?: string;
   revokeUrl?: string;
   scopes?: string[];

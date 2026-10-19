@@ -325,3 +325,26 @@ Deno.test("health feed: cannot be combined with `unavailable`", () => {
   assertFalse(r.ok);
   assert(r.errors.some((e) => e.path === "healthCheck.feed"));
 });
+
+Deno.test("validateAuth checks optional OAuth token authentication and encoding", () => {
+  const auth = {
+    key: "oauth",
+    type: "oauth2",
+    displayName: "OAuth",
+    oauth2: {
+      authorizationUrl: "https://api.notion.com/v1/oauth/authorize",
+      tokenUrl: "https://api.notion.com/v1/oauth/token",
+      tokenAuthMethod: "client_secret_basic",
+      tokenBodyFormat: "json",
+    },
+  };
+  assertEquals(validateAuth(auth).ok, true);
+  assertEquals(
+    validateAuth({ ...auth, oauth2: { ...auth.oauth2, tokenAuthMethod: "unsupported" } }).ok,
+    false,
+  );
+  assertEquals(
+    validateAuth({ ...auth, oauth2: { ...auth.oauth2, tokenBodyFormat: "xml" } }).ok,
+    false,
+  );
+});
