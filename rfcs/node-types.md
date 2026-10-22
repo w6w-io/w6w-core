@@ -742,3 +742,11 @@ Resolution is **field-wise**, per field, first present wins:
 Port counts are enforced by the **editor** and by **import validation** only. The engine never reads
 `ports`; an edge past a finite `out` cap is refused at authoring/import time with a reason, not
 silently dropped.
+
+## Amendment — 2026-10-22: `NodeRun` versus `NodeExecution` (cross-reference)
+
+> **Additive; no earlier sentence is edited.** Cross-reference to [Engine RFC — Amendment — 2026-10-22: run-record terms](./engine.md#amendment--2026-10-22-run-record-terms-are-nodes--nodeexecutionnodeid) and [Workflow RFC — Amendment — 2026-10-22: workflow vertices are `nodes`](./workflow.md#amendment--2026-10-22-workflow-vertices-are-nodes).
+
+- [`NodeRun`](#noderun) **remains the executeNode record**, unchanged, with its `nodeId` field. It is not renamed.
+- The run-state record is **`NodeExecution{nodeId}`**, held in canonical **`RunState.nodes`**; the wire also emits the `steps`/`stepId` aliases on read, and persisted columns are not renamed. These terms are stated once, in the Engine RFC.
+- Wherever this file says "step" for a workflow vertex it means a **node** (`Workflow.nodes`; `steps.<id>` remains a permanent alias of `nodes.<id>`).
