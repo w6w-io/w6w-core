@@ -374,3 +374,15 @@ The fan-in join with optional explicit entries. No new reserved `@w6w/*` id; no 
   numbers, objects, arrays, booleans stay themselves). Any other value resolves like every `with`
   value (templates yield strings).
 - **Equivalence.** `aggregate` ≡ `merge` without entries. Engines SHOULD share one join function.
+
+## Amendment — 2026-10-22: run-record terms are `nodes` / `NodeExecution{nodeId}`
+
+> **Additive.** Companion to [Workflow RFC — Amendment — 2026-10-22: workflow vertices are `nodes`](./workflow.md#amendment--2026-10-22-workflow-vertices-are-nodes). This section is the **one place** the run-record terms are stated; every earlier `StepExecution`, `stepId`, `RunState.steps` and "step" in this file is read under it. No earlier sentence is edited.
+
+- **`NodeExecution` is canonical**, keyed by `nodeId`. It is the per-vertex record formerly called `StepExecution` (`stepId`); the fields are otherwise unchanged. `@w6w/workflow-types` keeps `StepExecution`/`StepStatus` as deprecated aliases of `NodeExecution`/`NodeStatus`.
+- **`RunState.nodes` is canonical.** It is the collection formerly named `RunState.steps`. Foreach iteration records are keyed `nodes.<forEachNodeId>.iterations[<index>].<nodeId>`.
+- **The wire also emits the aliases on read.** A run read (HTTP run read, MCP run-status) carries `nodes` and also the `steps` alias holding the same records, and `nodeId` with `stepId` alongside it. Writers and engines emit `nodes`/`nodeId`; a reader accepts either.
+- **Persisted columns are not renamed.** Storage names such as `node_executions.step_id` stay as they are and are mapped in the repository layer. HTTP paths (`/workflows/:id/steps/:stepId/tests`) and hub-spoke wire field names are unchanged.
+- **`NodeRun` remains the executeNode record** — the result of `executeNode(workflow, nodeId, startState)`, defined in [Node Types RFC — NodeRun](./node-types.md#noderun). It is a different record from `NodeExecution`, which is the run-state record.
+- **Engine host-hook requests** (`InvokeStepRequest` and kin) keep `stepId`: it feeds `Invocation.context.stepId`, which this amendment does not change.
+- `StepError`, `StepMeta`, `StepUses` and `RunState.stepErrors` keep their names.
