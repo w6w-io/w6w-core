@@ -350,6 +350,7 @@ The `@w6w/workflow` reference engine + its test fixtures constitute the executab
 3. **Sub-workflows.** Should a step be able to invoke another workflow (`uses.workflow`) as an alternative to `uses.action`? If so, how do sub-workflow retries and state nest into the parent run?
 4. **Per-run TTL and cleanup.** How long do completed `RunState` records live? Host-configurable; RFC-level default?
 5. **Node placement.** Should the host-level `x-w6w-placement` annotation — a top-level list of node labels a run requires, enforced today by the w6w host's run queue — be promoted to a first-class Workflow field? Promotion makes placement portable across hosts; it also commits every host to a node-label model.
+6. **Section execution semantics.** *Unresolved.* A [canvas section](#amendment--2026-10-22-canvas-notes-and-sections) is presentation only and the engine ignores it. Should a host offer "run this section" (execute only its member nodes) or "disable this section" (skip every member)? Either would give `canvas` an execution meaning, and would need rules for edges that cross a section boundary and for a node that is a member of a disabled section but an upstream of an enabled one. Nothing in this RFC defines either behaviour.
 
 ## Status ladder
 
@@ -1453,3 +1454,66 @@ A host that offers a **single-step test** of a workflow step against supplied st
   compatibility;
 - resolve a recorded `null` output to `null`;
 - never hand an unresolved marker or `ExprValue` to the action in a `json` or `group` param.
+
+## Amendment — 2026-10-22: workflow vertices are `nodes`
+
+> **Additive.** Renames the workflow's vertex collection from `steps` to `nodes`. The governed
+> population is every occurrence of the word `steps` in this file as it stood at the base commit,
+> found by `grep -o '\bsteps\b' rfcs/workflow.md | wc -l` = **77 occurrences** (`grep -c '\bsteps\b'`
+> counts **67 lines**; the 77 occurrences are the figure this amendment governs). Every one of them
+> — `Workflow.steps`, the `steps.<id>` expression root, prose "the steps" — is read under this
+> amendment: `steps` there means `nodes`. No earlier sentence is edited; this section supersedes
+> their spelling, not their meaning.
+
+- **`Workflow.nodes` is canonical.** The vertex collection of a workflow is `nodes`; a vertex is a
+  *node* (the type `Step` is `Node` — `@w6w/workflow-types` keeps `Step`, `StepExecution` and
+  `StepStatus` as deprecated aliases of `Node`, `NodeExecution` and `NodeStatus`).
+- **Read alias.** A definition carrying `steps` is read as `nodes`. A definition carrying **both**
+  `steps` and `nodes` is an error and is refused. A host normalises once, at the point it reads a
+  definition, through a single `normalizeWorkflow()`; its input type is the legacy-tolerant
+  `LegacyWorkflow`, and the `Workflow` type it returns carries `nodes` only.
+- **Writers emit `nodes`.** A host, editor or exporter always writes `nodes`, never `steps`. The
+  alias is read-only and permanent; there is no sunset.
+- **The `steps.<id>` expression root is a permanent alias of `nodes.<id>`.** It resolves to the
+  **same object**, so `steps.<id>.output` and `steps.<id>.meta` equal `nodes.<id>.output` and
+  `nodes.<id>.meta`, and the alias holds inside a `foreach` body. Existing `{ "$": "steps.…" }`
+  markers and `{{ steps.… }}` templates keep working unchanged; new authoring uses `nodes.<id>`.
+- **Field names are unchanged.** `position`, `notes`, `fanOut`, `retry` and `onError` keep their
+  names on the node; only the vertex type and the collection are renamed.
+- **Manifest version.** `WORKFLOW_MANIFEST_VERSION` is not bumped: the change is read-additive.
+- **Run records and wire.** The run-state record is `NodeExecution`, identified by `nodeId`, and
+  `RunState.nodes` is canonical; run reads also emit the `steps`/`stepId` aliases. These terms are
+  stated once, in the [Engine RFC](./engine.md); `NodeRun` remains the executeNode record
+  ([Node Types RFC](./node-types.md)). HTTP paths such as `/workflows/:id/steps/:stepId/tests`,
+  hub-spoke wire field names, and `Invocation.context.stepId` are unchanged.
+
+## Amendment — 2026-10-22: canvas notes and sections
+
+> **Additive.** Adds one optional top-level `Workflow` key, `canvas`, holding authoring-only
+> annotations. It edits no sentence above and adds no scope root.
+
+```ts
+Workflow.canvas?: { notes?: CanvasNote[]; sections?: CanvasSection[] }
+
+CanvasNote    { id: string; color: string; position: { x: number; y: number };
+                size: { width: number; height: number }; content: string }
+CanvasSection { id: string; title: string; color: string; position: { x: number; y: number };
+                size: { width: number; height: number }; nodes: string[] }
+```
+
+- **The engine ignores `canvas`.** It never affects scheduling, scope or a run's result.
+- **Separate id namespace.** Note and section ids are distinct from node ids; a note or section may
+  share an id string with a node without conflict. Within `canvas`, ids are unique across notes and
+  sections.
+- **Membership.** `CanvasSection.nodes` lists node ids. A node belongs to **at most one** section;
+  sections do not nest.
+- **Text.** `title` is plain text. `color` is `#rrggbb`.
+- **Caps.** At most 200 notes, 200 sections, and note `content` of at most 10 KB.
+- **Content** is Markdown, rendered without raw HTML and without images; links are limited to the
+  `http`, `https` and `mailto` protocols.
+- **`settings.savePosition === false`** freezes the position and size of notes and sections, as it
+  does node position (see the [authoring presentation amendment](#amendment--2026-07-29-authoring-presentation-stepposition-workflowsettings)); stored values are kept.
+- **Validation.** A host refuses, on save and on import, a section naming an unknown node id,
+  duplicate ids, a node in more than one section, or any shape or cap violation above.
+- **Section execution** (run a section, disable a section) is deliberately unspecified; see
+  [Open questions](#open-questions) item 6.

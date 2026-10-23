@@ -28,16 +28,16 @@ How one call becomes a reusable operation, an entry point or a graph: Functions,
 
 ## Fan-out and merge
 
-A step can have more than one outgoing edge. `fanOut` on the step says how those branches run:
+A node can have more than one outgoing edge. `fanOut` on the node says how those branches run:
 
 - `"sequential"` (the default) — branches run one after another, in plan order.
-- `"parallel"` — branches run concurrently. The run waits for all of them, and a downstream step with several inbound edges runs once, after every branch has arrived.
+- `"parallel"` — branches run concurrently. The run waits for all of them, and a downstream node with several inbound edges runs once, after every branch has arrived.
 
-Use the `@w6w/control` `merge` step to join branches back into one value. `mode` is `"array"` (the branch outputs in incoming-edge order) or `"object"` (outputs shallow-merged, the later edge wins). Optional `entries` (`{ key?, value }`) pick exactly what goes in; without `entries`, `merge` behaves as `aggregate`. If an entry's `value` is a single reference, its type is preserved rather than turned into a string. An entry (its `key` or `value`) that reads a vault secret is refused, and the merge step fails with a parameter error, because merge output is stored with the run.
+Use the `@w6w/control` `merge` node to join branches back into one value. `mode` is `"array"` (the branch outputs in incoming-edge order) or `"object"` (outputs shallow-merged, the later edge wins). Optional `entries` (`{ key?, value }`) pick exactly what goes in; without `entries`, `merge` behaves as `aggregate`. If an entry's `value` is a single reference, its type is preserved rather than turned into a string. An entry (its `key` or `value`) that reads a vault secret is refused, and the merge node fails with a parameter error, because merge output is stored with the run.
 
 ```json
 {
-  "steps": [
+  "nodes": [
     { "id": "start", "uses": { "app": "@w6w/trigger", "action": "trigger" }, "fanOut": "parallel" },
     { "id": "a", "uses": { "app": "crm", "action": "getUser", "connection": "conn_crm" } },
     { "id": "b", "uses": { "app": "billing", "action": "getPlan", "connection": "conn_bill" } },
@@ -47,8 +47,8 @@ Use the `@w6w/control` `merge` step to join branches back into one value. `mode`
       "with": {
         "mode": "object",
         "entries": [
-          { "key": "user", "value": { "$": "steps.a.output" } },
-          { "key": "plan", "value": { "$": "steps.b.output" } }
+          { "key": "user", "value": { "$": "nodes.a.output" } },
+          { "key": "plan", "value": { "$": "nodes.b.output" } }
         ]
       }
     }
@@ -60,4 +60,4 @@ Use the `@w6w/control` `merge` step to join branches back into one value. `mode`
 }
 ```
 
-See the Workflow and Engine RFC amendments of 2026-10-07 for the exact semantics.
+Workflow vertices are `nodes`. A definition that still carries `steps`, and the `steps.<id>` expression root (for example `steps.a.output`), keep resolving as permanent aliases of `nodes` and `nodes.<id>`. See the Workflow and Engine RFC amendments of 2026-10-07 and 2026-10-22 for the exact semantics.
