@@ -198,6 +198,8 @@ export function manifestFromPackageJson(pkg: AppPackageJson): AppManifest {
     // `w6w` block, with no derived/computed counterpart the way
     // `network.allow` gets `netAllowlist` below.
     capabilities: w.capabilities,
+    // Absent stays absent: never emit `modelProvider: undefined`/null/{}.
+    ...(w.modelProvider !== undefined ? { modelProvider: w.modelProvider } : {}),
   };
 }
 

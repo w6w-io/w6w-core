@@ -221,3 +221,24 @@ Deno.test("loadApp's node_modules walk does not hang on a symlink cycle", async 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("loadApp carries w6w.modelProvider through to the manifest; absent stays absent", async () => {
+  const mp = {
+    modelTypes: ["llm", "image-generation"] as ("llm" | "image-generation")[],
+    modelFamilies: ["diffusion"] as "diffusion"[],
+  };
+  const pkg = basePackageJson();
+  (pkg.w6w as Record<string, unknown>).modelProvider = mp;
+  await withTempApp(pkg, { indexBody: "export default { actions: [] };\n" }, async (dir) => {
+    const app = await loadApp(dir);
+    assertEquals(app.manifest.modelProvider, mp);
+  });
+  await withTempApp(
+    basePackageJson(),
+    { indexBody: "export default { actions: [] };\n" },
+    async (dir) => {
+      const app = await loadApp(dir);
+      assert(!("modelProvider" in app.manifest));
+    },
+  );
+});
