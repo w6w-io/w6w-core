@@ -230,8 +230,11 @@ async function importApp(
 function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) => unknown) | null {
   if (sel.kind === "action") {
     const action = app.actions?.find((a) => a.key === sel.key);
-    return action?.execute
-      ? (action.execute as (i: unknown, c: unknown) => unknown).bind(action)
+    // An absent `hook` means `execute`. `resolveFields` is the editor-time
+    // option hook; the worker only locates it — the host owns sanitising.
+    const fn = sel.hook === "resolveFields" ? action?.resolveFields : action?.execute;
+    return typeof fn === "function"
+      ? (fn as (i: unknown, c: unknown) => unknown).bind(action)
       : null;
   }
   if (sel.kind === "health") {
@@ -264,7 +267,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
   if (!fn) {
     const s = msg.selector;
     const what = s.kind === "action"
-      ? `action "${s.key}".execute`
+      ? `action "${s.key}".${s.hook ?? "execute"}`
       : s.kind === "trigger"
       ? `trigger "${s.key}".${s.hook}`
       : s.kind === "health"
@@ -290,7 +293,13 @@ async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" 
 
   // Strip all functions to plain config via JSON round-trip.
   const actions = (app.actions ?? []).map((a) =>
-    JSON.parse(JSON.stringify({ ...a, execute: undefined }))
+    JSON.parse(JSON.stringify({
+      ...a,
+      execute: undefined,
+      // Explicit: a hand-written non-function `resolveFields` must not survive,
+      // and an action without the hook keeps the key absent (digests stable).
+      resolveFields: typeof a.resolveFields === "function" ? true : undefined,
+    }))
   );
   const auth = (app.auth ?? []).map((a) => {
     const present = AUTH_HOOK_KINDS.filter((k) => typeof a[k] === "function");
