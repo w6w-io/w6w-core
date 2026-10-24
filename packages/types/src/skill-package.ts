@@ -127,17 +127,174 @@ export function extractSkillFrontmatter(
   return { error: "frontmatter_unterminated" };
 }
 
-/** STUB (S1): returns an empty report; rules land in later slices. */
+// deno-lint-ignore no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+const WINDOWS_DRIVE = /^[A-Za-z]:/;
+const CREDENTIAL_EXACT = new Set([
+  ".git",
+  ".ssh",
+  ".aws",
+  ".npmrc",
+  ".pypirc",
+  ".netrc",
+  ".env",
+]);
+const CREDENTIAL_KEYS = /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/;
+const CREDENTIAL_EXT = /\.(pem|key|p12|pfx)$/;
+
+function hasLoneSurrogate(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = s.charCodeAt(i + 1);
+      if (n >= 0xdc00 && n <= 0xdfff) i++;
+      else return true;
+    } else if (c >= 0xdc00 && c <= 0xdfff) return true;
+  }
+  return false;
+}
+
+/** Credential-bearing path segment, matched on the canonical (NFC, case-folded) form. */
+function isCredentialSegment(segment: string): boolean {
+  // Trailing dots/spaces are ignored by some filesystems (`.env.`, `.git `), so ignore them too.
+  const c = canonicalSkillPath(segment).replace(/[ .]+$/, "");
+  return CREDENTIAL_EXACT.has(c) || c.startsWith(".env.") || CREDENTIAL_KEYS.test(c) ||
+    CREDENTIAL_EXT.test(c);
+}
+
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Judge an entry list (and, from S3, the server-parsed frontmatter). Pure and deterministic:
+ * entries are sorted internally and issues are emitted in (path, code, message) order, so input
+ * order never changes the report. `root` is published only when there are no errors.
+ */
 export function validateSkillPackage(
-  _input: { entries: SkillEntry[]; frontmatter: unknown; limits?: SkillPackageLimits },
+  input: { entries: SkillEntry[]; frontmatter: unknown; limits?: SkillPackageLimits },
 ): SkillPackageReport {
+  const limits = input.limits ?? DEFAULT_SKILL_PACKAGE_LIMITS;
+  const errors: SkillPackageIssue[] = [];
+  const warnings: SkillPackageIssue[] = [];
+  const err = (code: SkillPackageCode, message: string, path?: string) =>
+    errors.push(path === undefined ? { code, message } : { code, path, message });
+
+  const entries = [...input.entries].sort((a, b) =>
+    cmp(a.path, b.path) || cmp(a.kind, b.kind) || a.size - b.size
+  );
+  if (entries.length === 0) err("no_entries", "package has no entries");
+
+  // Pass 1: split each entry (NFC) and decide the single wrapper dir to strip.
+  const parsed = entries.map((e) => {
+    const norm = e.path.normalize("NFC");
+    const body = e.kind === "dir" && norm.endsWith("/") ? norm.slice(0, -1) : norm;
+    return { e, segs: body.split("/") };
+  });
+  const tops = new Set<string>();
+  let topLevelFile = false;
+  for (const { e, segs } of parsed) {
+    if (segs.length === 1 && e.kind !== "dir") topLevelFile = true;
+    tops.add(segs[0]);
+  }
+  const wrapper = !topLevelFile && tops.size === 1 ? [...tops][0] : "";
+  const strip = wrapper !== "" && wrapper !== "." && wrapper !== ".." && wrapper !== "SKILL.md";
+
+  // Pass 2: per-entry rules.
+  const seen = new Map<string, string[]>();
+  let files = 0;
+  let total = 0;
+  let skillMd = false;
+  for (const { e, segs } of parsed) {
+    const p = e.path;
+    if (e.kind === "symlink") err("entry_symlink", "symlinks are not allowed", p);
+    else if (e.kind === "hardlink") err("entry_hardlink", "hardlinks are not allowed", p);
+    else if (e.kind === "device") err("entry_device", "device entries are not allowed", p);
+    else if (e.kind === "other") err("entry_other", "unsupported entry type", p);
+
+    if (e.kind === "file") {
+      files++;
+      if (!Number.isFinite(e.size) || e.size < 0) {
+        err("file_too_large", "invalid file size", p);
+      } else {
+        total += e.size;
+        if (e.size > limits.maxFileBytes) {
+          err("file_too_large", `file exceeds ${limits.maxFileBytes} bytes`, p);
+        }
+      }
+    }
+
+    const raw = e.path;
+    if (raw.startsWith("/") || raw.startsWith("\\") || WINDOWS_DRIVE.test(raw)) {
+      err("path_absolute", "absolute paths are not allowed", p);
+      continue;
+    }
+    let bad = false;
+    if (hasLoneSurrogate(raw)) {
+      err("path_invalid_text", "path contains invalid surrogate text", p);
+      bad = true;
+    }
+    if (raw.includes("\\")) {
+      err("path_backslash", "backslash separators are not allowed", p);
+      bad = true;
+    }
+    if (CONTROL_CHARS.test(raw)) {
+      err("path_control_char", "path contains control characters", p);
+      bad = true;
+    }
+    if (segs.some((s) => s === "")) {
+      err("path_empty_segment", "path has an empty segment", p);
+      bad = true;
+    }
+    if (segs.some((s) => s === ".." || s === ".")) {
+      err("path_traversal", "path contains a dot segment", p);
+      bad = true;
+    }
+    if (segs.some(isCredentialSegment)) {
+      err("credential_path", "credential-bearing paths are not allowed", p);
+      bad = true;
+    }
+
+    const rel = strip ? segs.slice(1) : segs;
+    if (rel.length === 0) continue; // the stripped wrapper dir itself
+    if (e.kind === "file" && rel.length === 1 && rel[0] === "SKILL.md") skillMd = true;
+    if (bad) continue;
+    if (rel.length > limits.maxDepth) {
+      err("path_too_deep", `path deeper than ${limits.maxDepth} segments`, p);
+    }
+    if (new TextEncoder().encode(rel.join("/")).length > limits.maxPathBytes) {
+      err("path_too_long", `path longer than ${limits.maxPathBytes} bytes`, p);
+    }
+    const key = canonicalSkillPath(rel.join("/"));
+    const group = seen.get(key);
+    if (group) group.push(p);
+    else seen.set(key, [p]);
+  }
+
+  for (const paths of seen.values()) {
+    if (paths.length > 1) {
+      for (const p of paths) {
+        err("path_duplicate", "path collides after Unicode normalization and case folding", p);
+      }
+    }
+  }
+  if (files > limits.maxFiles) err("too_many_files", `more than ${limits.maxFiles} files`);
+  if (total > limits.maxPackageBytes) {
+    err("package_too_large", `package exceeds ${limits.maxPackageBytes} bytes`);
+  }
+  if (entries.length > 0 && !skillMd) {
+    err("skill_md_missing", "SKILL.md must exist at the package root (exact case)");
+  }
+
+  const order = (a: SkillPackageIssue, b: SkillPackageIssue) =>
+    cmp(a.path ?? "", b.path ?? "") || cmp(a.code, b.code) || cmp(a.message, b.message);
+  errors.sort(order);
+  warnings.sort(order);
   return {
-    ok: true,
-    root: null,
+    ok: errors.length === 0,
+    root: errors.length === 0 ? (strip ? wrapper : "") : null,
     name: null,
     description: null,
     metadata: {},
-    errors: [],
-    warnings: [],
+    errors,
+    warnings,
   };
 }
