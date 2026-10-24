@@ -251,6 +251,7 @@ The complete set of hook kinds, their input/output shapes, and the lifecycle pha
 |---|---|---|---|---|---|
 | `action.execute` | [Action RFC](./action.md) | resolved `params` | action `output` | `execute` | No |
 | `action.output.source` | [Action RFC](./action.md) | `{ form }` | `OutputField[]` | `resolution` | No |
+| `action.resolveFields` | [Action RFC](./action.md) | `{ reason, form, previous?, changed?, fields, unresolved }` | `{ fields: Record<key, { options?, error? }> }` | `resolution` | No |
 | `param.options.source` | [Param RFC](./param.md) | `{ form, dependsOn }` | `Option[]` | `resolution` | No |
 | `param.validation.hook` | [Param RFC](./param.md) | `{ value, form }` | `{ ok, message? }` | `resolution` | No |
 | `auth.preflight` | [Auth RFC](./auth.md) | `{ fields? }` | implementation-defined setup data | `auth` | No |
@@ -492,3 +493,11 @@ repo's dated-`## Amendment` convention precisely because it is additive — ever
 never reads `ctx.file` keeps working unchanged, with `file` simply `undefined` on its `ctx`. A
 capability that could not be added without breaking an existing hook is what `## Open questions`
 reserves for a later `manifestVersion`; this one does not qualify.
+
+## Amendment — 2026-10-24: `action.resolveFields`
+
+`action.resolveFields` is the form-level options hook: one call returns `Option[]` (or a per-field `error`) for several dynamic params. It runs in phase `resolution` and never sees the credential. Its input is `{ reason: "init" | "change", form, previous?, changed?, fields, unresolved }`, where `form` carries literal values only and `unresolved` lists keys bound to an expression, secret or var.
+
+- **Network.** `ctx.fetch` is signed exactly as for `action.execute`, behind the same `network.allow`; `ctx.connection` is redacted.
+- **Timeout.** The host caps the hook at **10 s**, the one exception to the 30 000 ms default under [Timeouts and cancellation](#timeouts-and-cancellation), because it sits in the editor's critical path.
+- **Output is untrusted.** The host drops any key it did not request and validates the rest: `value` must be a string or number, `label` a string (clipped), and at most 1 000 options per field. A thrown hook becomes a `W6WError` in phase `resolution`.
