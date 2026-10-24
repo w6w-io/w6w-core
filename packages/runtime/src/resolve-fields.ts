@@ -10,7 +10,7 @@ import { W6WError } from "./errors.ts";
 
 /** Hard cap on one `resolveFields` call (also the ceiling on host egress). */
 export const RESOLVE_FIELDS_TIMEOUT_MS = 10_000;
-/** Most options kept per field. */
+/** Most raw option entries examined per field (so at most this many kept). */
 export const RESOLVE_FIELDS_MAX_OPTIONS = 1000;
 
 const MAX_LABEL = 200;
@@ -64,12 +64,11 @@ export function sanitizeResolveFieldsOutput(
     const out: { options?: Option[]; error?: string } = {};
     if (Array.isArray(entry.options)) {
       const options: Option[] = [];
-      // Iterate by index and stop at the cap, so a huge array costs no more.
-      for (
-        let i = 0;
-        i < entry.options.length && options.length < RESOLVE_FIELDS_MAX_OPTIONS;
-        i++
-      ) {
+      // The cap is on RAW entries: look at the first RESOLVE_FIELDS_MAX_OPTIONS
+      // slots only, so a huge (or sparse, `new Array(2 ** 32 - 1)`) array costs
+      // a bounded loop. Holes and invalid entries are skipped as invalid.
+      const rawCount = Math.min(entry.options.length, RESOLVE_FIELDS_MAX_OPTIONS);
+      for (let i = 0; i < rawCount; i++) {
         const o = sanitizeOption(entry.options[i]);
         if (o) options.push(o);
       }

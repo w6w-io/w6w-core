@@ -276,6 +276,23 @@ Deno.test("sanitizeResolveFieldsOutput (e): at most 1000 options, the first 1000
   assertEquals(got[999].value, 999);
 });
 
+Deno.test("sanitizeResolveFieldsOutput (e): the loop is bounded by raw length, not by valid count", () => {
+  for (const length of [2 ** 28, 2 ** 32 - 1]) {
+    const options = new Array(length); // sparse: every slot a hole
+    const t0 = performance.now();
+    const got = sanitizeResolveFieldsOutput({ fields: { a: { options } } }, ["a"]).fields.a;
+    const ms = performance.now() - t0;
+    assertEquals(got.options, []);
+    if (ms >= 100) throw new Error(`sanitiser took ${ms}ms for length ${length}`);
+  }
+  // Invalid entries within the first 1000 count against the cap; slot 1000+ is never read.
+  const options: unknown[] = Array.from({ length: 1005 }, (_, i) => ({ value: i, label: "x" }));
+  options[0] = "junk";
+  const got = sanitizeResolveFieldsOutput({ fields: { a: { options } } }, ["a"]).fields.a.options!;
+  assertEquals(got.length, 999);
+  assertEquals(got[998].value, 999);
+});
+
 Deno.test("sanitizeResolveFieldsOutput (f): error clipped to 500; non-string error dropped", () => {
   const out = sanitizeResolveFieldsOutput({
     fields: {
