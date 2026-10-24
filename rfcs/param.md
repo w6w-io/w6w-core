@@ -425,3 +425,41 @@ validation and invocation, to whatever value the referenced path holds; validati
 param's existing declarative checks, with no deep shape validation of the resolved value. The semantics, including the single-pass resolution rule and what a
 single-step test must do, are specified by the Workflow RFC's
 [whole-value bindings amendment](./workflow.md#amendment--2026-10-12-whole-value-bindings-for-json-and-group-params) and are not restated here.
+
+
+## Amendment — 2026-10-24: form-level options hook (`resolveFields`)
+
+> This amendment is additive. Every line below that mentions `options.source` or a `./hooks/`
+> source was found by `grep -n "options.source\|hooks/" rfcs/param.md` at the base of this change,
+> and each now describes the **path arm only** of `options.source`: line 41 (Hooks, item 4),
+> lines 85 and 98 (`./hooks/list-channels.ts`, `./hooks/list-threads.ts` examples), line 228
+> (the *Dynamic* `./hooks/list.ts` example), line 357 (the `options.source` row of the hook table)
+> and line 367 (*Dependencies*, item 2). Line 141 (`validation.hook`, `./hooks/validate-subdomain.ts`)
+> is a validation hook, not an options source, and is unaffected. The `resolveFields` arm below is
+> the second arm of the same field.
+
+1. **Two arms of `options.source`.** `source` is either a `./`-relative path to a per-field hook
+   module (as specified above), or the reserved string `"resolveFields"`, which names the Action's
+   single form-level `resolveFields` hook (see the Action RFC's *Param resolution*). The arms cannot
+   collide: a path always starts with `./`. The hook receives the whole form and returns options
+   for any number of fields in one call.
+2. **`refreshOn`.** `DynamicOptions` gains `refreshOn?: string[]`, the sibling keys whose
+   **commit** (a pick for a select/combobox, blur for a text input, never per keystroke) triggers a
+   refetch of this field's options. It only triggers a refetch; unlike `dependsOn` it never disables
+   the field, so a typed-in value stays possible before the parent is chosen.
+3. **`config.allowCustom`.** `ParamConfig` gains `allowCustom?: boolean`. A field with `options`
+   (static or dynamic) then renders as a combobox accepting free text instead of a forced select.
+   Without it, options constrain the value exactly as before.
+4. **Expressions, secrets and vars are never sent.** A value that is an expression, a
+   `{type:"secret"}` envelope or a var binding is omitted from `form`/`previous` and its key listed
+   in `unresolved`. A dynamic field whose `refreshOn` key is unresolved shows its static fallback or
+   free text and an "options unavailable" hint. A dynamic field can itself still be bound with an
+   expression.
+5. **Values are never silently dropped.** On `init`, or on any refetch where the current value is
+   not in the returned list, the value is **kept** and flagged inline as not in the returned list.
+   The one exception is a `change` caused by a `refreshOn` key on a field **without**
+   `allowCustom`: there the stale value is cleared. That is the only case the *Dependencies* clear
+   rule (item 3 above) applies to the `resolveFields` arm; an `allowCustom` field keeps the value
+   and flags it.
+6. **The per-field path form is specified but has no reference implementation.** The `./hooks/x.ts`
+   arm stays in this RFC as written; nothing in this amendment implements or removes it.
