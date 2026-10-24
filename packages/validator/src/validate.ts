@@ -475,6 +475,49 @@ function checkUrl(ctx: Ctx, v: unknown, path: string): void {
 }
 
 /** Validate an App manifest (identity + presentation). */
+const MODEL_TYPES = [
+  "llm",
+  "embedding",
+  "reranking",
+  "image-generation",
+  "video-generation",
+  "speech-to-text",
+  "text-to-speech",
+  "audio-generation",
+  "moderation",
+];
+const MODEL_FAMILIES = ["transformer", "diffusion", "flow-matching", "other"];
+
+function checkModelProvider(ctx: Ctx, v: unknown, path: string): void {
+  if (!isObject(v)) {
+    ctx.err(path, "must be an object");
+    return;
+  }
+  for (const k of Object.keys(v)) {
+    if (k !== "modelTypes" && k !== "modelFamilies") ctx.err(`${path}.${k}`, "is not a known key");
+  }
+  const list = (key: string, allowed: string[], required: boolean) => {
+    const val = v[key];
+    const p = `${path}.${key}`;
+    if (val === undefined) {
+      if (required) ctx.err(p, "is required");
+      return;
+    }
+    if (!Array.isArray(val) || val.length < 1) {
+      ctx.err(p, "must be a non-empty array");
+      return;
+    }
+    const seen = new Set<unknown>();
+    val.forEach((x, i) => {
+      ctx.enum(x, allowed, `${p}[${i}]`);
+      if (seen.has(x)) ctx.err(`${p}[${i}]`, "must not be a duplicate");
+      seen.add(x);
+    });
+  };
+  list("modelTypes", MODEL_TYPES, true);
+  list("modelFamilies", MODEL_FAMILIES, false);
+}
+
 export function validateApp(manifest: unknown): ValidationResult {
   const ctx = new Ctx();
   if (!isObject(manifest)) {
@@ -524,6 +567,20 @@ export function validateApp(manifest: unknown): ValidationResult {
       allow !== undefined && (!Array.isArray(allow) || allow.some((h) => typeof h !== "string"))
     ) {
       ctx.err("network.allow", "must be an array of hostname strings");
+    }
+  }
+
+  if (manifest.modelProvider !== undefined) {
+    checkModelProvider(ctx, manifest.modelProvider, "modelProvider");
+  }
+  if (isObject(manifest.localizations)) {
+    for (const [locale, entry] of Object.entries(manifest.localizations)) {
+      if (isObject(entry) && "modelProvider" in entry) {
+        ctx.err(
+          `localizations.${locale}.modelProvider`,
+          "is not localizable; declare it at the top level",
+        );
+      }
     }
   }
 
