@@ -500,4 +500,4 @@ reserves for a later `manifestVersion`; this one does not qualify.
 
 - **Network.** `ctx.fetch` is signed exactly as for `action.execute`, behind the same `network.allow`; `ctx.connection` is redacted.
 - **Timeout.** The host caps the hook at **10 s**, the one exception to the 30 000 ms default under [Timeouts and cancellation](#timeouts-and-cancellation), because it sits in the editor's critical path.
-- **Output is untrusted.** The host drops any key it did not request and validates the rest: `value` must be a string or number, `label` a string (clipped), and at most 1 000 options per field. A thrown hook becomes a `W6WError` in phase `resolution`.
+- **Output is untrusted.** The host drops any key it did not request and validates the rest: `value` must be a string or number, `label` a string clipped to **200** characters and `description` to **500**, and at most 1 000 options per field — only the first **1 000 raw entries** of a field's array are read, so paging past that is the hook's job. A per-field `error` message is clipped to **500** characters. A thrown hook becomes a `W6WError` in phase `resolution`.
