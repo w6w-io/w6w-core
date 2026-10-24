@@ -17,7 +17,10 @@ grants anything.
 - `SKILL.md` starts with a `---` ... `---` frontmatter block (a BOM is stripped, CRLF accepted).
 - Frontmatter is a plain object with `name` (1-64 chars, `[a-z0-9-]`) and a non-empty `description`
   (at most 1024 characters). Every other key is kept verbatim as `metadata`.
-- Paths are compared in NFC and case-folded. Percent-sequences are literal names, never decoded.
+- Paths are compared by one shared key, `canonicalSkillPath`: NFC, `toLowerCase()`, NFC again. This
+  is `toLowerCase`, not full Unicode case folding (for example `ß` and `SS` do not collide), so any
+  other component that keys on paths must import this function rather than reimplement it.
+  Percent-sequences are literal names, never decoded.
 - Scripts (`.sh`, `.py`, `.js` and similar) are accepted as inert files.
 
 ## Default limits
@@ -55,12 +58,12 @@ Errors unless marked warning. A report is `ok` only with no errors, and publishe
 | `path_empty_segment`              | Empty segment (`a//b`)                                                                    |
 | `path_too_deep`                   | Deeper than `maxDepth`                                                                    |
 | `path_too_long`                   | More than `maxPathBytes` bytes                                                            |
-| `path_duplicate`                  | Collision after NFC and case-fold; reported on every member                               |
+| `path_duplicate`                  | Collision on `canonicalSkillPath` (NFC + `toLowerCase`); reported on every member         |
 | `credential_path`                 | Credential-looking path (see above)                                                       |
 | `entry_symlink`                   | Symlink entry                                                                             |
 | `entry_hardlink`                  | Hardlink entry                                                                            |
 | `entry_device`                    | Device entry                                                                              |
-| `entry_other`                     | Any other non-file, non-dir kind                                                          |
+| `entry_other`                     | Any kind outside the `SkillEntryKind` union (fails closed)                                |
 | `file_too_large`                  | File over `maxFileBytes` (or invalid size)                                                |
 | `package_too_large`               | Aggregate over `maxPackageBytes`                                                          |
 | `too_many_files`                  | More than `maxFiles` files                                                                |
@@ -81,3 +84,6 @@ Errors unless marked warning. A report is `ok` only with no errors, and publishe
 This is the w6w skill-package format. Not every third-party format is interchangeable: a package
 from another tool may be rejected (for example for credential paths or symlinks), and keys such as
 `allowed-tools` are kept as inert metadata rather than honoured.
+
+A missing, partial or `NaN` limit fails closed: the comparison is written so that it errors, with
+the same per-limit codes (`file_too_large`, `too_many_files`, and so on).

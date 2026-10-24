@@ -534,3 +534,107 @@ Deno.test("F-4: canonicalSkillPath is NFC(lower(NFC(x))) and closes the 7 equiva
     assertEquals(r.errors.filter((e) => e.code === "path_duplicate").length, 2, a);
   }
 });
+
+Deno.test("F-5: lone ../SKILL.md or ./SKILL.md is path_traversal with no root", () => {
+  for (const p of ["../SKILL.md", "./SKILL.md"]) {
+    for (const rest of [[], [f("../docs/a.md")]]) {
+      const r = validateSkillPackage({
+        entries: [f(p), ...rest.map((e) => ({ ...e, path: p.slice(0, -8) + "docs/a.md" }))],
+        frontmatter: FM,
+        limits: LIM,
+      });
+      assertEquals(r.ok, false, p);
+      assertEquals(r.root, null, p);
+      assertEquals(r.errors.some((e) => e.code === "path_traversal" && e.path === p), true, p);
+    }
+  }
+});
+
+Deno.test("F-5: a zero-byte file is accepted", () => {
+  const r = run([f("empty.txt", 0)]);
+  assertEquals(r.ok, true);
+  assertEquals(r.errors, []);
+});
+
+Deno.test("F-5: wrapper spelled NFD on some entries and NFC on others is one wrapper", () => {
+  const nfc = "é";
+  const nfd = "é";
+  const r = validateSkillPackage({
+    entries: [
+      f(`${nfc}/SKILL.md`),
+      f(`${nfd}/a.md`),
+      f(`${nfd}/`, 0, "dir"),
+      f(`${nfc}/`, 0, "dir"),
+    ],
+    frontmatter: FM,
+    limits: LIM,
+  });
+  assertEquals(r.errors, []);
+  assertEquals(r.ok, true);
+});
+
+Deno.test("F-5: maxFiles files plus one dir entry still passes", () => {
+  const files = Array.from({ length: LIM.maxFiles - 1 }, (_, i) => f(`d/f${i}.md`));
+  const r = run([...files, f("d", 0, "dir")]);
+  assertEquals(r.errors, []);
+  assertEquals(r.ok, true);
+});
+
+Deno.test("F-5: SKILL.md/SKILL.md alone does not satisfy the SKILL.md requirement", () => {
+  const r = validateSkillPackage({
+    entries: [f("SKILL.md/SKILL.md")],
+    frontmatter: FM,
+    limits: LIM,
+  });
+  assertEquals(r.ok, false);
+  assertEquals(r.root, null);
+});
+
+Deno.test("F-5: frontmatter nesting 100 passes, 101 fails", () => {
+  const nest = (n: number) => {
+    let v: unknown = "x";
+    for (let i = 0; i < n; i++) v = { k: v };
+    return v;
+  };
+  // the top-level frontmatter object is level 1, so metadata.k nests n-1 below it
+  const at = (n: number) =>
+    validateSkillPackage({
+      entries: [f("SKILL.md")],
+      frontmatter: { ...FM, deep: nest(n) },
+      limits: LIM,
+    });
+  let lastOk = 0;
+  for (let n = 90; n <= 110; n++) if (at(n).ok) lastOk = n;
+  assertEquals(at(lastOk).ok, true);
+  assertEquals(at(lastOk + 1).errors.map((e) => e.code), ["frontmatter_too_many_nodes"]);
+  assertEquals(lastOk >= 98 && lastOk <= 100, true);
+});
+
+Deno.test("F-5: extract maxBytes boundary, unterminated and bytes not chars", () => {
+  const body = "a".repeat(10);
+  assertEquals(extractSkillFrontmatter(`---\n${body}\n---\n`, { maxBytes: 10 }), { raw: body });
+  assertEquals(extractSkillFrontmatter(`---\n${body}\n---\n`, { maxBytes: 9 }), {
+    error: "frontmatter_too_large",
+  });
+  assertEquals(extractSkillFrontmatter(`---\n${body}`, { maxBytes: 10 }), {
+    error: "frontmatter_unterminated",
+  });
+  assertEquals(extractSkillFrontmatter(`---\n${body}`, { maxBytes: 9 }), {
+    error: "frontmatter_too_large",
+  });
+  // 5 two-byte chars = 10 bytes, 5 chars
+  const mb = "é".repeat(5);
+  assertEquals(extractSkillFrontmatter(`---\n${mb}\n---\n`, { maxBytes: 10 }), { raw: mb });
+  assertEquals(extractSkillFrontmatter(`---\n${mb}\n---\n`, { maxBytes: 9 }), {
+    error: "frontmatter_too_large",
+  });
+});
+
+Deno.test("F-5: __proto__ metadata key keeps its own-property descriptor", () => {
+  const fm = JSON.parse('{"name":"a","description":"d","__proto__":{"x":1}}');
+  const r = withFm(fm);
+  const d = Object.getOwnPropertyDescriptor(r.metadata, "__proto__");
+  assertEquals(d?.value, { x: 1 });
+  assertEquals(d?.enumerable, true);
+  assertEquals(({} as Record<string, unknown>).x, undefined);
+});
