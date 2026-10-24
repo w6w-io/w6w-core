@@ -778,8 +778,8 @@ Its output is data like any other step's: a downstream step reads
 `@w6w/model` slots into the existing tables as an **internal** kind that routes through the one
 invoke seam — there is no parallel code path:
 
-| Kind       | `uses.app`   | Executed by                 | Examples                        |
-| ---------- | ------------ | --------------------------- | ------------------------------- |
+| Kind       | `uses.app`   | Executed by                 | Examples                          |
+| ---------- | ------------ | --------------------------- | --------------------------------- |
 | `internal` | `@w6w/model` | the **host's internal API** | complete a prompt through a route |
 
 Routing is unchanged: `isInternalApp("@w6w/model")` is `true` (the reserved `@w6w/` prefix), so
@@ -790,10 +790,10 @@ the seam it already uses for every node.
 
 ### Reserved internal pseudo-app
 
-| Id           | Action(s)                   | Input (`with`)                                      | Output                       | Processor |
-| ------------ | --------------------------- | --------------------------------------------------- | ---------------------------- | --------- |
-| `@w6w/model` | `complete`                  | `{ route }` **or** `{ model, connection }`, `input` | the completion envelope      | host      |
-| `@w6w/model` | `list-models`, `allowance`  | `{ connection }`                                    | `{ models }` / the allowance | host      |
+| Id           | Action(s)                  | Input (`with`)                                      | Output                       | Processor |
+| ------------ | -------------------------- | --------------------------------------------------- | ---------------------------- | --------- |
+| `@w6w/model` | `complete`                 | `{ route }` **or** `{ model, connection }`, `input` | the completion envelope      | host      |
+| `@w6w/model` | `list-models`, `allowance` | `{ connection }`                                    | `{ models }` / the allowance | host      |
 
 - `route` names a **model route** on the run's own account. It is exactly one of the two ways to
   address a model: a `@w6w/model` step MUST carry **either** `route` **or** the `model` + `connection`
