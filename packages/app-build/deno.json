@@ -8,7 +8,8 @@
   },
   "imports": {
     "@w6w/types": "../types/mod.ts",
-    "@w6w/runtime": "../runtime/mod.ts"
+    "@w6w/runtime": "../runtime/mod.ts",
+    "@w6w/validator": "../validator/mod.ts"
   },
   "tasks": {
     "build": "deno run -A --unstable-worker-options cli.ts",
