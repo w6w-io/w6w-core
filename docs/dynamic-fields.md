@@ -179,9 +179,9 @@ The editor never silently drops a value the user already has. The rules, in the 
    on a field **without** `allowCustom`: there the stale value is cleared. A field with
    `allowCustom` keeps the value and flags it, because the value was still legal to type.
 3. **Types the value instead.** With `config.allowCustom`, the field is a combobox: the returned
-   options are suggestions, and the user can type a value your hook never returned. The vendored
-   Anthropic example says as much in its hint, and both shipped apps set it — a new model or a
-   newly created organizer should not require a deploy of the App.
+   options are suggestions, and the user can type a value your hook never returned. The Anthropic
+   app's `model` hint says as much, and both shipped apps set the flag — a new model or a newly
+   created organizer should not require a deploy of the App.
 4. **Expressions, secrets and vars are never sent.** Their keys arrive in `unresolved` instead. A
    dynamic field whose `refreshOn` key is unresolved falls back to the field's static options or to
    free text and shows that its options are unavailable; the dynamic field itself can still be bound
