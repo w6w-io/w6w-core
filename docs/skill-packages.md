@@ -21,6 +21,19 @@ grants anything.
   is `toLowerCase`, not full Unicode case folding (for example `ß` and `SS` do not collide), so any
   other component that keys on paths must import this function rather than reimplement it.
   Percent-sequences are literal names, never decoded.
+- **Work is bounded before any normalization.** `String.prototype.normalize` is quadratic on a long
+  run of mixed-class combining marks (one 65 KB name costs about 0.8 s), so `canonicalSkillPath` is
+  O(n²) in the worst case and does **not** bound its input. Callers must cap the length of the
+  string first (for example a storage `path_key` builder rejects anything over `maxPathBytes` before
+  calling it). `validateSkillPackage` does this itself: an entry whose raw path is longer than
+  `rawPathUnitCap(maxPathBytes)` = `4 * maxPathBytes + 1` UTF-16 units is reported `path_too_long`
+  and is never normalized, case-folded or keyed. NFC shrinks at most 1.5 units per byte, so a path
+  whose wrapper dir and remaining path are each within `maxPathBytes` NFC bytes is never
+  over-rejected. The same cap bounds the wrapper dir: the wrapper is part of the raw path. A missing
+  or NaN `maxPathBytes` still uses the default's cap for this gate.
+- **Entry count is the caller's cap.** The validator checks `maxFiles` only after visiting every
+  entry, so the caller (the ZIP reader) must stop reading the central directory at its own entry
+  count limit before building the list.
 - Scripts (`.sh`, `.py`, `.js` and similar) are accepted as inert files.
 
 ## Default limits
@@ -57,7 +70,7 @@ Errors unless marked warning. A report is `ok` only with no errors, and publishe
 | `path_not_nfc`                    | Reserved, never emitted: NFD paths are normalized to NFC and only collisions are rejected |
 | `path_empty_segment`              | Empty segment (`a//b`)                                                                    |
 | `path_too_deep`                   | Deeper than `maxDepth`                                                                    |
-| `path_too_long`                   | More than `maxPathBytes` bytes                                                            |
+| `path_too_long`                   | More than `maxPathBytes` bytes, or over `rawPathUnitCap` raw units                        |
 | `path_duplicate`                  | Collision on `canonicalSkillPath` (NFC + `toLowerCase`); reported on every member         |
 | `credential_path`                 | Credential-looking path (see above)                                                       |
 | `entry_symlink`                   | Symlink entry                                                                             |

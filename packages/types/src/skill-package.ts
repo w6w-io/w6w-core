@@ -95,9 +95,28 @@ export const DEFAULT_SKILL_PACKAGE_LIMITS: Readonly<SkillPackageLimits> = Object
  * untouched. The trailing NFC matters: lowercasing is not NFC-closed (e.g. U+01F0 lowercases to
  * itself but its decomposed twin does not), so a bare `normalize("NFC").toLowerCase()` lets
  * canonically-equivalent paths keep distinct keys. Percent sequences are NOT decoded.
+ *
+ * Cost: `String.prototype.normalize` is quadratic in the worst case (a long run of
+ * mixed-class combining marks reorders in O(n²)): one 65 KB name costs ~0.8 s. This function
+ * does NOT bound its input. Callers must cap the length of `path` first (e.g. a storage
+ * `path_key` builder rejects anything over `maxPathBytes` before calling); `validateSkillPackage`
+ * does so itself via {@link rawPathUnitCap}.
  */
 export function canonicalSkillPath(path: string): string {
   return path.normalize("NFC").toLowerCase().normalize("NFC");
+}
+
+/**
+ * Longest raw (pre-normalization) entry path, in UTF-16 units, that `validateSkillPackage` will
+ * normalize: `4 * maxPathBytes + 1`. NFC shrinks at most 1.5 units per resulting byte, so a path
+ * whose wrapper dir and remaining path are each within `maxPathBytes` NFC bytes is at most
+ * `3 * maxPathBytes + 1` units and is never over-rejected. This is also the wrapper dir's bound.
+ */
+export function rawPathUnitCap(maxPathBytes: number): number {
+  const cap = 4 * maxPathBytes + 1;
+  // A missing / NaN limit still gets a finite pre-normalization bound (the default's); the
+  // per-path `path_too_long` check below then fails the package closed on its own.
+  return Number.isNaN(cap) ? 4 * DEFAULT_SKILL_PACKAGE_LIMITS.maxPathBytes + 1 : cap;
 }
 
 export type FrontmatterExtract = { raw: string } | {
@@ -233,15 +252,20 @@ export function validateSkillPackage(
   );
   if (entries.length === 0) err("no_entries", "package has no entries");
 
-  // Pass 1: split each entry (NFC) and decide the single wrapper dir to strip.
+  // Pass 1: bound the work FIRST (an O(1) length test, before any normalization), then split
+  // each in-bound entry (NFC) and decide the single wrapper dir to strip. An over-long entry is
+  // reported `path_too_long` and takes no further part: it is never normalized or case-folded.
+  const rawCap = rawPathUnitCap(limits.maxPathBytes);
   const parsed = entries.map((e) => {
+    if (!(e.path.length <= rawCap)) return { e, segs: [] as string[], tooLong: true };
     const norm = e.path.normalize("NFC");
     const body = e.kind === "dir" && norm.endsWith("/") ? norm.slice(0, -1) : norm;
-    return { e, segs: body.split("/") };
+    return { e, segs: body.split("/"), tooLong: false };
   });
   const tops = new Set<string>();
   let topLevelFile = false;
-  for (const { e, segs } of parsed) {
+  for (const { e, segs, tooLong } of parsed) {
+    if (tooLong) continue;
     if (segs.length === 1 && e.kind !== "dir") topLevelFile = true;
     tops.add(segs[0]);
   }
@@ -253,7 +277,7 @@ export function validateSkillPackage(
   let files = 0;
   let total = 0;
   let skillMd = false;
-  for (const { e, segs } of parsed) {
+  for (const { e, segs, tooLong } of parsed) {
     const p = e.path;
     if (e.kind === "symlink") err("entry_symlink", "symlinks are not allowed", p);
     else if (e.kind === "hardlink") err("entry_hardlink", "hardlinks are not allowed", p);
@@ -265,7 +289,7 @@ export function validateSkillPackage(
 
     if (e.kind === "file") {
       files++;
-      if (SCRIPT_EXT.test(e.path.normalize("NFC").toLowerCase())) {
+      if (!tooLong && SCRIPT_EXT.test(e.path.normalize("NFC").toLowerCase())) {
         warn("inert_script", "script files are stored as inert data and never executed", p);
       }
       if (!Number.isFinite(e.size) || e.size < 0) {
@@ -278,6 +302,10 @@ export function validateSkillPackage(
       }
     }
 
+    if (tooLong) {
+      err("path_too_long", `path longer than ${limits.maxPathBytes} bytes`, p);
+      continue;
+    }
     const raw = e.path;
     if (raw.startsWith("/") || raw.startsWith("\\") || WINDOWS_DRIVE.test(raw)) {
       err("path_absolute", "absolute paths are not allowed", p);
@@ -318,6 +346,7 @@ export function validateSkillPackage(
     }
     if (!(new TextEncoder().encode(rel.join("/")).length <= limits.maxPathBytes)) {
       err("path_too_long", `path longer than ${limits.maxPathBytes} bytes`, p);
+      continue; // already rejected for length: no canonical key, no further work
     }
     const key = canonicalSkillPath(rel.join("/"));
     const group = seen.get(key);

@@ -4,6 +4,7 @@ import {
   DEFAULT_SKILL_PACKAGE_LIMITS,
   extractSkillFrontmatter,
   MAX_FRONTMATTER_NODES,
+  rawPathUnitCap,
   SKILL_PACKAGE_CODES,
   type SkillEntry,
   type SkillEntryKind,
@@ -637,4 +638,98 @@ Deno.test("F-5: __proto__ metadata key keeps its own-property descriptor", () =>
   assertEquals(d?.value, { x: 1 });
   assertEquals(d?.enumerable, true);
   assertEquals(({} as Record<string, unknown>).x, undefined);
+});
+
+// F-11: bound the work before the first normalization. U+0301 (ccc 230) then U+0316 (ccc 220)
+// is the worst reordering case for String.prototype.normalize (quadratic).
+const markRun = (units: number) => "a" + "\u0301".repeat(units / 2) + "\u0316".repeat(units / 2);
+
+Deno.test("F-11: 10 entries of a 65 KB mark-run name are bounded before NFC", () => {
+  const big = markRun(65_000);
+  const entries = [f("SKILL.md")];
+  for (let i = 0; i < 10; i++) entries.push(f(`${i}${big}`));
+  const t = performance.now();
+  const r = validateSkillPackage({ entries, frontmatter: FM, limits: { ...LIM, maxFiles: 50 } });
+  const ms = performance.now() - t;
+  assertEquals(r.ok, false);
+  assertEquals(r.root, null);
+  assertEquals(r.errors.filter((e) => e.code === "path_too_long").length, 10);
+  assertEquals(r.errors.length, 10);
+  if (ms > 100) throw new Error(`took ${ms} ms`);
+});
+
+Deno.test("F-11: dir entries and a mark-run wrapper repeated on every entry are bounded", () => {
+  const big = markRun(65_000);
+  const entries = [f(`${big}/SKILL.md`)];
+  for (let i = 0; i < 10; i++) entries.push(f(`${big}/d${i}/x.md`), f(`${big}${i}/`, 0, "dir"));
+  const t = performance.now();
+  const r = validateSkillPackage({ entries, frontmatter: FM, limits: { ...LIM, maxFiles: 50 } });
+  const ms = performance.now() - t;
+  assertEquals(r.ok, false);
+  // every entry is over-long; the only other report is the SKILL.md the wrapper hid
+  assertEquals(r.errors.filter((e) => e.code === "path_too_long").length, entries.length);
+  assertEquals(r.errors.map((e) => e.code).filter((c) => c !== "path_too_long"), [
+    "skill_md_missing",
+  ]);
+  if (ms > 100) throw new Error(`took ${ms} ms`);
+});
+
+Deno.test("F-11: NFC shrink is not over-rejected (270 units -> 180 bytes), with and without a wrapper", () => {
+  const shrink = "a\u0308\u0304".repeat(90);
+  assertEquals(shrink.length, 270);
+  assertEquals(new TextEncoder().encode(shrink.normalize("NFC")).length, 180);
+  const lim = { ...DEFAULT_SKILL_PACKAGE_LIMITS };
+  const flat = validateSkillPackage({
+    entries: [f("SKILL.md"), f(shrink + ".md")],
+    frontmatter: FM,
+    limits: lim,
+  });
+  assertEquals(flat.errors, []);
+  const wrapped = validateSkillPackage({
+    entries: [f("w/SKILL.md"), f(`w/${shrink}.md`), f(`${shrink}/`, 0, "dir")].slice(0, 2),
+    frontmatter: FM,
+    limits: lim,
+  });
+  assertEquals(wrapped.errors, []);
+  assertEquals(wrapped.root, "w");
+});
+
+Deno.test("F-11: raw cap boundary is 4*maxPathBytes+1 units on the whole path", () => {
+  const lim = { ...LIM, maxPathBytes: 10 };
+  assertEquals(rawPathUnitCap(10), 41);
+  // 10 x (a + U+0308 + U+0304) = 30 units = 10 NFC bytes; + "ab" = 32 units; + "/SKILL.md" = 41.
+  const w = "a\u0308\u0304".repeat(10) + "ab";
+  const at = validateSkillPackage({
+    entries: [f(`${w}/SKILL.md`)],
+    frontmatter: FM,
+    limits: lim,
+  });
+  assertEquals(`${w}/SKILL.md`.length, 41);
+  assertEquals(at.errors, []);
+  assertEquals(at.root, w.normalize("NFC"));
+  const over = validateSkillPackage({
+    entries: [f(`${w}c/SKILL.md`)],
+    frontmatter: FM,
+    limits: lim,
+  });
+  assertEquals(over.ok, false);
+  assertEquals(over.root, null);
+  assertEquals(over.errors.map((e) => e.code), ["skill_md_missing", "path_too_long"]);
+  // A non-finite cap fails closed rather than disabling the gate.
+  const nan = validateSkillPackage({
+    entries: [f("SKILL.md")],
+    frontmatter: FM,
+    limits: { ...LIM, maxPathBytes: NaN },
+  });
+  assertEquals(nan.errors.map((e) => e.code), ["path_too_long"]);
+});
+
+Deno.test("F-11: an entry rejected for length gets no canonical key (no duplicate report)", () => {
+  const long = "x".repeat(60);
+  const r = validateSkillPackage({
+    entries: [f("SKILL.md"), f(long), f(long.toUpperCase())],
+    frontmatter: FM,
+    limits: LIM,
+  });
+  assertEquals(r.errors.map((e) => e.code), ["path_too_long", "path_too_long"]);
 });
