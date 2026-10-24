@@ -164,9 +164,11 @@ Four rules the host enforces around your hook:
 | A `refreshOn` key is committed | One `change` call asking only for that key's dependants. A newer request aborts an older in-flight one. |
 | An Invocation or a replay | Nothing. Invocation does not re-run `resolveFields` to validate a supplied value, and replay uses the previously resolved values verbatim. |
 
-A `resolveFields` call is **not** an Invocation: it is not metered and does not count toward usage.
-It still passes the normal auth guard and the per-subject rate limit, so a hook that pages a large
-account gets the same treatment as any other API call.
+A `resolveFields` call is **not** an Invocation — there is no verdict, no run history entry and
+nothing to replay — but it is still metered: the global metering middleware records it as one
+`api_call`, the same as a connection test, so it does count toward usage. It passes the normal auth
+guard and the per-subject rate limit too, so a hook that pages a large account gets the same
+treatment as any other API call.
 
 ## What the editor does with what you return
 
