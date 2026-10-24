@@ -750,3 +750,119 @@ silently dropped.
 - [`NodeRun`](#noderun) **remains the executeNode record**, unchanged, with its `nodeId` field. It is not renamed.
 - The run-state record is **`NodeExecution{nodeId}`**, held in canonical **`RunState.nodes`**; the wire also emits the `steps`/`stepId` aliases on read, and persisted columns are not renamed. These terms are stated once, in the Engine RFC.
 - Wherever this file says "step" for a workflow vertex it means a **node** (`Workflow.nodes`; `steps.<id>` remains a permanent alias of `nodes.<id>`).
+
+## Amendment — 2026-10-24: the `@w6w/model` host node (F-3)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change. It reserves one more id in the `@w6w/*` namespace and routes it
+> through the existing single invoke seam — the host performs the provider call, so, like the
+> [2026-08-11 `@w6w/document` amendment](#amendment--2026-08-11-the-w6wdocument-host-node-f-3) and
+> unlike the 2026-07-23 triple, it has no companion amendment in
+> [`invocation.md`](./invocation.md).
+
+`@w6w/model` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself to
+talk to a **model provider** on the run's own account — one completion, a listing of a provider
+connection's models, or a connection's remaining allowance. It is the in-graph way to call a model
+_at run time_: its params are ordinary expression-capable `with` values, so the prompt can come from
+a trigger input or an upstream step's output. Like `@w6w/control`, `@w6w/script`, `@w6w/data`,
+`@w6w/trigger`, `@w6w/call`, `@w6w/document` and `@w6w/template`, it is a **host** node with host
+capabilities — **not** a sandboxed `packages/apps` app. No registered app id may begin with `@w6w/`,
+so `@w6w/model` can never collide with a catalog app.
+
+Its output is data like any other step's: a downstream step reads
+`{ "$": "steps.<id>.output.output" }` for the dialect-shaped result, or
+`{ "$": "steps.<id>.output.usage" }` for the token accounting.
+
+### Kind & routing
+
+`@w6w/model` slots into the existing tables as an **internal** kind that routes through the one
+invoke seam — there is no parallel code path:
+
+| Kind       | `uses.app`   | Executed by                 | Examples                          |
+| ---------- | ------------ | --------------------------- | --------------------------------- |
+| `internal` | `@w6w/model` | the **host's internal API** | complete a prompt through a route |
+
+Routing is unchanged: `isInternalApp("@w6w/model")` is `true` (the reserved `@w6w/` prefix), so
+`ctx.invoke` / `invokeAction` dispatches it to the **host's internal node processor** — the same
+processor that runs `@w6w/script`, `@w6w/data` and `@w6w/document` — rather than to the registry. The
+engine never holds a provider credential and never performs the call itself; it asks the host through
+the seam it already uses for every node.
+
+### Reserved internal pseudo-app
+
+| Id           | Action(s)                  | Input (`with`)                                      | Output                       | Processor |
+| ------------ | -------------------------- | --------------------------------------------------- | ---------------------------- | --------- |
+| `@w6w/model` | `complete`                 | `{ route }` **or** `{ model, connection }`, `input` | the completion envelope      | host      |
+| `@w6w/model` | `list-models`, `allowance` | `{ connection }`                                    | `{ models }` / the allowance | host      |
+
+- `route` names a **model route** on the run's own account. It is exactly one of the two ways to
+  address a model: a `@w6w/model` step MUST carry **either** `route` **or** the `model` + `connection`
+  pair, and a step carrying neither, or both, fails.
+- `input` is the request body handed to the provider (e.g.
+  `{ "messages": [{ "role": "user", "content": "…" }] }`, or the provider's native payload). It is
+  expression-capable.
+- `dialect` (`openai` | `anthropic` | `ollama`) rewrites the result into that wire dialect;
+  `response` (`output` | `raw`) selects the envelope's payload field. Both are optional: unset, the
+  result keeps the provider's own shape and the envelope carries both fields.
+- `list-models` and `allowance` take a `connection` and nothing else — the connection must exist **on
+  the caller's own account**, checked exactly as the completion path checks it.
+- **There is no `project`, `tenant` or `scope` param.** The call is resolved and billed under the
+  run's own `(tenant, subject, project)` — the workflow's own project — never a caller-supplied one.
+  A run-time string naming a project would let one run spend, and read, another project's allowance;
+  the run's own project is the only scope this node needs, and a host MUST NOT fall back to a default
+  project when the run's scope is unavailable.
+- The output of `complete` is the provider **envelope**: `{ provider, key, model, dialect, usage,
+  meta }` plus `output` (the dialect-shaped result) and/or `raw` (the provider's own response),
+  narrowed by `response`. It is deliberately **not** spread at the top level, so a provider response
+  carrying its own `model` or `usage` field cannot collide with the envelope.
+
+### Non-echo classification
+
+`@w6w/model` **does not copy its parameters into the step output** — the output is the provider
+envelope alone — so it is a **non-echo** app. It is therefore classified with the host's
+`NON_ECHO_INTERNAL_APPS` and is **absent** from the engine's `SECRET_ECHO_APPS`
+([Engine RFC](./engine.md)). The consequence is the point: because nothing of the step's `with`
+reaches the stored run output, a **vault secret may be bound to `input`** (a per-run API key
+interpolated into a prompt, say) without tripping the secret-echo refusal that `@w6w/data`,
+`@w6w/template` and `@w6w/trigger` are subject to. Provider credentials themselves never appear in
+`with` at all: they live on the connection, host-side.
+
+### Spoke refusal
+
+A model call needs the host's provider credentials, egress guard and budget ledger — none of which a
+**spoke** holds. So `@w6w/model` is a **host-only** node:
+
+- A host MUST classify the id in `HOST_INTERNAL_APPS` and refuse it on a spoke. With no provider
+  binding available, a `@w6w/model` step executed on a spoke **fails the step** with an error whose
+  message starts `model_unavailable:` — never a success carrying an empty or `null` output, and never
+  a silent fallback to another project or another connection.
+- A workflow containing a `@w6w/model` step is **not spoke-eligible**: the host's eligibility report
+  names the reason `model_step`, so the workflow is not shipped to a spoke in the first place and the
+  refusal above is the defence in depth, not the normal path.
+
+### Open/closed seam
+
+`@w6w/model` sits on the same open/closed boundary as `@w6w/call`, `@w6w/document` and `ctx.invoke`
+(STRATEGY §5.1). The **contract** — the `@w6w/model` node kind and its reserved id constant — is
+declared in the open `@w6w/workflow-types` and surfaced by `@w6w/ui`; the **implementation**
+(connection resolution, egress guard, pricing, budget reservation and the `model_usage` ledger) is
+provided by the **closed server host**. No capability implementation crosses the seam: the engine
+holds only the reserved id and routes to the host, so the OSS engine stays host-free while the private
+host owns how a model is actually called.
+
+### Conformance (additive)
+
+A host that implements `@w6w/model` MUST:
+
+- Classify a node whose `uses.app === "@w6w/model"` as an **internal** kind, route it through the one
+  invoke seam to the host's internal node processor, and accept no other execution path.
+- Support exactly three actions — `complete`, `list-models`, `allowance` — and **reject any other**
+  action under this id.
+- For `complete`, require exactly one of `route` or `model` + `connection`, failing the step
+  otherwise.
+- Resolve `with` against the run scope first, then resolve the route, model and connection under the
+  **run's own** `(tenant, subject, project)`, accepting no caller-supplied project, tenant or scope.
+- Return the provider envelope on success, with `output`/`raw` narrowed by the `response` param.
+- Classify the id as **non-echo** (`NON_ECHO_INTERNAL_APPS`, absent from `SECRET_ECHO_APPS`) and as
+  **host-only** (`HOST_INTERNAL_APPS`), refusing it on a spoke with an error whose message starts
+  `model_unavailable:`, and refusing to ship a workflow containing it to a spoke (`model_step`).
