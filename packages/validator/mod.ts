@@ -8,6 +8,7 @@
  */
 export {
   CATEGORIES,
+  checkFormResolvedFields,
   unknownCategories,
   validateAction,
   validateApp,
