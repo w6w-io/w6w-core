@@ -9,5 +9,11 @@
   "invalid/health/signed-widens-egress.json": "network.allow",
   "invalid/health/reserved-key.json": "key",
   "invalid/health/bad-kind.json": "kind",
-  "invalid/health/bad-covers.json": "covers"
+  "invalid/health/bad-covers.json": "covers",
+  "invalid/app/model-provider-empty-types.json": "modelProvider.modelTypes",
+  "invalid/app/model-provider-duplicate.json": "modelProvider.modelTypes[1]",
+  "invalid/app/model-provider-unknown-type.json": "modelProvider.modelTypes[0]",
+  "invalid/app/model-provider-unknown-family.json": "modelProvider.modelFamilies[0]",
+  "invalid/app/model-provider-unknown-key.json": "modelProvider.vendor",
+  "invalid/app/model-provider-in-localization.json": "localizations.fr.modelProvider"
 }
