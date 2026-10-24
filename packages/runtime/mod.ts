@@ -24,6 +24,7 @@ export {
   describe,
   hostAllowed,
   invoke,
+  invokeResolveFields,
   invokeTriggerHook,
   runAuthHook,
   signingFetch,
@@ -55,6 +56,11 @@ export { feedListItems, latestPerId, parseChannelMeta, parseFeed } from "./src/f
 export type { LoadedHealthCheck } from "./src/loader.ts";
 
 export { resolveParams } from "./src/resolve.ts";
+export {
+  RESOLVE_FIELDS_MAX_OPTIONS,
+  RESOLVE_FIELDS_TIMEOUT_MS,
+  sanitizeResolveFieldsOutput,
+} from "./src/resolve-fields.ts";
 export {
   applyOverrides,
   dedupeSignedHeaders,
