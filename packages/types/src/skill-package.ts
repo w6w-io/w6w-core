@@ -164,6 +164,43 @@ function isCredentialSegment(segment: string): boolean {
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Extensions treated as scripts: accepted, never run, flagged `inert_script`. */
+const SCRIPT_EXT = /\.(sh|bash|zsh|fish|py|js|mjs|cjs|ts|rb|pl|php|ps1|bat|cmd)$/;
+const NAME_GRAMMAR = /^[a-z0-9-]+$/;
+/** Nesting deeper than this is refused by the node walk (bounds recursion). */
+const MAX_FRONTMATTER_DEPTH = 100;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Count nodes the way a JSON copy would visit them: every reference visit counts, so YAML alias
+ * fan-out (shared subtrees) is charged in full. A reference to one of its own ancestors is a
+ * cycle. Only arrays and plain objects are descended into; anything else is a leaf.
+ */
+function walkFrontmatter(root: unknown): "ok" | "too_many" | "cyclic" {
+  let count = 0;
+  const ancestors = new Set<unknown>();
+  const visit = (v: unknown, depth: number): "ok" | "too_many" | "cyclic" => {
+    if (++count > MAX_FRONTMATTER_NODES) return "too_many";
+    if (!Array.isArray(v) && !isPlainObject(v)) return "ok";
+    if (ancestors.has(v)) return "cyclic";
+    if (depth > MAX_FRONTMATTER_DEPTH) return "too_many";
+    ancestors.add(v);
+    const kids = Array.isArray(v) ? v : Object.values(v as Record<string, unknown>);
+    for (const k of kids) {
+      const r = visit(k, depth + 1);
+      if (r !== "ok") return r;
+    }
+    ancestors.delete(v);
+    return "ok";
+  };
+  return visit(root, 0);
+}
+
 /**
  * Judge an entry list (and, from S3, the server-parsed frontmatter). Pure and deterministic:
  * entries are sorted internally and issues are emitted in (path, code, message) order, so input
@@ -177,6 +214,8 @@ export function validateSkillPackage(
   const warnings: SkillPackageIssue[] = [];
   const err = (code: SkillPackageCode, message: string, path?: string) =>
     errors.push(path === undefined ? { code, message } : { code, path, message });
+  const warn = (code: SkillPackageCode, message: string, path?: string) =>
+    warnings.push(path === undefined ? { code, message } : { code, path, message });
 
   const entries = [...input.entries].sort((a, b) =>
     cmp(a.path, b.path) || cmp(a.kind, b.kind) || a.size - b.size
@@ -212,6 +251,9 @@ export function validateSkillPackage(
 
     if (e.kind === "file") {
       files++;
+      if (SCRIPT_EXT.test(e.path.normalize("NFC").toLowerCase())) {
+        warn("inert_script", "script files are stored as inert data and never executed", p);
+      }
       if (!Number.isFinite(e.size) || e.size < 0) {
         err("file_too_large", "invalid file size", p);
       } else {
@@ -284,6 +326,63 @@ export function validateSkillPackage(
     err("skill_md_missing", "SKILL.md must exist at the package root (exact case)");
   }
 
+  // Frontmatter (the value the server parsed). Always judged, so errors accumulate.
+  let name: string | null = null;
+  let description: string | null = null;
+  const metadata: Record<string, unknown> = {};
+  const fm = input.frontmatter;
+  const SKILL = "SKILL.md";
+  if (fm === undefined || fm === null) {
+    err("frontmatter_missing", "SKILL.md has no frontmatter", SKILL);
+  } else if (!isPlainObject(fm)) {
+    err("frontmatter_not_object", "frontmatter must be a plain mapping", SKILL);
+  } else {
+    const walk = walkFrontmatter(fm);
+    if (walk === "too_many") {
+      err(
+        "frontmatter_too_many_nodes",
+        `frontmatter exceeds ${MAX_FRONTMATTER_NODES} nodes or ${MAX_FRONTMATTER_DEPTH} levels`,
+        SKILL,
+      );
+    } else if (walk === "cyclic") {
+      err("frontmatter_not_object", "frontmatter contains a cyclic reference", SKILL);
+    } else {
+      const n = fm.name;
+      if (
+        typeof n !== "string" || n.length < 1 || n.length > SKILL_NAME_MAX || !NAME_GRAMMAR.test(n)
+      ) {
+        err(
+          "frontmatter_name_invalid",
+          `name must be a string of 1-${SKILL_NAME_MAX} characters from [a-z0-9-]`,
+          SKILL,
+        );
+      } else name = n;
+      const d = fm.description;
+      if (typeof d !== "string" || d.trim() === "" || [...d].length > SKILL_DESCRIPTION_MAX) {
+        err(
+          "frontmatter_description_invalid",
+          `description must be a non-empty string of at most ${SKILL_DESCRIPTION_MAX} characters`,
+          SKILL,
+        );
+      } else description = d;
+      for (const key of Object.keys(fm)) {
+        if (key === "name" || key === "description") continue;
+        // defineProperty: a literal `__proto__` key must stay an own data property.
+        Object.defineProperty(metadata, key, {
+          value: fm[key],
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+        warn(
+          "inert_field",
+          `frontmatter key "${key}" is preserved as metadata and grants nothing`,
+          SKILL,
+        );
+      }
+    }
+  }
+
   const order = (a: SkillPackageIssue, b: SkillPackageIssue) =>
     cmp(a.path ?? "", b.path ?? "") || cmp(a.code, b.code) || cmp(a.message, b.message);
   errors.sort(order);
@@ -291,9 +390,9 @@ export function validateSkillPackage(
   return {
     ok: errors.length === 0,
     root: errors.length === 0 ? (strip ? wrapper : "") : null,
-    name: null,
-    description: null,
-    metadata: {},
+    name,
+    description,
+    metadata,
     errors,
     warnings,
   };

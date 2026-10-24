@@ -257,3 +257,185 @@ Deno.test("module source references no Deno./fetch", async () => {
   const code = src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
   assertEquals(/\bDeno\./.test(code) || /\bfetch\s*\(/.test(code), false);
 });
+
+const withFm = (frontmatter: unknown, entries: SkillEntry[] = [f("SKILL.md")]) =>
+  validateSkillPackage({ entries, frontmatter, limits: LIM });
+const fmCodes = (r: ReturnType<typeof withFm>) => r.errors.map((e) => e.code);
+
+Deno.test("valid wrapped package: root stripped once, inert_script + inert_field, metadata kept", () => {
+  const meta = { "allowed-tools": ["Bash"], scripts: { go: "run.sh" }, dependencies: { a: "1" } };
+  const r = validateSkillPackage({
+    entries: [
+      f("pkg/", 0, "dir"),
+      f("pkg/SKILL.md"),
+      f("pkg/run.sh", 10),
+      f("pkg/docs/deep/notes.md", 5),
+      f("pkg/docs/pkg/inner.txt", 5),
+    ],
+    frontmatter: { name: "my-skill-1", description: "Does things", ...meta },
+    limits: LIM,
+  });
+  assertEquals(r.errors, []);
+  assertEquals(r.ok, true);
+  assertEquals(r.root, "pkg");
+  assertEquals(r.name, "my-skill-1");
+  assertEquals(r.description, "Does things");
+  assertEquals(r.metadata, meta);
+  assertEquals(
+    r.warnings.filter((w) => w.code === "inert_script").map((w) => w.path),
+    ["pkg/run.sh"],
+  );
+  assertEquals(
+    r.warnings.filter((w) => w.code === "inert_field").map((w) => w.message.match(/"(.+?)"/)![1])
+      .sort(),
+    ["allowed-tools", "dependencies", "scripts"],
+  );
+  assertEquals(r.warnings.length, 4);
+});
+
+Deno.test("metadata: no warnings and empty metadata when only name/description", () => {
+  const r = withFm(FM);
+  assertEquals(r.warnings, []);
+  assertEquals(r.metadata, {});
+});
+
+Deno.test("metadata: a literal __proto__ key stays an own property, not a prototype", () => {
+  const fm = JSON.parse('{"name":"a","description":"d","__proto__":{"x":1}}');
+  const r = withFm(fm);
+  assertEquals(Object.getPrototypeOf(r.metadata), Object.prototype);
+  assertEquals(Object.keys(r.metadata), ["__proto__"]);
+  assertEquals(r.warnings.map((w) => w.code), ["inert_field"]);
+});
+
+Deno.test("scripts of every flavour are inert warnings, never errors", () => {
+  const r = withFm(FM, [f("SKILL.md"), f("a.PY"), f("b/c.js"), f("d.sh"), f("e.md")]);
+  assertEquals(r.ok, true);
+  assertEquals(r.warnings.map((w) => `${w.code}:${w.path}`), [
+    "inert_script:a.PY",
+    "inert_script:b/c.js",
+    "inert_script:d.sh",
+  ]);
+});
+
+Deno.test("frontmatter: missing / not a plain object", () => {
+  for (const bad of [undefined, null]) {
+    const r = withFm(bad);
+    assertEquals(fmCodes(r), ["frontmatter_missing"]);
+    assertEquals(r.root, null);
+    assertEquals(r.ok, false);
+  }
+  class Fm {
+    name = "a";
+    description = "d";
+  }
+  for (const bad of [[1], "x", 3, true, new Fm(), new Date(0), new Map()]) {
+    const r = withFm(bad);
+    assertEquals(fmCodes(r), ["frontmatter_not_object"]);
+    assertEquals(r.root, null);
+    assertEquals(r.name, null);
+  }
+  assertEquals(withFm(Object.assign(Object.create(null), FM)).ok, true);
+});
+
+Deno.test("frontmatter: name grammar", () => {
+  const bad: unknown[] = [
+    undefined,
+    5,
+    ["a"],
+    { a: 1 },
+    "",
+    "Abc",
+    "a b",
+    "a_b",
+    "a/b",
+    "é",
+    "a".repeat(65),
+    "a\n",
+  ];
+  for (const name of bad) {
+    const r = withFm({ name, description: "d" });
+    assertEquals(fmCodes(r), ["frontmatter_name_invalid"], JSON.stringify(name));
+    assertEquals(r.errors[0].path, "SKILL.md");
+    assertEquals(r.root, null);
+    assertEquals(r.name, null);
+  }
+  for (const name of ["a", "-", "0", "a-b-9", "a".repeat(64)]) {
+    const r = withFm({ name, description: "d" });
+    assertEquals(r.errors, [], name);
+    assertEquals(r.name, name);
+  }
+});
+
+Deno.test("frontmatter: description non-empty, <= 1024 (exact passes)", () => {
+  for (const description of [undefined, "", "   \n", 5, null, ["x"], "d".repeat(1025)]) {
+    const r = withFm({ name: "a", description });
+    assertEquals(fmCodes(r), ["frontmatter_description_invalid"], JSON.stringify(description));
+    assertEquals(r.description, null);
+  }
+  assertEquals(withFm({ name: "a", description: "d".repeat(1024) }).errors, []);
+  // 1024 astral characters are 2048 UTF-16 units but still 1024 characters.
+  assertEquals(withFm({ name: "a", description: "😀".repeat(1024) }).errors, []);
+  assertEquals(fmCodes(withFm({ name: "a", description: "😀".repeat(1025) })), [
+    "frontmatter_description_invalid",
+  ]);
+});
+
+Deno.test("frontmatter: both name and description invalid report both", () => {
+  assertEquals(fmCodes(withFm({ name: 1, description: "" })), [
+    "frontmatter_description_invalid",
+    "frontmatter_name_invalid",
+  ]);
+});
+
+Deno.test("frontmatter errors combine with entry errors; both reported", () => {
+  const r = withFm({ name: "BAD", description: "d" }, [f("SKILL.md"), f(".env")]);
+  assertEquals(fmCodes(r).sort(), ["credential_path", "frontmatter_name_invalid"]);
+  assertEquals(r.root, null);
+});
+
+Deno.test("node walk: exactly MAX_FRONTMATTER_NODES passes, one more fails", () => {
+  // root object counts 1, "name"/"description" values 1 each, `list` array 1 + its items.
+  const mk = (items: number) => ({ ...FM, list: new Array(items).fill(0) });
+  const fixed = 1 + 2 + 1;
+  const ok = withFm(mk(MAX_FRONTMATTER_NODES - fixed));
+  assertEquals(ok.errors, []);
+  const over = withFm(mk(MAX_FRONTMATTER_NODES - fixed + 1));
+  assertEquals(fmCodes(over), ["frontmatter_too_many_nodes"]);
+  assertEquals(over.root, null);
+  assertEquals(over.metadata, {});
+});
+
+Deno.test("node walk: alias fan-out (shared subtrees) is charged per visit", () => {
+  const shared = new Array(100).fill(0);
+  const fm = { ...FM, a: Array.from({ length: 200 }, () => shared) }; // 200 * 101 > cap
+  assertEquals(fmCodes(withFm(fm)), ["frontmatter_too_many_nodes"]);
+  // a shared leaf-ish subtree well under the cap is fine and is not mistaken for a cycle
+  const small = { ...FM, a: [shared, shared], b: shared };
+  assertEquals(withFm(small).errors, []);
+});
+
+Deno.test("node walk: cycles terminate, and absurd nesting is refused", () => {
+  const cyc: Record<string, unknown> = { ...FM };
+  cyc.self = cyc;
+  assertEquals(fmCodes(withFm(cyc)), ["frontmatter_not_object"]);
+  const arr: unknown[] = [];
+  arr.push(arr);
+  assertEquals(fmCodes(withFm({ ...FM, arr })), ["frontmatter_not_object"]);
+  let deep: unknown = 0;
+  for (let i = 0; i < 5000; i++) deep = [deep];
+  assertEquals(fmCodes(withFm({ ...FM, deep })), ["frontmatter_too_many_nodes"]);
+});
+
+Deno.test("report with frontmatter is deterministic under shuffling and key order", () => {
+  const entries = [f("w/SKILL.md"), f("w/a.sh"), f("w/b.py"), f("w/c/d.js"), f("w/e.md")];
+  const fmA = { name: "n", description: "d", z: 1, a: 2, m: { q: 1 } };
+  const fmB = { m: { q: 1 }, a: 2, description: "d", z: 1, name: "n" };
+  const base = validateSkillPackage({ entries, frontmatter: fmA, limits: LIM });
+  assertEquals(base.ok, true);
+  assertEquals(base.warnings.length, 6);
+  for (let k = 0; k < 20; k++) {
+    const shuffled = [...entries].sort(() => Math.random() - 0.5);
+    assertEquals(validateSkillPackage({ entries: shuffled, frontmatter: fmA, limits: LIM }), base);
+    assertEquals(validateSkillPackage({ entries: shuffled, frontmatter: fmB, limits: LIM }), base);
+  }
+});
