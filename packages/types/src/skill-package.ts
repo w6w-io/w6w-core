@@ -91,11 +91,13 @@ export const DEFAULT_SKILL_PACKAGE_LIMITS: Readonly<SkillPackageLimits> = Object
 });
 
 /**
- * Canonical (storage-comparable) form of an entry path: NFC, case-folded (lowercase), `/`
- * separators untouched. Percent sequences are NOT decoded.
+ * Canonical (storage-comparable) form of an entry path: `NFC(lower(NFC(x)))`, `/` separators
+ * untouched. The trailing NFC matters: lowercasing is not NFC-closed (e.g. U+01F0 lowercases to
+ * itself but its decomposed twin does not), so a bare `normalize("NFC").toLowerCase()` lets
+ * canonically-equivalent paths keep distinct keys. Percent sequences are NOT decoded.
  */
 export function canonicalSkillPath(path: string): string {
-  return path.normalize("NFC").toLowerCase();
+  return path.normalize("NFC").toLowerCase().normalize("NFC");
 }
 
 export type FrontmatterExtract = { raw: string } | {
@@ -114,7 +116,7 @@ export function extractSkillFrontmatter(
   for (let i = 1; i < lines.length; i++) {
     if (lines[i].replace(/\r$/, "") === "---") {
       const raw = lines.slice(1, i).join("\n").replace(/\r$/, "");
-      if (new TextEncoder().encode(raw).length > maxBytes) {
+      if (!(new TextEncoder().encode(raw).length <= maxBytes)) {
         return { error: "frontmatter_too_large" };
       }
       return { raw };
@@ -123,7 +125,9 @@ export function extractSkillFrontmatter(
   }
   // Unterminated: oversize is the more useful diagnosis when the tail already blows the cap.
   const rest = lines.slice(1).join("\n");
-  if (new TextEncoder().encode(rest).length > maxBytes) return { error: "frontmatter_too_large" };
+  if (!(new TextEncoder().encode(rest).length <= maxBytes)) {
+    return { error: "frontmatter_too_large" };
+  }
   return { error: "frontmatter_unterminated" };
 }
 
@@ -154,10 +158,17 @@ function hasLoneSurrogate(s: string): boolean {
   return false;
 }
 
+/** Linear trim of trailing dots/spaces (a `/[ .]+$/` regex backtracks quadratically). */
+function trimTrailingDotsSpaces(s: string): string {
+  let end = s.length;
+  while (end > 0 && (s.charCodeAt(end - 1) === 0x2e || s.charCodeAt(end - 1) === 0x20)) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
 /** Credential-bearing path segment, matched on the canonical (NFC, case-folded) form. */
 function isCredentialSegment(segment: string): boolean {
   // Trailing dots/spaces are ignored by some filesystems (`.env.`, `.git `), so ignore them too.
-  const c = canonicalSkillPath(segment).replace(/[ .]+$/, "");
+  const c = trimTrailingDotsSpaces(canonicalSkillPath(segment));
   return CREDENTIAL_EXACT.has(c) || c.startsWith(".env.") || CREDENTIAL_KEYS.test(c) ||
     CREDENTIAL_EXT.test(c);
 }
@@ -247,7 +258,10 @@ export function validateSkillPackage(
     if (e.kind === "symlink") err("entry_symlink", "symlinks are not allowed", p);
     else if (e.kind === "hardlink") err("entry_hardlink", "hardlinks are not allowed", p);
     else if (e.kind === "device") err("entry_device", "device entries are not allowed", p);
-    else if (e.kind === "other") err("entry_other", "unsupported entry type", p);
+    else if (e.kind !== "file" && e.kind !== "dir") {
+      // "other" and anything outside the union (a cast "fifo", null, absent): fail closed.
+      err("entry_other", "unsupported entry type", p);
+    }
 
     if (e.kind === "file") {
       files++;
@@ -258,7 +272,7 @@ export function validateSkillPackage(
         err("file_too_large", "invalid file size", p);
       } else {
         total += e.size;
-        if (e.size > limits.maxFileBytes) {
+        if (!(e.size <= limits.maxFileBytes)) {
           err("file_too_large", `file exceeds ${limits.maxFileBytes} bytes`, p);
         }
       }
@@ -299,10 +313,10 @@ export function validateSkillPackage(
     if (rel.length === 0) continue; // the stripped wrapper dir itself
     if (e.kind === "file" && rel.length === 1 && rel[0] === "SKILL.md") skillMd = true;
     if (bad) continue;
-    if (rel.length > limits.maxDepth) {
+    if (!(rel.length <= limits.maxDepth)) {
       err("path_too_deep", `path deeper than ${limits.maxDepth} segments`, p);
     }
-    if (new TextEncoder().encode(rel.join("/")).length > limits.maxPathBytes) {
+    if (!(new TextEncoder().encode(rel.join("/")).length <= limits.maxPathBytes)) {
       err("path_too_long", `path longer than ${limits.maxPathBytes} bytes`, p);
     }
     const key = canonicalSkillPath(rel.join("/"));
@@ -318,8 +332,8 @@ export function validateSkillPackage(
       }
     }
   }
-  if (files > limits.maxFiles) err("too_many_files", `more than ${limits.maxFiles} files`);
-  if (total > limits.maxPackageBytes) {
+  if (!(files <= limits.maxFiles)) err("too_many_files", `more than ${limits.maxFiles} files`);
+  if (!(total <= limits.maxPackageBytes)) {
     err("package_too_large", `package exceeds ${limits.maxPackageBytes} bytes`);
   }
   if (entries.length > 0 && !skillMd) {

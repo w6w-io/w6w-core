@@ -439,3 +439,98 @@ Deno.test("report with frontmatter is deterministic under shuffling and key orde
     assertEquals(validateSkillPackage({ entries: shuffled, frontmatter: fmB, limits: LIM }), base);
   }
 });
+
+// ---- Round 2 (eval F-1..F-4) ----
+
+Deno.test("F-1: a 65,000-dot segment is rejected path_too_long in linear time", () => {
+  const seg = ".".repeat(65_000);
+  const t0 = performance.now();
+  const r = run([f(`d/${seg}`)], { skill: true });
+  const ms = performance.now() - t0;
+  assertEquals(
+    r.errors.filter((e) => e.code === "path_too_long").length,
+    1,
+  );
+  assertEquals(r.ok, false);
+  // original quadratic regex: ~1,440 ms; linear trim: ~1 ms
+  assertEquals(ms < 200, true, `took ${ms}ms`);
+  // alternating ". " is the other backtracking shape
+  const t1 = performance.now();
+  const r2 = run([f(`d/${". ".repeat(32_500)}x`)]);
+  assertEquals(r2.errors.some((e) => e.code === "path_too_long"), true);
+  assertEquals(performance.now() - t1 < 200, true);
+});
+
+Deno.test("F-1: trailing dots/spaces are still ignored for credential matching", () => {
+  for (const p of [".env.", ".git ", ".ENV. . ", "id_rsa..", "x.pem  "]) {
+    const r = run([f(`d/${p}`)]);
+    assertEquals(r.errors.some((e) => e.code === "credential_path"), true, p);
+  }
+  // dots in the middle are not trimmed
+  assertEquals(run([f("d/a.b.c")]).errors, []);
+});
+
+Deno.test("F-2: a kind outside the union fails closed as entry_other", () => {
+  for (const kind of ["fifo", "socket", "FILE", null, undefined]) {
+    const bad = { path: "weird", size: 5e9, kind } as unknown as SkillEntry;
+    const r = run([bad]);
+    const issues = r.errors.filter((e) => e.path === "weird" && e.code === "entry_other");
+    assertEquals(issues.length, 1, String(kind));
+    assertEquals(r.ok, false);
+    assertEquals(r.root, null);
+  }
+});
+
+Deno.test("F-3: NaN / missing limits fail closed", () => {
+  const files = [f("a.md"), f("b.md"), f("c.md"), f("d.md"), f("e.md"), f("g.md")];
+  const code = (limits: unknown, extra: SkillEntry[] = files) =>
+    validateSkillPackage({
+      entries: [f("SKILL.md"), ...extra],
+      frontmatter: FM,
+      limits: limits as SkillPackageLimits,
+    }).errors.map((e) => e.code);
+  // sanity: the same package with real limits is over count
+  assertEquals(code(LIM), ["too_many_files"]);
+  assertEquals(code({ ...LIM, maxFiles: NaN }).includes("too_many_files"), true);
+  assertEquals(code({ ...LIM, maxFiles: NaN }, [f("a.md")]).includes("too_many_files"), true);
+  assertEquals(code({ ...LIM, maxFileBytes: NaN }, [f("a.md")]).includes("file_too_large"), true);
+  assertEquals(
+    code({ ...LIM, maxPackageBytes: NaN }, [f("a.md")]).includes("package_too_large"),
+    true,
+  );
+  assertEquals(code({ ...LIM, maxDepth: NaN }, [f("a/b.md")]).includes("path_too_deep"), true);
+  assertEquals(code({ ...LIM, maxPathBytes: NaN }, [f("a.md")]).includes("path_too_long"), true);
+  // partial limits object: every omitted limit is a failing limit
+  const partial = code({ maxFiles: 5 }, [f("a.md")]);
+  for (const c of ["file_too_large", "package_too_large", "path_too_deep", "path_too_long"]) {
+    assertEquals(partial.includes(c as never), true, c);
+  }
+  assertEquals(extractSkillFrontmatter("---\na: 1\n---", { maxBytes: NaN }), {
+    error: "frontmatter_too_large",
+  });
+  assertEquals(extractSkillFrontmatter("---\na: 1", { maxBytes: NaN }), {
+    error: "frontmatter_too_large",
+  });
+  // an absent maxBytes still means the default
+  assertEquals(extractSkillFrontmatter("---\na: 1\n---", { maxBytes: undefined }), { raw: "a: 1" });
+});
+
+Deno.test("F-4: canonicalSkillPath is NFC(lower(NFC(x))) and closes the 7 equivalent pairs", () => {
+  const pairs: [string, string][] = [
+    ["ǰ", "ǰ"],
+    ["ẖ", "ẖ"],
+    ["ẗ", "ẗ"],
+    ["ẘ", "ẘ"],
+    ["ẙ", "ẙ"],
+    ["ΐ", "ΐ"],
+    ["ΰ", "ΰ"],
+  ];
+  for (const [a, b] of pairs) {
+    assertEquals(canonicalSkillPath(a), canonicalSkillPath(b), JSON.stringify([a, b]));
+    assertEquals(canonicalSkillPath(a), canonicalSkillPath(a).normalize("NFC"));
+    // upper-case spellings of the decomposed twin collide too
+    assertEquals(canonicalSkillPath(`D/${a}.md`), canonicalSkillPath(`d/${b.toUpperCase()}.md`));
+    const r = run([f(`${a}.md`), f(`${b}.md`)]);
+    assertEquals(r.errors.filter((e) => e.code === "path_duplicate").length, 2, a);
+  }
+});
