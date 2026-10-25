@@ -192,3 +192,31 @@ and a `Step.ports.x` wins over all. Concretely `describe()` serves each action w
 `ports = { ...app.ports, ...action.ports }` when either is declared (absent otherwise), so
 consumers of an app's actions see the folded value without resolving the app themselves. This
 supersedes, for apps, the 2026-07-23 action.md position that cardinality belongs to the `Step` alone.
+
+## Amendment — 2026-10-24: `modelProvider` designation
+
+> This section is **additive**; no existing line is changed. It extends the manifest `Shape`
+> with one optional field.
+
+An App MAY declare an optional top-level `modelProvider?: { modelTypes: ModelType[]; modelFamilies?: ModelFamily[] }`.
+Its presence **designates** the app as a model provider; its absence means "not designated".
+Hosts and loaders MUST leave the key absent for an undesignated app (never `null` or `{}`).
+
+- `modelTypes` — required, non-empty, no duplicates, each one of: `llm`, `embedding`, `reranking`,
+  `image-generation`, `video-generation`, `speech-to-text`, `text-to-speech`, `audio-generation`,
+  `moderation`.
+- `modelFamilies` — optional, no duplicates, each one of: `transformer`, `diffusion`,
+  `flow-matching`, `other`.
+- No other keys are allowed inside `modelProvider`, and it is not localizable: it MUST NOT appear
+  inside `localizations.<locale>`.
+
+**Designation ≠ runtime support.** The field states what the publisher declares the app serves. It
+does not prove that any action implements those model types, and a host MUST NOT treat it as a
+capability guarantee.
+
+**No inference from categories.** Designation is explicit. An app in the `ai` category (see
+`categories` in the field reference) is not thereby a model provider, and a designated app need not
+carry any particular category. Hosts MUST NOT derive `modelProvider` from `categories`, nor
+categories from `modelProvider`.
+
+Like every manifest field, `modelProvider` is part of the artifact digest.

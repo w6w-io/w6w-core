@@ -103,6 +103,27 @@
       "properties": {
         "allow": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
+    },
+    "modelProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelTypes"],
+      "properties": {
+        "modelTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["llm", "embedding", "reranking", "image-generation", "video-generation", "speech-to-text", "text-to-speech", "audio-generation", "moderation"]
+          }
+        },
+        "modelFamilies": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["transformer", "diffusion", "flow-matching", "other"] }
+        }
+      }
     }
   }
 }

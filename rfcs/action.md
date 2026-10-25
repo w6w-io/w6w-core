@@ -231,6 +231,8 @@ The loop terminates because the DAG is acyclic and each pass either resolves a p
 
 ### When resolution runs
 
+> Amended 2026-10-24: an Action may also declare a form-level `resolveFields` hook, and the "Editor — user edits a value" and "Invocation — programmatic call" rows below are restated in [the amendment at the end of this RFC](#amendment--2026-10-24-the-resolvefields-hook-and-when-resolution-runs).
+
 | Trigger | Behavior |
 |---|---|
 | Editor — user opens the form | Run from scratch with defaults as the only resolved set. |
@@ -423,3 +425,23 @@ remains the most specific layer; the superseded "omitted ⇒ `{ in: 1, out: 1 }`
 `{ in: 1, out: "many" }`. `describe()` serves each action with `ports = { ...app.ports, ...action.ports }`
 when either is declared (absent otherwise). Ports are an authoring/import-time concern; the runtime
 never reads them.
+
+## Amendment — 2026-10-24: the `resolveFields` hook and when resolution runs
+
+An Action may carry one optional form-level hook, `resolveFields`, that supplies `Option[]` for several dynamic params in a single call. A param opts in with `options: { source: "resolveFields" }` (see the [Param RFC](./param.md) amendment of the same date); the per-field `./hooks/x.ts` path form in *Param resolution* above is unchanged. The hook's contract and sandbox rules are in the [Hook runtime RFC](./hook-runtime.md#hook-registry) (`action.resolveFields`). `describe` marks an Action whose definition has the function with `resolveFields: true`; authors never write that flag by hand.
+
+The editor calls the hook as follows:
+
+- **`init`** — once when the form opens, asking for every `source: "resolveFields"` field.
+- **`change`** — once when a key named in some dynamic field's `refreshOn` is **committed** (a pick for a select/combobox, blur for a text input, never per keystroke). The call asks only for the dependants of the changed key. A newer request aborts an older in-flight one.
+
+Invocation does **not** re-run `resolveFields` to validate a supplied value, and replay is unchanged. A `resolveFields` call is not an Invocation, is not metered, and does not count toward usage; it still passes the normal auth guard and per-subject rate limit.
+
+This table restates *When resolution runs* and replaces it where they differ:
+
+| Trigger | Behavior |
+|---|---|
+| Editor — user opens the form | Run from scratch with defaults as the only resolved set. One `resolveFields` `init` call fetches options for every `source: "resolveFields"` field. |
+| Editor — user edits a value | Invalidate downstream cached options; re-run from the changed node. On commit of a `refreshOn` key, one `resolveFields` `change` call refreshes only that key's dependants. A downstream value is never silently dropped: it is kept and flagged when absent from the returned options, except that a field without `allowCustom` has its stale value cleared on a `refreshOn` change (Param RFC amendment). |
+| Invocation — programmatic call | Run over the supplied `params`. Per-field `options.source` hooks may be re-run to validate that supplied values are valid options under the current dependency state; `resolveFields` is **not** re-run. Missing `dependsOn` references reject the Invocation. |
+| Replay — re-running a recorded Run | Skip resolution. Replay uses the previously-recorded resolved values verbatim so executions are deterministic. |

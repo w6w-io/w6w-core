@@ -62,7 +62,7 @@ export interface DescribedApp {
 
 /** Addresses a callable inside the app object exported by the entry module. */
 export type Selector =
-  | { kind: "action"; key: string }
+  | { kind: "action"; key: string; hook?: "resolveFields" }
   | { kind: "auth"; key: string; hook: AuthHookKind }
   | { kind: "trigger"; key: string; hook: TriggerHookKind }
   | { kind: "health"; key: string };

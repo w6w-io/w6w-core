@@ -6,7 +6,7 @@
 import { assert, assertEquals, assertNotEquals } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
 import { describeApp, describeExec } from "@w6w/runtime";
-import { parseAppArtifactManifest, verifySha256 } from "@w6w/types";
+import { type ModelProviderMeta, parseAppArtifactManifest, verifySha256 } from "@w6w/types";
 import { buildApp, computeSourceDigest } from "../mod.ts";
 
 const APPS = fromFileUrl(new URL("../../../../apps/apps/", import.meta.url));
@@ -129,4 +129,78 @@ Deno.test({
       assertEquals(noMap.buildInfo.sourcemap, false);
       assertEquals("map" in noMap, false);
     }),
+});
+
+// --- modelProvider round-trip (generated app; no apps checkout needed) ---
+
+const MODEL_PROVIDER = {
+  modelTypes: ["llm", "image-generation"],
+  modelFamilies: ["diffusion"],
+} as const satisfies ModelProviderMeta;
+
+async function writeDemoApp(dir: string, modelProvider?: unknown): Promise<void> {
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "package.json"),
+    JSON.stringify({
+      name: "@w6w-fixtures/demo",
+      version: "1.0.0",
+      description: "fixture",
+      license: "MIT",
+      author: { name: "w6w" },
+      categories: ["developer-tools"],
+      w6w: {
+        id: "io.test.demo",
+        displayName: "Demo",
+        appearance: { icon: { url: "https://cdn.example.invalid/i.png" } },
+        entry: "./index.ts",
+        ...(modelProvider === undefined ? {} : { modelProvider }),
+      },
+    }),
+  );
+  await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+  await Deno.writeTextFile(join(dir, "index.ts"), "export default { actions: [] };\n");
+}
+
+Deno.test("modelProvider: build manifest.json -> artifact parse keeps it deep-equal; absent stays absent", async () => {
+  await inTmp(async (tmp) => {
+    const withDir = join(tmp, "with");
+    const withoutDir = join(tmp, "without");
+    await writeDemoApp(withDir, MODEL_PROVIDER);
+    await writeDemoApp(withoutDir);
+
+    const a = await buildApp(withDir, join(tmp, "out-a"));
+    const aText = await Deno.readTextFile(join(a.outDir, "manifest.json"));
+    const aRaw = JSON.parse(aText);
+    assertEquals(aRaw.manifest.modelProvider, MODEL_PROVIDER);
+    const aParsed = parseAppArtifactManifest(aRaw);
+    assert(aParsed.ok, aParsed.ok ? "" : aParsed.errors.join("; "));
+    assertEquals(aParsed.value.manifest.modelProvider, MODEL_PROVIDER);
+
+    const b = await buildApp(withoutDir, join(tmp, "out-b"));
+    const bText = await Deno.readTextFile(join(b.outDir, "manifest.json"));
+    const bRaw = JSON.parse(bText);
+    assertEquals("modelProvider" in bRaw.manifest, false);
+    assert(!bText.includes("modelProvider"), "absent key leaked as text");
+    const bParsed = parseAppArtifactManifest(bRaw);
+    assert(bParsed.ok, bParsed.ok ? "" : bParsed.errors.join("; "));
+    assertEquals("modelProvider" in bParsed.value.manifest, false);
+
+    // The manifest is inside the artifact digest: adding the field changes it.
+    assertNotEquals(a.digest, b.digest);
+  });
+});
+
+Deno.test("modelProvider: removing it restores the original build digest", async () => {
+  await inTmp(async (tmp) => {
+    const dir = join(tmp, "app");
+    await writeDemoApp(dir);
+    const before = await buildApp(dir, join(tmp, "o1"));
+    await writeDemoApp(dir, MODEL_PROVIDER);
+    const during = await buildApp(dir, join(tmp, "o2"));
+    await writeDemoApp(dir);
+    const after = await buildApp(dir, join(tmp, "o3"));
+    assertNotEquals(during.digest, before.digest);
+    assertEquals(after.digest, before.digest);
+  });
 });

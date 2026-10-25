@@ -208,3 +208,48 @@ Deno.test("digest: a webhook-authored trigger with a poll hook digests as type p
     await Deno.remove(f.tmp, { recursive: true });
   }
 });
+
+const FORM_PARAM = `{ key: "f", title: "F", type: "select", options: { source: "resolveFields" } }`;
+
+Deno.test("refuse: fields_hook_invalid — a param opts in to resolveFields but the action has no function", () =>
+  refuse("fields_hook_invalid", {
+    "index.ts": `export default { actions: [{ key: "a", title: "A", params: [${FORM_PARAM}],
+      execute() { return {}; } }] };\n`,
+  }));
+
+Deno.test("refuse: fields_hook_invalid — refreshOn names a param that is not in the form", () =>
+  refuse("fields_hook_invalid", {
+    "index.ts": `export default { actions: [{ key: "a", title: "A",
+      params: [{ key: "f", title: "F", type: "select",
+        options: { source: "resolveFields", refreshOn: ["missing"] } }],
+      execute() { return {}; }, resolveFields() { return { fields: {} }; } }] };\n`,
+  }));
+
+Deno.test("fields_hook_invalid: a valid hook builds, the manifest action carries resolveFields: true", async () => {
+  const f = await fixture({
+    "index.ts": `export default { actions: [{ key: "a", title: "A", params: [${FORM_PARAM}],
+      execute() { return {}; }, resolveFields() { return { fields: {} }; } }] };\n`,
+  });
+  try {
+    const r = await buildApp(f.app, f.out);
+    assertEquals("warnings" in r, false);
+    const art = JSON.parse(await Deno.readTextFile(join(r.outDir, "manifest.json")));
+    assertEquals(art.actions[0].resolveFields, true);
+  } finally {
+    await Deno.remove(f.tmp, { recursive: true });
+  }
+});
+
+Deno.test("fields_hook_invalid: a hook no param opts in to builds with a warning", async () => {
+  const f = await fixture({
+    "index.ts": `export default { actions: [{ key: "a", title: "A",
+      execute() { return {}; }, resolveFields() { return { fields: {} }; } }] };\n`,
+  });
+  try {
+    const r = await buildApp(f.app, f.out);
+    assertEquals(r.warnings?.length, 1);
+    assert(r.warnings![0].includes("actions[a]"), r.warnings![0]);
+  } finally {
+    await Deno.remove(f.tmp, { recursive: true });
+  }
+});

@@ -1,0 +1,29 @@
+{
+  "manifestVersion": "1",
+  "id": "com.acme.model",
+  "name": "model",
+  "displayName": "Acme Model",
+  "version": "1.0.0",
+  "description": "A model provider.",
+  "categories": [
+    "ai"
+  ],
+  "appearance": {
+    "icon": {
+      "svg": "./icon.svg"
+    }
+  },
+  "author": {
+    "name": "Acme"
+  },
+  "license": "MIT",
+  "localizations": {
+    "fr": {
+      "modelProvider": {
+        "modelTypes": [
+          "llm"
+        ]
+      }
+    }
+  }
+}

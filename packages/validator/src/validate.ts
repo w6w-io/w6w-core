@@ -1,3 +1,5 @@
+import { isFormResolvedOptions } from "@w6w/types";
+
 /**
  * Spec-rule validation over the logical model (`@w6w/types`). Distinct from the
  * loader's structural parse: this enforces the RFC rules (id reverse-DNS, semver
@@ -16,6 +18,8 @@ export interface ValidationError {
 export interface ValidationResult {
   ok: boolean;
   errors: ValidationError[];
+  /** Non-fatal findings. The key is absent when there are none. */
+  warnings?: ValidationError[];
 }
 
 const PARAM_TYPES = [
@@ -106,6 +110,7 @@ const RE_SEMVER = /^\d+\.\d+\.\d+(?:[-+].*)?$/;
 
 class Ctx {
   readonly errors: ValidationError[] = [];
+  readonly warnings: ValidationError[] = [];
 
   err(path: string, message: string): void {
     this.errors.push({ path, message });
@@ -131,7 +136,9 @@ class Ctx {
   }
 
   result(): ValidationResult {
-    return { ok: this.errors.length === 0, errors: this.errors };
+    const result: ValidationResult = { ok: this.errors.length === 0, errors: this.errors };
+    if (this.warnings.length > 0) result.warnings = this.warnings;
+    return result;
   }
 }
 
@@ -190,6 +197,86 @@ function checkParams(ctx: Ctx, params: unknown, path: string): void {
   params.forEach((p, i) => checkParam(ctx, p, `${path}[${i}]`));
 }
 
+/**
+ * Check the `resolveFields` wiring of one Action: the hook flag and the params that opt
+ * into it (`options.source: "resolveFields"`) must agree. Pure, and tolerant of malformed
+ * input (the structural rules are `validateAction`'s job).
+ *
+ * Errors: (i) a param (any depth) opts in but the action's `resolveFields` is not `true`;
+ * (ii) a `refreshOn` entry names no other param in the field's form scope;
+ * (iii) a `refreshOn` entry is the field's own key.
+ * Warning: (iv) `resolveFields` is `true` but no param opts in.
+ *
+ * Form scope mirrors `resolveParams` in the runtime: one params array, with `section`
+ * children flattened into it recursively and `group` children kept as their own scope.
+ */
+export function checkFormResolvedFields(
+  action: unknown,
+  path = "action",
+): { errors: ValidationError[]; warnings: ValidationError[] } {
+  const errors: ValidationError[] = [];
+  const warnings: ValidationError[] = [];
+  if (!isObject(action)) return { errors, warnings };
+  const hook = action.resolveFields === true;
+  let optedIn = false;
+
+  const flatten = (
+    params: unknown,
+    at: string,
+    out: { p: Record<string, unknown>; path: string }[],
+  ) => {
+    if (!Array.isArray(params)) return out;
+    params.forEach((p, i) => {
+      if (!isObject(p)) return;
+      const here = `${at}[${i}]`;
+      if (p.type === "section") flatten(p.children, `${here}.children`, out);
+      else out.push({ p, path: here });
+    });
+    return out;
+  };
+
+  const walk = (params: unknown, at: string) => {
+    const scope = flatten(params, at, []);
+    const keys = new Set(scope.map((e) => e.p.key));
+    for (const { p, path: here } of scope) {
+      const options = p.options as Parameters<typeof isFormResolvedOptions>[0];
+      if (isFormResolvedOptions(options)) {
+        optedIn = true;
+        if (!hook) {
+          errors.push({
+            path: `${here}.options.source`,
+            message: 'is "resolveFields" but the action does not declare `resolveFields: true`',
+          });
+        }
+      }
+      const refreshOn = isObject(options) ? options.refreshOn : undefined;
+      if (Array.isArray(refreshOn)) {
+        refreshOn.forEach((k, i) => {
+          const at2 = `${here}.options.refreshOn[${i}]`;
+          if (k === p.key) {
+            errors.push({ path: at2, message: "must not name the field itself" });
+          } else if (typeof k !== "string" || !keys.has(k)) {
+            errors.push({
+              path: at2,
+              message: `names no other param in the same form scope: ${JSON.stringify(k)}`,
+            });
+          }
+        });
+      }
+      if (p.type === "group") walk(p.children, `${here}.children`);
+    }
+  };
+  walk(action.params, `${path}.params`);
+
+  if (hook && !optedIn) {
+    warnings.push({
+      path: `${path}.resolveFields`,
+      message: 'is true but no param has options.source "resolveFields"',
+    });
+  }
+  return { errors, warnings };
+}
+
 /** Validate an Action's config (the serializable part — no `execute`). */
 export function validateAction(action: unknown, path = "action"): ValidationResult {
   const ctx = new Ctx();
@@ -211,6 +298,9 @@ function validateActionInto(ctx: Ctx, action: unknown, path: string): void {
   ctx.enum(action.type, ACTION_TYPES, `${path}.type`);
   ctx.reqString(action.title, `${path}.title`);
   checkParams(ctx, action.params, `${path}.params`);
+  const resolved = checkFormResolvedFields(action, path);
+  for (const e of resolved.errors) ctx.err(e.path, e.message);
+  ctx.warnings.push(...resolved.warnings);
 
   checkPorts(ctx, action.ports, `${path}.ports`);
 
@@ -475,6 +565,49 @@ function checkUrl(ctx: Ctx, v: unknown, path: string): void {
 }
 
 /** Validate an App manifest (identity + presentation). */
+const MODEL_TYPES = [
+  "llm",
+  "embedding",
+  "reranking",
+  "image-generation",
+  "video-generation",
+  "speech-to-text",
+  "text-to-speech",
+  "audio-generation",
+  "moderation",
+];
+const MODEL_FAMILIES = ["transformer", "diffusion", "flow-matching", "other"];
+
+function checkModelProvider(ctx: Ctx, v: unknown, path: string): void {
+  if (!isObject(v)) {
+    ctx.err(path, "must be an object");
+    return;
+  }
+  for (const k of Object.keys(v)) {
+    if (k !== "modelTypes" && k !== "modelFamilies") ctx.err(`${path}.${k}`, "is not a known key");
+  }
+  const list = (key: string, allowed: string[], required: boolean) => {
+    const val = v[key];
+    const p = `${path}.${key}`;
+    if (val === undefined) {
+      if (required) ctx.err(p, "is required");
+      return;
+    }
+    if (!Array.isArray(val) || val.length < 1) {
+      ctx.err(p, "must be a non-empty array");
+      return;
+    }
+    const seen = new Set<unknown>();
+    val.forEach((x, i) => {
+      ctx.enum(x, allowed, `${p}[${i}]`);
+      if (seen.has(x)) ctx.err(`${p}[${i}]`, "must not be a duplicate");
+      seen.add(x);
+    });
+  };
+  list("modelTypes", MODEL_TYPES, true);
+  list("modelFamilies", MODEL_FAMILIES, false);
+}
+
 export function validateApp(manifest: unknown): ValidationResult {
   const ctx = new Ctx();
   if (!isObject(manifest)) {
@@ -524,6 +657,20 @@ export function validateApp(manifest: unknown): ValidationResult {
       allow !== undefined && (!Array.isArray(allow) || allow.some((h) => typeof h !== "string"))
     ) {
       ctx.err("network.allow", "must be an array of hostname strings");
+    }
+  }
+
+  if (manifest.modelProvider !== undefined) {
+    checkModelProvider(ctx, manifest.modelProvider, "modelProvider");
+  }
+  if (isObject(manifest.localizations)) {
+    for (const [locale, entry] of Object.entries(manifest.localizations)) {
+      if (isObject(entry) && "modelProvider" in entry) {
+        ctx.err(
+          `localizations.${locale}.modelProvider`,
+          "is not localizable; declare it at the top level",
+        );
+      }
     }
   }
 

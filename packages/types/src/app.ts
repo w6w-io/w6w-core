@@ -8,6 +8,7 @@ import type { AuthDefinition } from "./auth.ts";
 import type { TriggerDefinition } from "./trigger.ts";
 import type { HealthCheckDefinition } from "./health.ts";
 import type { InterfaceConformance } from "./interface.ts";
+import type { ModelProviderMeta } from "./model-provider.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -95,6 +96,8 @@ export interface AppManifest {
     /** This app's actions expect a host-mediated `ctx.socket`. */
     socket?: boolean;
   };
+  /** Optional. Designates this App as a model provider. Absent = not designated. */
+  modelProvider?: ModelProviderMeta;
   /** Optional. Default port counts for every Action of this App. */
   ports?: Ports;
 }

@@ -3,7 +3,7 @@
  * See rfcs/action.md.
  */
 import type { Param } from "./param.ts";
-import type { ActionExecuteHook } from "./hooks.ts";
+import type { ActionExecuteHook, ResolveFieldsHook } from "./hooks.ts";
 import type { ActionHealthTag } from "./health.ts";
 
 /**
@@ -71,6 +71,11 @@ export interface Action {
   healthCheck?: ActionHealthTag;
   /** Optional. Port counts for this Action; overrides the App's `ports` field-wise. */
   ports?: Ports;
+  /**
+   * Set by describe when the definition has a `resolveFields` function; never
+   * authored by hand.
+   */
+  resolveFields?: true;
 }
 
 /**
@@ -86,8 +91,11 @@ export interface Action {
  * export default sendMessage;
  * ```
  */
-export interface ActionDefinition<P = Record<string, unknown>, O = unknown> extends Action {
+export interface ActionDefinition<P = Record<string, unknown>, O = unknown>
+  extends Omit<Action, "resolveFields"> {
   execute: ActionExecuteHook<P, O>;
+  /** Form-level options hook for params with `options: { source: "resolveFields" }`. */
+  resolveFields?: ResolveFieldsHook;
 }
 
 export function isDynamicOutput(o: Output | undefined): o is DynamicOutput {
