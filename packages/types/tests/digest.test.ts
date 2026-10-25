@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
+import { assertEquals, assertNotEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
 import type { AppManifest } from "../mod.ts";
 import {
   canonicalJson,
@@ -62,4 +62,24 @@ Deno.test("sha256HexBytes: 'abc' vector; sha256Hex(text) delegates", async () =>
   const abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
   assertEquals(await sha256HexBytes(new TextEncoder().encode("abc")), abc);
   assertEquals(await sha256Hex("abc"), abc);
+});
+
+Deno.test("modelProvider is inside the digest: adding changes it, removing restores it", async () => {
+  const withMp = {
+    ...base,
+    manifest: {
+      ...manifest,
+      modelProvider: { modelTypes: ["llm"], modelFamilies: ["transformer"] },
+    } as AppManifest,
+  };
+  const changed = await digestDescription(withMp);
+  assertNotEquals(changed, V1);
+  const { modelProvider: _drop, ...rest } = withMp.manifest;
+  assertEquals(await digestDescription({ ...base, manifest: rest as AppManifest }), V1);
+  // the value matters, not just the key's presence
+  const other = {
+    ...base,
+    manifest: { ...manifest, modelProvider: { modelTypes: ["embedding"] } } as AppManifest,
+  };
+  assertNotEquals(await digestDescription(other), changed);
 });
