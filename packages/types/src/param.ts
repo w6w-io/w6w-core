@@ -25,6 +25,12 @@ export type ParamType =
 export interface ParamConfig {
   /** Render as a multi-line textarea. Implied by `type: "text"`. */
   multiline?: boolean;
+  /**
+   * A field with `options` (static or dynamic) renders as a combobox that also
+   * accepts free text, instead of a forced select. Without it, options constrain
+   * the value.
+   */
+  allowCustom?: boolean;
 }
 
 /**
@@ -50,8 +56,17 @@ export interface Option {
 
 /** Choices populated dynamically by a hook. */
 export interface DynamicOptions {
-  /** Path to the hook that returns `Option[]`. Receives `{ form, dependsOn }`. */
+  /**
+   * Either the reserved string `"resolveFields"` (options come from the
+   * Action's form-level `resolveFields` hook) or a `./`-relative path to a
+   * per-field hook returning `Option[]` (receives `{ form, dependsOn }`).
+   */
   source: string;
+  /**
+   * Sibling param keys whose commit triggers a refetch. Never disables the
+   * field.
+   */
+  refreshOn?: string[];
   searchable?: boolean;
   cache?: "session" | "none";
 }
@@ -156,4 +171,11 @@ export interface ParamSection extends Param {
 /** Narrow a `Param` to a `section` (layout-only container). */
 export function isSection(p: Param): p is ParamSection {
   return p.type === "section";
+}
+
+/** True iff `o` is a non-array object whose `source` is exactly `"resolveFields"`. */
+export function isFormResolvedOptions(
+  o: Options | undefined,
+): o is DynamicOptions & { source: "resolveFields" } {
+  return !!o && !Array.isArray(o) && (o as DynamicOptions).source === "resolveFields";
 }

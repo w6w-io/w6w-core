@@ -9,6 +9,7 @@ import {
   manifestFromPackageJson,
   resolveAppEntry,
 } from "@w6w/runtime";
+import { checkFormResolvedFields } from "@w6w/validator";
 import {
   type AppArtifactManifest,
   digestDescriptionVersioned,
@@ -48,6 +49,8 @@ export interface BuildResult {
   sourceDigest: string;
   /** `<outRoot>/<id>/<version>`, absolute. */
   outDir: string;
+  /** Non-fatal build findings. The key is absent when there are none. */
+  warnings?: string[];
 }
 
 const ID_RE = /^[a-z0-9]+(\.[a-z0-9-]+)+$/;
@@ -126,6 +129,7 @@ async function bundle(
  * - bundle: `bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`
  * - describe: `worker_options_required` (run with `--unstable-worker-options`), `describe_failed`,
  *   `load_failed`, `artifact_invalid`
+ * - form fields: `fields_hook_invalid` (an action's `resolveFields` wiring is inconsistent)
  * - assets: `asset_path`, `asset_extension`, `asset_missing`, `asset_symlink`, `asset_not_file`,
  *   `asset_too_large`, `asset_total_too_large`
  * - source digest: `source_symlink`, `source_special_file`
@@ -219,6 +223,19 @@ export async function buildApp(
       return fail("describe_failed", `describing the bundle failed: ${msg}`);
     }
 
+    // ---- form-resolved fields: the wiring rule only, not full validateAction ----
+    const warnings: string[] = [];
+    const wiringErrors: string[] = [];
+    for (const a of described.actions) {
+      const at = `actions[${(a as { key?: unknown }).key}]`;
+      const found = checkFormResolvedFields(a, at);
+      for (const e of found.errors) wiringErrors.push(`${e.path}: ${e.message}`);
+      for (const w of found.warnings) warnings.push(`${w.path}: ${w.message}`);
+    }
+    if (wiringErrors.length > 0) {
+      return fail("fields_hook_invalid", wiringErrors.join("; "));
+    }
+
     // ---- assets ----
     const inlined = await inlineAssets(manifest, realAppDir, appDir, {
       maxAssetBytes: opts.maxAssetBytes ?? MAX_ASSET_BYTES,
@@ -290,7 +307,17 @@ export async function buildApp(
     } catch (e) {
       return fail("write_failed", `cannot write ${outDir}: ${(e as Error).message}`);
     }
-    return { id, version, execSha256, digest, digestVersion, sourceDigest, outDir };
+    const result: BuildResult = {
+      id,
+      version,
+      execSha256,
+      digest,
+      digestVersion,
+      sourceDigest,
+      outDir,
+    };
+    if (warnings.length > 0) result.warnings = warnings;
+    return result;
   } finally {
     await Deno.remove(tmp, { recursive: true }).catch(() => {});
   }

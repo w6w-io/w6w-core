@@ -22,6 +22,8 @@ import type {
   Invocation,
   RedactedConnection,
   RequestOverrides,
+  ResolveFieldsInput,
+  ResolveFieldsOutput,
   SignableRequest,
   Trigger,
   TriggerHookKind,
@@ -35,6 +37,7 @@ import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
 import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
 import { W6WError } from "./errors.ts";
+import { RESOLVE_FIELDS_TIMEOUT_MS, sanitizeResolveFieldsOutput } from "./resolve-fields.ts";
 import { openConnectionSocket, type SocketSession } from "./socket.ts";
 
 export type { EgressInfo };
@@ -801,4 +804,79 @@ export async function invokeTriggerHook(
   } catch (err) {
     unwrap(err);
   }
+}
+
+// ── resolveFields hook invocation ──────────────────────────────────────────
+
+/**
+ * Run an Action's `resolveFields` hook (the editor-time option source) in the
+ * sandbox, under the same signing and egress posture as `invoke`: the hook sees
+ * a redacted connection, and its `ctx.fetch` is signed by the app's `sign` hook
+ * and held to `network.allow`. It is a read for an editor, so it is handed no
+ * socket, file capability or request overrides.
+ *
+ * Capped at `RESOLVE_FIELDS_TIMEOUT_MS`: a caller may lower `opts.timeoutMs`
+ * but never raise it, and the clamp also bounds host egress. Every failure of
+ * the hook call itself is re-thrown in phase `resolution` (code kept), and the
+ * return is sanitised as untrusted on THIS side of the boundary.
+ */
+export async function invokeResolveFields(
+  app: LoadedApp,
+  actionKey: string,
+  input: ResolveFieldsInput,
+  opts: InvokeOptions = {},
+): Promise<ResolveFieldsOutput> {
+  const loaded = app.actions.get(actionKey);
+  if (!loaded) {
+    throw new W6WError("unknown_action", "resolution", `Unknown action "${actionKey}".`);
+  }
+  if (loaded.definition.resolveFields !== true) {
+    throw new W6WError(
+      "hook_not_declared",
+      "resolution",
+      `Action "${actionKey}" does not declare resolveFields.`,
+    );
+  }
+
+  const auth = opts.connection ? authFor(app, opts.connection) : undefined;
+  let credential: unknown;
+  let redacted: RedactedConnection | undefined;
+  if (opts.connection) {
+    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  } else if (app.auths.length > 0) {
+    throw new W6WError(
+      "connection_required",
+      "auth",
+      `Action "${actionKey}" requires a connection — the app declares auth.`,
+    );
+  }
+
+  const timeoutMs = Math.min(
+    opts.timeoutMs ?? RESOLVE_FIELDS_TIMEOUT_MS,
+    RESOLVE_FIELDS_TIMEOUT_MS,
+  );
+  const { onFetch, unwrap } = withDeniedUnwrap(
+    signingFetch(app, auth, credential, { ...opts, timeoutMs }),
+  );
+
+  let raw: unknown;
+  try {
+    raw = await runHook({
+      ...hookSource(app),
+      selector: { kind: "action", key: actionKey, hook: "resolveFields" },
+      input,
+      connection: redacted,
+      timeoutMs,
+      onLog: opts.onLog,
+      onFetch,
+    });
+  } catch (err) {
+    try {
+      unwrap(err);
+    } catch (e) {
+      if (e instanceof W6WError) throw new W6WError(e.code, "resolution", e.message, e.details);
+      throw e;
+    }
+  }
+  return sanitizeResolveFieldsOutput(raw, input.fields);
 }

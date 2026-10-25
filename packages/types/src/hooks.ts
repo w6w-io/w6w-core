@@ -93,6 +93,31 @@ export type OptionsSourceHook = (
   ctx: HookContext,
 ) => Option[] | Promise<Option[]>;
 
+/** Input to the Action-level `resolveFields` hook. */
+export interface ResolveFieldsInput {
+  reason: "init" | "change";
+  /** Literal values only; expressions, secrets and var bindings are omitted. */
+  form: Record<string, unknown>;
+  /** reason "change": the form before the commit. */
+  previous?: Record<string, unknown>;
+  /** reason "change": the keys just committed. */
+  changed?: string[];
+  /** The dynamic keys the host wants options for. */
+  fields: string[];
+  /** Keys whose value is an expression / secret / var. */
+  unresolved: string[];
+}
+
+export interface ResolveFieldsOutput {
+  fields: Record<string, { options?: Option[]; error?: string }>;
+}
+
+/** Action `resolveFields` — one hook per form populating `source: "resolveFields"` params. */
+export type ResolveFieldsHook = (
+  input: ResolveFieldsInput,
+  ctx: HookContext,
+) => ResolveFieldsOutput | Promise<ResolveFieldsOutput>;
+
 /** Param `validation.hook` — custom validation beyond declarative rules. */
 export type ValidationHook = (
   input: { value: unknown; form: Record<string, unknown> },

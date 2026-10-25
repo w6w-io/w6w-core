@@ -1,0 +1,20 @@
+{
+  "name": "@w6w-fixtures/resolve-fields",
+  "version": "1.0.0",
+  "description": "Fixture for the Action resolveFields hook: one hook, many behaviours.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.resolve-fields",
+    "displayName": "Resolve Fields",
+    "categories": ["developer-tools"],
+    "appearance": {
+      "icon": {
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\"/>"
+      }
+    },
+    "network": { "allow": ["127.0.0.1"] },
+    "entry": "./index.ts"
+  }
+}

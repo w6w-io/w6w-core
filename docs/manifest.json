@@ -155,6 +155,13 @@
       "order": 0
     },
     {
+      "path": "dynamic-fields.md",
+      "slug": "build-a-w6w-app/dynamic-fields",
+      "section": "build-apps",
+      "title": "Dynamic fields",
+      "order": 10
+    },
+    {
       "path": "../README.md",
       "slug": "core",
       "section": "reference-packages",
