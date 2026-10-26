@@ -185,7 +185,14 @@ export type CompletionErrorCode =
   | "model_not_found"
   | "model_provider_failed"
   | "model_budget_exceeded"
-  | "model_route_not_found";
+  | "model_route_not_found"
+  | "model_blocked"
+  | "model_route_broken"
+  | "model_connection_not_found"
+  | "model_credential_invalid"
+  | "model_egress_denied"
+  | "model_provider_unsupported"
+  | "app_not_entitled";
 
 /** The response envelope. `output` is the baseline output when `dialect` is `bridge`. */
 export interface ModelCompletionEnvelope {
