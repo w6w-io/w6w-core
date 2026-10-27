@@ -494,7 +494,7 @@ Deno.test("AC5: signed test runs with credential:null and a signed fetch; nothin
   const app = await loadApp(SERVICE_ACCOUNT);
   const auth = authFor(app, SA_CONNECTION);
   await withFetchStub(async (calls) => {
-    const out = await runAuthHook<{ ok: boolean; message: string }>(
+    const out = await runAuthHook<{ ok: boolean; message: string; keys: string[] }>(
       app,
       auth,
       "test",
@@ -503,6 +503,7 @@ Deno.test("AC5: signed test runs with credential:null and a signed fetch; nothin
     );
     assertEquals(out.message, '{"credential":null}');
     assertEquals(out.ok, true);
+    assertEquals(out.keys, ["credential"]);
     assertEquals(calls.length, 1);
     assertEquals(calls[0].url, "https://probe.w6w.test/whoami");
     assertEquals(calls[0].headers.get("authorization"), `Bearer ${TOKEN.accessToken}`);
@@ -523,10 +524,17 @@ Deno.test("R-14: signed test forwards exactly binding and credentialDisplay when
     assertEquals(JSON.parse(out.message), { credential: null, binding, credentialDisplay });
 
     // Only one of the two: the absent key is omitted, not undefined-valued.
-    const onlyDisplay = await runAuthHook<{ message: string }>(app, auth, "test", "ignored", {
-      signing: { authorization: DERIVED, credentialDisplay },
-    });
+    const onlyDisplay = await runAuthHook<{ message: string; keys: string[] }>(
+      app,
+      auth,
+      "test",
+      "ignored",
+      {
+        signing: { authorization: DERIVED, credentialDisplay },
+      },
+    );
     assertEquals(onlyDisplay.message, JSON.stringify({ credential: null, credentialDisplay }));
+    assertEquals(onlyDisplay.keys, ["credential", "credentialDisplay"]);
   });
 });
 

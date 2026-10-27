@@ -26,7 +26,8 @@ const serviceAccount: AuthDefinition = {
 
   async test(input, ctx) {
     const res = await ctx.fetch("https://probe.w6w.test/whoami");
-    return { ok: res.ok, message: JSON.stringify(input) };
+    // `keys` pins that absent members are omitted, not undefined-valued.
+    return { ok: res.ok, message: JSON.stringify(input), keys: Object.keys(input) };
   },
 
   async afterConnect(_input, ctx) {
