@@ -9,6 +9,7 @@
  */
 import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
+import type { ConnectionBinding } from "./credential.ts";
 import type { ConnectionTarget, RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
@@ -250,7 +251,13 @@ export type RefreshHook = (
 
 /** Auth `afterConnect` — fetch display data for the connection label. */
 export type AfterConnectHook = (
-  input: { credential: unknown },
+  input: {
+    credential: unknown;
+    /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+    binding?: ConnectionBinding;
+    /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+    credentialDisplay?: Record<string, string>;
+  },
   ctx: HookContext,
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 

@@ -3,6 +3,7 @@
  * See rfcs/auth.md.
  */
 import type { Param } from "./param.ts";
+import type { ConnectionBinding } from "./credential.ts";
 import type {
   AfterConnectHook,
   ExchangeHook,
@@ -178,7 +179,16 @@ export interface AuthDefinition extends Auth {
   /** Exchange auth code / form input for the stored opaque credential. */
   exchange?: ExchangeHook;
   /** Required. Validates the credential is live. */
-  test: Hook<{ credential: unknown }, { ok: boolean; message?: string }>;
+  test: Hook<
+    {
+      credential: unknown;
+      /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+      binding?: ConnectionBinding;
+      /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+      credentialDisplay?: Record<string, string>;
+    },
+    { ok: boolean; message?: string }
+  >;
   /** Fetch display data for `connectionLabel`. */
   afterConnect?: AfterConnectHook;
   /**

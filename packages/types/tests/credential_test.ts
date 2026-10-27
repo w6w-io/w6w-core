@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import {
+  type AfterConnectHook,
   AUTH_TYPES,
+  type AuthDefinition,
   type AuthType,
   type Connection,
   CREDENTIAL_CONTRACT_ID_RE,
@@ -181,4 +183,20 @@ Deno.test("redact of a minimal Connection has only its present keys", () => {
   };
   const out: RedactedConnection = redact(min);
   assertEquals(Object.keys(out).sort(), ["app", "auth", "createdAt", "id", "owner", "state"]);
+});
+
+Deno.test("test/afterConnect inputs: binding and credentialDisplay are optional, display is string-valued", () => {
+  type In = Parameters<AfterConnectHook>[0];
+  const bare: In = { credential: null };
+  const full: In = {
+    credential: null,
+    binding: { delegatedUser: "u@x.test" },
+    credentialDisplay: { client_email: "sa@p.iam" },
+  };
+  // @ts-expect-error credentialDisplay values are strings
+  const bad: In = { credential: null, credentialDisplay: { n: 1 } };
+  type TestIn = Parameters<AuthDefinition["test"]>[0];
+  const t1: TestIn = { credential: null };
+  const t2: TestIn = { credential: null, binding: {}, credentialDisplay: { a: "b" } };
+  assert(bare && full && bad && t1 && t2);
 });
