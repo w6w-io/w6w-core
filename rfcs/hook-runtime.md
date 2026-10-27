@@ -120,6 +120,8 @@ The hook's only network primitive. The host:
 3. For `refresh` / `exchange` / `preflight`: performs the request without signing (the hook itself is constructing the credential).
 4. For `sign` itself: `ctx.fetch` is **not available** — see [Credential isolation](#credential-isolation).
 
+> **Amended 2026-10-27:** for a provider-derived auth, `test` and `afterConnect` get a signed `ctx.fetch` and `credential: null`, and who runs which hook is stated in the amendment — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
+
 The hook sees a normal `Response`. The credential and the egress check are the host's job.
 
 ### `ctx.socket`
@@ -199,6 +201,8 @@ Lines are structured: `{ level, message, data? }`. Hosts MUST surface these to t
 
 The redacted Connection projection (Connection RFC §Redacted projection). Present when the Invocation supplied one. The `credential` field is always absent. Hooks that need the credential (`sign`, `refresh`, `revoke`) receive it in their `input` instead.
 
+> **Amended 2026-10-27:** which hooks receive a credential, and which receive a `DerivedToken` or nothing, is tabulated in the amendment — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
+
 ### `ctx.invocation`
 
 The Invocation's `context` ([Invocation RFC](./invocation.md)) — read-only, host-issued metadata, never an authority. `invocationId` is stable per Invocation: use it as an **idempotency key** for `perform` actions (e.g. an `Idempotency-Key` header) so a retried call doesn't double-write. `runId`/`stepId` correlate the hook's `ctx.log` lines and downstream requests back to the Run that drove them. `trigger` (`workflow | editor | api | replay | test`) lets an action soften real side-effects under `editor`/`test` previews. Present for action `execute` (populated from the Invocation's `context`); absent for standalone auth-phase hooks, which are not driven by an Invocation. It carries **no** credential and grants **no** capability, and being plain data it crosses the worker boundary unchanged.
@@ -268,6 +272,8 @@ The complete set of hook kinds, their input/output shapes, and the lifecycle pha
 | `trigger.poll` | [Trigger RFC](./trigger.md) | `{ params, state, subscriptionId }` | `{ events, nextState? }` | `execute` | **Yes** |
 | `trigger.parseOutput` | [Trigger RFC](./trigger.md) | `{ call, normalized, subscriptionId }` | output value | `execute` | No |
 
+> **Amended 2026-10-27:** the "Sees credential?" column is refined by the per-hook table, the Hook registry gets no provider row because provider derivation is not a hook kind, and `auth.test` and `auth.afterConnect` take optional `binding` and `credentialDisplay` inputs in signed mode — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
+
 Inputs and outputs MUST be **structured-cloneable** (the union of plain data, ArrayBuffers, Maps, Sets, Dates — no functions, no DOM nodes, no class instances with private state). This is what makes hooks transportable across worker boundaries and serialization-agnostic.
 
 The full TypeScript declarations live in [`@w6w/types`](../packages/types/src/hooks.ts).
@@ -283,6 +289,8 @@ Operationally:
 1. The **action sandbox** has no network and never receives the credential.
 2. `ctx.fetch` inside the action sandbox proxies to the host. The host, before performing the call, hands the request to `auth.sign` in a **separate sandbox**. That sandbox has the credential but its `ctx.fetch` is removed entirely; it can only return the augmented request.
 3. `auth.refresh`, `auth.exchange`, `auth.preflight`, `auth.test`, `auth.afterConnect`, `auth.revoke` all have the credential and a network-capable `ctx.fetch` — but they are gated to the `auth` phase and only run with explicit host orchestration (an Invocation in `needs_refresh`, a connect/test/disconnect flow). They never run during an Action's `execute`.
+
+> **Amended 2026-10-27:** for a provider-derived auth `auth.test` and `auth.afterConnect` do not hold a credential and their `ctx.fetch` is signed, and the provider's single mediated egress keeps the invariant — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
 
 A host that violates this invariant is not spec-compliant regardless of which sandbox technology it picks.
 
@@ -339,6 +347,8 @@ This table is closed for `manifestVersion: "1"`. New codes require an RFC bump.
 
 > **Amended 2026-10-04:** the `hook_failed` row above and its two prose mentions (§Result envelope, §Resource limits) were first published as `hook_threw`. The reference runtime (`run-hook.ts`), the MCP error taxonomy and the conformance tests emit `hook_failed`, so the text was corrected to match; the code itself, its phase and its meaning are unchanged, and no code was added to the table.
 
+> **Amended 2026-10-27:** the nine `CREDENTIAL_ERROR_CODES` join the closed code set, phase `auth` — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
+
 ## Timeouts and cancellation
 
 Each hook invocation has a timeout in milliseconds. The runtime SHOULD apply a default of **30 000 ms** and MUST allow the host to override per call. When the timeout fires:
@@ -368,6 +378,8 @@ A compliant host MUST guarantee, for every hook invocation:
 | Subprocess / FFI | Denied | Denied | Denied |
 | Credential | Absent | Present in `input.credential` | Present in `input.credential` |
 | `ctx.file` | Available, host-mediated | **Removed** | **Removed** |
+
+> **Amended 2026-10-27:** for a provider-derived auth, `test` and `afterConnect` run signed with the credential absent, and `sign` or `handshake` receive a `DerivedToken` — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
 
 The reference implementation in `@w6w/runtime` runs hooks in Deno Web Workers spawned with the corresponding `permissions` map. Other implementations (V8 isolates with embedder hooks, gVisor-wrapped processes, Wasm with capability imports) are valid provided they produce the same observable behavior.
 
@@ -501,3 +513,86 @@ reserves for a later `manifestVersion`; this one does not qualify.
 - **Network.** `ctx.fetch` is signed exactly as for `action.execute`, behind the same `network.allow`; `ctx.connection` is redacted.
 - **Timeout.** The host caps the hook at **10 s**, the one exception to the 30 000 ms default under [Timeouts and cancellation](#timeouts-and-cancellation), because it sits in the editor's critical path.
 - **Output is untrusted.** The host drops any key it did not request and validates the rest: `value` must be a string or number, `label` a string clipped to **200** characters and `description` to **500**, and at most 1 000 options per field — only the first **1 000 raw entries** of a field's array are read, so paging past that is the hook's job. A per-field `error` message is clipped to **500** characters. A thrown hook becomes a `W6WError` in phase `resolution`.
+
+## Amendment — 2026-10-27: who orchestrates, per-hook secret access and the credential codes
+
+> **Additive, with refinements.** This section states who runs credential-bearing work, tabulates what
+> each auth hook receives for the legacy and the provider-derived path, and adds the credential error
+> codes. It refines or supersedes exactly these passages, each of which carries a pointer to this
+> section: `ctx.fetch` rule 3 ("For `refresh` / `exchange` / `preflight`: performs the request without
+> signing"); `ctx.connection`'s "Hooks that need the credential (`sign`, `refresh`, `revoke`) receive it
+> in their `input` instead"; the Hook registry's auth rows and its "Sees credential?" column; Credential
+> isolation rule 3; the Codes table's closure ("This table is closed for `manifestVersion: "1"`"); and
+> the Sandbox posture table's `ctx.fetch` and Credential rows. The Credential isolation invariant
+> itself stands. Everything else in this RFC stands.
+
+### Who orchestrates
+
+Auth hooks other than `sign` and `handshake` never run on their own; the host orchestrates them.
+
+- **Refresh runs before `execute`, under host orchestration.** When the host supplies a
+  `credentialResolver`, the resolver owns refresh and the runtime never runs `auth.refresh` itself.
+  Without one, the runtime's own `needs_refresh` arm runs `auth.refresh` (D-C2). Either way there is one
+  refresher per use.
+- **Provider derivation is host-side, not a sandbox hook.** `CredentialProvider.deriveAuthorization`
+  runs in the host's own realm, never in a worker, and is **not a hook kind**: the Hook registry
+  therefore gets **no** row for it. Its token reaches the sandbox only as the `credential` input of
+  `auth.sign` or `auth.handshake`.
+- **The preparation step.** `prepareAuthorization` is the one host-realm seam every Connection's
+  authorization passes through (`invoke`, trigger hooks, `resolveFields`, a signed health check). It
+  applies the Connection lifecycle gates, asks the resolver, and returns what the `sign` or `handshake`
+  worker is given; see [Invocation RFC §Amendment](./invocation.md#amendment--2026-10-27-credential-preparation-in-the-resolution-sequence).
+- **Signed mode for derived `test` and `afterConnect`.** For a provider-derived auth the host runs
+  these two hooks with `credential: null`: their `ctx.fetch` is signed by the auth's own network-less
+  `sign` hook from the derived token, under the App's `network.allow` (D-A3). The input is
+  `{ credential: null }` plus exactly `binding` (the Connection's non-secret binding) and
+  `credentialDisplay` (the credential's non-secret display metadata, such as a service-account email;
+  never key material) when the host supplies them, and nothing else. `refresh` and `revoke` cannot run
+  in signed mode: they need the source, and a derived token is not one. Signed mode needs a `sign`
+  hook and a derived authorization; otherwise it fails (`hook_not_declared`, `provider_unsupported`).
+- A runtime given **no resolver** MUST fail a `serviceAccount` auth closed with `provider_unsupported`
+  (preparation, every auth hook, health); the stored source never reaches a hook.
+
+### Per-hook secret access and network posture
+
+For a provider-derived auth (`serviceAccount`) the stored source is never given to any hook. "Legacy"
+means an auth of any other type, whose credential is the opaque stored blob.
+
+| Hook | Secret received, opaque/legacy auth | Secret received, provider-derived auth | Network posture | Orchestrated by |
+|---|---|---|---|---|
+| `auth.preflight` | None: input is `{ fields? }`, no stored credential | None: same input, no stored credential | `ctx.fetch` host-mediated, unsigned | Host connect flow |
+| `auth.exchange` | None stored: input is `{ fields?, code?, redirectUri? }`, returns the credential to store | Not run: the reference host's create path does not run `exchange`, and the user's `serviceAccountKey` field is the source, validated by the provider | `ctx.fetch` host-mediated, unsigned | Host connect flow |
+| `auth.test` | `{ credential }`, the opaque blob | `credential: null`, plus optional non-secret `binding` and `credentialDisplay` | Legacy: `ctx.fetch` host-mediated, unsigned. Derived: `ctx.fetch` host-mediated, signed with the DerivedToken | Host connect and periodic test; derived via signed mode |
+| `auth.afterConnect` | `{ credential }`, the opaque blob | `credential: null`, plus optional non-secret `binding` and `credentialDisplay` | Legacy: `ctx.fetch` host-mediated, unsigned. Derived: `ctx.fetch` host-mediated, signed with the DerivedToken | Host connect flow; derived via signed mode |
+| `auth.sign` | `{ request, credential }`, the opaque blob | `{ request, credential }` where `credential` is the DerivedToken (`accessToken`, `tokenType`, `expiresAt`) only, never the source | None: `ctx.fetch` removed | Host, per outbound request (`execute` phase) |
+| `auth.handshake` | `{ credential, target, received?, state? }`, the opaque blob | Same input, where `credential` is the DerivedToken only | None: no `ctx.fetch`; the host drives the byte exchange over the socket | Host, once per `execute` before `ctx.socket` is handed over |
+| `auth.refresh` | `{ credential }`, the opaque blob | Not run: a derived token is re-derived by expiry at use; there is no source refresh | `ctx.fetch` host-mediated, unsigned | Resolver when present, else the runtime's `needs_refresh` arm |
+| `auth.revoke` | `{ credential }`, the opaque blob | Not run: a provider `revoke` is optional and `google-service-account.v1` has none | `ctx.fetch` host-mediated, unsigned | Host disconnect flow; the reference host runs no app `revoke` hook today |
+| `provider.deriveAuthorization` | Not an app hook: runs only for provider-derived auth | The decrypted source plus `binding` and `approved`, in the host realm, never in a sandbox; returns a DerivedToken | No raw network: only the injected TokenEgress, to the contract's pinned endpoint (`GOOGLE_TOKEN_ENDPOINT` for v1), not the App's allowlist | Host, in the resolver's preparation step |
+
+### Provider derivation and the isolation invariant
+
+The Credential isolation invariant stands unchanged: no code path may both hold the live credential and
+make an unmediated network call. The provider holds the source, and its **only egress is the injected
+`TokenEgress`**, to the single endpoint its contract pins. The host supplies and mediates that call,
+the provider chooses neither the destination nor any transport, and a source's own `token_uri` is never
+a destination. A mediated call does not violate the invariant, so a compliant host keeps the invariant
+by construction. Provider code is compiled into the host; it is never publisher code.
+
+### Sandbox posture for derived authorization
+
+The Sandbox posture table above is read as follows for a provider-derived auth. `auth.test` and
+`auth.afterConnect` are in the "Other auth hooks" column, except that their `ctx.fetch` is **signed**
+and the **Credential** row reads **Absent** (`credential: null`). `auth.sign` and `auth.handshake` stay
+in the "Sign / handshake sandbox" column; what `input.credential` holds there is the DerivedToken, not
+the source. No other cell changes.
+
+### Credential codes
+
+The nine `CREDENTIAL_ERROR_CODES` ([Credential RFC §Error codes](./credential.md#error-codes)) join the
+closed code set of the Codes table above through this amendment, all in phase `auth`:
+`credential_disabled`, `credential_missing`, `credential_revoked`, `delegation_rejected`,
+`provider_unsupported`, `scope_not_approved`, `auth_not_found`, `jit_unavailable_in_background` and
+`credential_invalid`. The host or runtime preparation step raises them (and a provider it calls);
+**hook code never does.** "New codes require an RFC bump" is satisfied by this amendment; the set stays
+closed for `manifestVersion: "1"`.

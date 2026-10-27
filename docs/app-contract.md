@@ -25,6 +25,7 @@ The contract an App publisher ships and a host may assume: Apps, Actions, params
 - [Param](/reference-spec/app-contract/param/)
 - [Auth](/reference-spec/app-contract/auth/)
 - [Connection](/reference-spec/app-contract/connection/)
+- [Credential](/reference-spec/app-contract/credential/)
 - [Health Check](/reference-spec/app-contract/healthcheck/)
 - [Categories](/reference-spec/app-contract/categories/)
 - [ImageObject](/reference-spec/app-contract/image-object/)
