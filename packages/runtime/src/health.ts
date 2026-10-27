@@ -295,13 +295,17 @@ async function runHealthHook(
   const auth: LoadedAuth | undefined = posture === "signed" && conn
     ? authFor(app, conn)
     : undefined;
-  let signCredential: unknown = posture === "signed" ? conn?.credential : undefined;
-  if (auth && conn && opts.credentialResolver) {
-    ({ signCredential } = await prepareAuthorization(app, auth, conn, {
-      purpose: "health",
-      credentialResolver: opts.credentialResolver,
-      timeoutMs: opts.timeoutMs,
-    }));
+  // With a resolver the connection's own credential is never read: the only
+  // thing that signs is the prepared credential.
+  let signCredential: unknown;
+  if (auth && conn) {
+    signCredential = opts.credentialResolver
+      ? (await prepareAuthorization(app, auth, conn, {
+        purpose: "health",
+        credentialResolver: opts.credentialResolver,
+        timeoutMs: opts.timeoutMs,
+      })).signCredential
+      : conn.credential;
   }
 
   return runHook<unknown>({

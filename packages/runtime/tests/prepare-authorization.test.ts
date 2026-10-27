@@ -604,3 +604,109 @@ Deno.test("AC5: without signing, runAuthHook is unchanged (positional credential
     assertEquals(calls[0].headers.get("authorization"), null);
   });
 });
+
+// ── ROUND 2: health never reads the credential; one pick; socket handshake ──
+
+/** A copy of `conn` whose `credential` getter counts reads and throws. */
+function credentialTripwire(conn: Connection) {
+  let reads = 0;
+  const tripped: Connection = { ...conn };
+  Object.defineProperty(tripped, "credential", {
+    enumerable: true,
+    get() {
+      reads++;
+      throw new Error("connection.credential was read");
+    },
+  });
+  return { conn: tripped, reads: () => reads };
+}
+
+Deno.test("B1: a signed health check with a resolver never reads connection.credential", async () => {
+  const app = await loadApp(SENDGRID);
+  const { resolver, calls } = spyResolver(FROM_RESOLVER);
+  const { server, base, seen } = stubHost();
+  try {
+    const t = credentialTripwire({ ...CONNECTION, display: { apiBase: base } });
+    const result = await checkHealth(app, "quota", {
+      connection: t.conn,
+      credentialResolver: resolver,
+    });
+    assertEquals(t.reads(), 0);
+    assertEquals(calls.length, 1);
+    assertEquals(result.report.state, "ok");
+    assertEquals(seen[0].headers["authorization"], "Bearer from-resolver");
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test("F1: signed runAuthHook strips extra members from the derived token (same pick as invoke)", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const auth = authFor(app, SA_CONNECTION);
+  const token = { ...TOKEN, privateKey: "SENTINEL-EXTRA" } as DerivedToken;
+  await withFetchStub(async (calls) => {
+    await runAuthHook(app, auth, "test", null, {
+      signing: { authorization: { ...DERIVED, token } },
+    });
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].headers.get("authorization"), `Bearer ${TOKEN.accessToken}`);
+    assertFalse(JSON.stringify([...calls[0].headers]).includes("SENTINEL-EXTRA"));
+  });
+});
+
+Deno.test("F2: the socket handshake receives the prepared credential, never connection.credential", async () => {
+  const app = await loadApp(fx("socket-connect"));
+  const { resolver } = spyResolver({
+    kind: "legacyOpaque",
+    source: "stored",
+    credential: { token: "from-resolver" },
+    sourceRevision: 1,
+  });
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  const frame = (async () => {
+    const c = await listener.accept();
+    const buf = new Uint8Array(4096);
+    const n = await c.read(buf);
+    const first = new TextDecoder().decode(buf.subarray(0, n ?? 0));
+    await c.write(new TextEncoder().encode("OK\n"));
+    const n2 = await c.read(buf);
+    if (n2) await c.write(buf.subarray(0, n2));
+    try {
+      await c.read(new Uint8Array(1));
+    } catch { /* closed by the peer */ }
+    try {
+      c.close();
+    } catch { /* already gone */ }
+    return first;
+  })();
+  const t = credentialTripwire({
+    manifestVersion: "1",
+    id: "conn_sock",
+    app: "io.w6w.socket-connect",
+    auth: "handshake-auth",
+    owner: "user_1",
+    state: "connected",
+    credential: { token: "stored-SENTINEL" },
+    createdAt: "2026-10-27T00:00:00Z",
+    target: { host: "localhost", port, tlsMode: "disable", allowPrivate: true },
+  });
+  try {
+    await invoke(
+      app,
+      {
+        manifestVersion: "1",
+        app: "io.w6w.socket-connect",
+        action: "round-trip",
+        params: { message: "ping" },
+      },
+      { connection: t.conn, credentialResolver: resolver },
+    );
+    assertEquals(await frame, "AUTH from-resolver\n");
+    assertEquals(t.reads(), 0);
+  } finally {
+    try {
+      listener.close();
+    } catch { /* already closed */ }
+  }
+});

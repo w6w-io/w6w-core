@@ -5,7 +5,7 @@
  * token cache shares with core, so the cache key and the skew rule are defined
  * once.
  */
-import type { Connection, ResolvedAuthorization } from "@w6w/types";
+import type { Connection, DerivedToken, ResolvedAuthorization } from "@w6w/types";
 
 /** Why the host is asking for an authorization — lets a resolver audit or scope its answer. */
 export type CredentialPurpose = "invoke" | "trigger" | "fields" | "health" | "test" | "socket";
@@ -83,4 +83,13 @@ export function isExpiring(
   skewMs: number = TOKEN_SKEW_MS,
 ): boolean {
   return expiresAt - skewMs <= now;
+}
+
+/**
+ * The DerivedToken and nothing else: not the wrapper, not any extra member a
+ * resolver spread into it. Shared by every seam that hands a token to `sign`.
+ */
+export function pickDerivedToken(token: DerivedToken): DerivedToken {
+  const { accessToken, tokenType, expiresAt } = token;
+  return { accessToken, tokenType, expiresAt };
 }

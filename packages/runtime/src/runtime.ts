@@ -17,7 +17,6 @@ import type {
   Auth,
   Connection,
   ConnectionBinding,
-  DerivedToken,
   FileRef,
   HealthCheck,
   InterfaceConformance,
@@ -40,7 +39,11 @@ import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
 import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
 import { credentialError, W6WError } from "./errors.ts";
-import type { CredentialPurpose, CredentialResolver } from "./authorization.ts";
+import {
+  type CredentialPurpose,
+  type CredentialResolver,
+  pickDerivedToken,
+} from "./authorization.ts";
 import { RESOLVE_FIELDS_TIMEOUT_MS, sanitizeResolveFieldsOutput } from "./resolve-fields.ts";
 import { openConnectionSocket, type SocketSession } from "./socket.ts";
 
@@ -576,10 +579,9 @@ export async function prepareAuthorization(
         return { authorization, signCredential: authorization.credential, redacted };
       case "derived": {
         // The DerivedToken and nothing else: not the wrapper, not any extra member.
-        const { accessToken, tokenType, expiresAt } = authorization.token;
         return {
           authorization,
-          signCredential: { accessToken, tokenType, expiresAt } satisfies DerivedToken,
+          signCredential: pickDerivedToken(authorization.token),
           redacted,
         };
       }
@@ -750,7 +752,9 @@ export async function runAuthHook<T = unknown>(
     ? signingFetch(
       app,
       auth,
-      (signing.authorization as Extract<ResolvedAuthorization, { kind: "derived" }>).token,
+      pickDerivedToken(
+        (signing.authorization as Extract<ResolvedAuthorization, { kind: "derived" }>).token,
+      ),
       { timeoutMs: opts.timeoutMs, onLog: opts.onLog },
       app.netAllowlist,
     )
