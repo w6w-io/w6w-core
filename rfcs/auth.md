@@ -401,7 +401,7 @@ The Lifecycle table's "opaque credential" describes the **legacy** path. For a `
 
 ### `serviceAccount`
 
-An auth whose credential is a stored service-account source from which the host **derives**
+An auth of this type (configured by `ServiceAccountConfig`, `@w6w/types`) has a stored service-account source as its credential, and the host **derives**
 short-lived tokens through a compiled-in provider. The App declares only which credential contracts
 it accepts; it can never declare a token destination.
 
