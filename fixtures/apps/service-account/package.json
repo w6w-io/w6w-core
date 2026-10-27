@@ -1,0 +1,16 @@
+{
+  "name": "@w6w-fixtures/service-account",
+  "version": "1.0.0",
+  "description": "Fixture app proving the runtime's credential seam: sign sees only a derived token; test/afterConnect run credential-less with a signed fetch.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.service-account",
+    "displayName": "Service Account Fixture",
+    "categories": ["other"],
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "network": { "allow": ["127.0.0.1", "probe.w6w.test"] },
+    "entry": "./index.ts"
+  }
+}

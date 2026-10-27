@@ -385,7 +385,7 @@ async function writeAll(conn: Deno.Conn, data: Uint8Array): Promise<void> {
 /**
  * Drive the Auth `handshake` hook to completion, writing each `send` to the
  * real connection and feeding the reply back as the next call's `received` —
- * the `resolveConnection`'s `needs_refresh` branch's single-call pattern
+ * `prepareAuthorization`'s legacy `needs_refresh` branch's single-call pattern
  * (`runtime.ts:436-448`), generalized to iterate. Deliberately passes neither
  * `onFetch` nor `onSocket` to `runHook` (DC-1): the handshake hook only ever
  * produces bytes for the HOST to send, it never touches the network or the
@@ -611,7 +611,7 @@ export interface SocketSession {
  * An auth method with no `handshake` hook skips straight to the proxy with no
  * round trips — a socket-backed protocol that genuinely needs no auth frame
  * (e.g. a fully anonymous listener) is not an error, mirroring how
- * `resolveConnection` only routes through `refresh` when `needs_refresh`
+ * `prepareAuthorization` only routes through `refresh` when `needs_refresh`
  * actually applies.
  */
 export async function openConnectionSocket(
