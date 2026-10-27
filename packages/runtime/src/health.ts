@@ -23,7 +23,12 @@ import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
 import { W6WError } from "./errors.ts";
 import { runHook } from "./sandbox/run-hook.ts";
-import { authFor, prepareAuthorization, signingFetch } from "./runtime.ts";
+import {
+  assertServiceAccountResolver,
+  authFor,
+  prepareAuthorization,
+  signingFetch,
+} from "./runtime.ts";
 import type { CredentialResolver } from "./authorization.ts";
 import { latestPerId, parseChannelMeta, parseFeed } from "./feed.ts";
 
@@ -125,6 +130,17 @@ export async function checkHealth(
       state: "unknown",
       message: `check requires a connection (credential: "${posture}")`,
     });
+  }
+
+  // Fail closed (T1.5 / R-30): a signed check on a serviceAccount connection
+  // needs the host's resolver. Raised here, outside the probe's catch-all, so a
+  // host that forgot to wire it sees the error instead of a quiet `unknown`,
+  // and before the feed fetch or any worker. A connection whose auth is not
+  // declared is left to `authFor`'s own (swallowed) failure below.
+  if (posture === "signed" && opts.connection && !opts.credentialResolver) {
+    const conn = opts.connection;
+    const declared = app.auths.find((a) => a.auth.key === conn.auth);
+    if (declared) assertServiceAccountResolver(declared);
   }
 
   try {

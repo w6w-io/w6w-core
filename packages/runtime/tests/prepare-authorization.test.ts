@@ -591,17 +591,15 @@ Deno.test("AC5: a denied host in signed mode resurfaces as egress_denied (auth) 
   });
 });
 
-Deno.test("AC5: without signing, runAuthHook is unchanged (positional credential, unsigned fetch)", async () => {
+Deno.test("AC5 (T1.5): without signing, runAuthHook on a serviceAccount auth fails closed (was: unchanged)", async () => {
   const app = await loadApp(SERVICE_ACCOUNT);
   await withFetchStub(async (calls) => {
-    const out = await runAuthHook<{ message: string }>(
-      app,
-      authFor(app, SA_CONNECTION),
-      "test",
-      { k: 1 },
+    const err = await assertRejects(
+      () => runAuthHook(app, authFor(app, SA_CONNECTION), "test", { k: 1 }),
+      W6WError,
     );
-    assertEquals(out.message, '{"credential":{"k":1}}');
-    assertEquals(calls[0].headers.get("authorization"), null);
+    assertEquals(err.code, "provider_unsupported");
+    assertEquals(calls.length, 0);
   });
 });
 
@@ -708,5 +706,161 @@ Deno.test("F2: the socket handshake receives the prepared credential, never conn
     try {
       listener.close();
     } catch { /* already closed */ }
+  }
+});
+
+// ── T1.5 / R-30: core fails closed for a serviceAccount auth without a resolver ─
+
+const NEEDS_RESOLVER =
+  "A serviceAccount connection needs the host's credential resolver; none was supplied.";
+
+Deno.test("T1.5 (a): prepareAuthorization on a serviceAccount auth without a resolver rejects provider_unsupported, 0 credential reads", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const t = credentialTripwire(SA_CONNECTION);
+  const err = await assertRejects(
+    () => prepareAuthorization(app, authFor(app, SA_CONNECTION), t.conn, { purpose: "invoke" }),
+    W6WError,
+  );
+  assertEquals(err.code, "provider_unsupported");
+  assertEquals(err.phase, "auth");
+  assertEquals(err.message, NEEDS_RESOLVER);
+  assertFalse(err.message.includes("SENTINEL"));
+  assertEquals(t.reads(), 0);
+});
+
+Deno.test("T1.5 (a): the same call WITH a resolver is unchanged (derived, credential never read)", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const { resolver, calls } = spyResolver({
+    kind: "derived",
+    token: TOKEN,
+    expiresAt: TOKEN.expiresAt,
+    sourceRevision: 3,
+  });
+  const t = credentialTripwire(SA_CONNECTION);
+  const p = await prepareAuthorization(app, authFor(app, SA_CONNECTION), t.conn, {
+    purpose: "invoke",
+    credentialResolver: resolver,
+  });
+  assertEquals(p.signCredential, TOKEN);
+  assertEquals(calls.length, 1);
+  assertEquals(t.reads(), 0);
+});
+
+Deno.test("T1.5 (a): a needs_refresh serviceAccount connection without a resolver is refused before the refresh arm", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const t = credentialTripwire({ ...SA_CONNECTION, state: "needs_refresh" });
+  const err = await assertRejects(
+    () => prepareAuthorization(app, authFor(app, SA_CONNECTION), t.conn, { purpose: "invoke" }),
+    W6WError,
+  );
+  assertEquals(err.code, "provider_unsupported");
+  assertEquals(t.reads(), 0);
+});
+
+Deno.test("T1.5 (a): invoke on a serviceAccount connection without a resolver is refused with zero requests", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const { server, base, seen } = stubHost();
+  try {
+    const t = credentialTripwire(SA_CONNECTION);
+    const err = await assertRejects(
+      () => invoke(app, whoami(`${base}/whoami`), { connection: t.conn }),
+      W6WError,
+    );
+    assertEquals(err.code, "provider_unsupported");
+    assertEquals(t.reads(), 0);
+    assertEquals(seen.length, 0);
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test("T1.5 (c): checkHealth on a serviceAccount connection without a resolver rejects provider_unsupported before any worker", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  assertEquals(app.healthChecks.get("auth:service-account")?.check.kind, "credential");
+  const logs: string[] = [];
+  await withFetchStub(async (calls) => {
+    const t = credentialTripwire(SA_CONNECTION);
+    const err = await assertRejects(
+      () =>
+        checkHealth(app, "auth:service-account", {
+          connection: t.conn,
+          onLog: (_l, m) => logs.push(m),
+        }),
+      W6WError,
+    );
+    assertEquals(err.code, "provider_unsupported");
+    assertEquals(err.phase, "auth");
+    assertEquals(err.message, NEEDS_RESOLVER);
+    assertEquals(t.reads(), 0);
+    assertEquals(calls.length, 0);
+  });
+  assertEquals(logs.length, 0);
+});
+
+Deno.test("T1.5 (c): the same health check WITH a resolver is unchanged and never reads the credential", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT);
+  const { resolver, calls: resolved } = spyResolver({
+    kind: "derived",
+    token: TOKEN,
+    expiresAt: TOKEN.expiresAt,
+    sourceRevision: 3,
+  });
+  await withFetchStub(async () => {
+    const t = credentialTripwire(SA_CONNECTION);
+    const result = await checkHealth(app, "auth:service-account", {
+      connection: t.conn,
+      credentialResolver: resolver,
+    });
+    assertEquals(resolved.length, 1);
+    assertEquals(resolved[0].purpose, "health");
+    assertEquals(t.reads(), 0);
+    assertEquals(typeof result.report.state, "string");
+  });
+});
+
+// A non-serviceAccount auth carrying a STRAY `serviceAccount` block (the
+// validator accepts one, F-T1.1-a) must behave exactly as before: the guard
+// keys on `auth.auth.type`, never on the block's presence (R-17).
+function withStrayServiceAccountBlock(app: Awaited<ReturnType<typeof loadApp>>) {
+  const auths = app.auths.map((a) => ({
+    ...a,
+    auth: {
+      ...a.auth,
+      serviceAccount: {
+        accepts: ["google-service-account.v1"],
+        scopes: [],
+        impersonation: "none" as const,
+      },
+    },
+  }));
+  assertEquals(auths[0].auth.type, "apiKey");
+  return { ...app, auths };
+}
+
+Deno.test("T1.5 (AC4 control): a non-serviceAccount auth with a stray serviceAccount block still prepares legacyOpaque without a resolver", async () => {
+  const app = withStrayServiceAccountBlock(await loadApp(SENDGRID));
+  const p = await prepareAuthorization(app, authFor(app, CONNECTION), CONNECTION, {
+    purpose: "invoke",
+  });
+  assertEquals(p.authorization, {
+    kind: "legacyOpaque",
+    source: "stored",
+    credential: { apiKey: "stored-key" },
+    sourceRevision: null,
+  });
+  assertEquals(p.signCredential, { apiKey: "stored-key" });
+});
+
+Deno.test("T1.5 (AC4 control): the same stray-block auth still runs a signed health check without a resolver", async () => {
+  const app = withStrayServiceAccountBlock(await loadApp(SENDGRID));
+  const { server, base, seen } = stubHost();
+  try {
+    const result = await checkHealth(app, "quota", {
+      connection: { ...CONNECTION, display: { apiBase: base } },
+    });
+    assertEquals(result.report.state, "ok");
+    assertEquals(seen[0].headers["authorization"], "Bearer stored-key");
+  } finally {
+    await server.shutdown();
   }
 });

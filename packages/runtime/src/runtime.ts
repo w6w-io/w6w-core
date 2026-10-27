@@ -476,6 +476,24 @@ function withDeniedUnwrap(
   };
 }
 
+/**
+ * Fail-closed guard (T1.5, RECONCILE R-30): a `serviceAccount` auth never runs
+ * without the host's credential resolver. Without one, core would hand the
+ * stored source payload (the reusable private key) to `sign` or to an unsigned
+ * hook, which the network-less `sign` contract forbids — only a derived token
+ * may reach it. Keyed on `auth.auth.type`, NEVER on the presence of a
+ * `serviceAccount` block (the validator accepts one on other types, R-17).
+ * The text is fixed: no credential, id or key is ever interpolated.
+ */
+export function assertServiceAccountResolver(auth: LoadedAuth): void {
+  if (auth.auth.type === "serviceAccount") {
+    throw credentialError(
+      "provider_unsupported",
+      "A serviceAccount connection needs the host's credential resolver; none was supplied.",
+    );
+  }
+}
+
 export interface PrepareAuthorizationOptions {
   purpose: CredentialPurpose;
   credentialResolver?: CredentialResolver;
@@ -594,6 +612,10 @@ export async function prepareAuthorization(
     }
   }
 
+  // No resolver: a serviceAccount auth fails closed BEFORE anything reads
+  // `conn.credential` or spawns a worker (T1.5 / R-30).
+  assertServiceAccountResolver(auth);
+
   // Legacy path (no resolver), preserved verbatim.
   if (conn.state === "needs_refresh") {
     if (!auth.hooks.has("refresh")) {
@@ -698,6 +720,10 @@ export async function runAuthHook<T = unknown>(
     );
   }
   const signing = opts.signing;
+  // Unsigned mode hands the positional credential to the hook; for a
+  // serviceAccount auth that is the stored source payload, so refuse it before
+  // any worker spawns (T1.5 / R-30). Only signed mode (derived token) may run.
+  if (!signing) assertServiceAccountResolver(auth);
   if (signing) {
     // Signed mode exists for the hooks that only PROBE with the credential. A
     // `refresh`/`revoke` needs the credential source itself, which a derived
