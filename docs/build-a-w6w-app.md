@@ -58,10 +58,11 @@ Everything below follows from these. Violating one is the most common way an app
 4. **All network is host-mediated.** Untrusted code runs in a **network-less Deno sandbox**. Reach
    the network _only_ via `ctx.fetch`; the global `fetch` is denied and will throw. Every hostname a
    hook calls must be declared in `w6w.network.allow`.
-5. **Credentials are opaque.** Actions never see raw credentials. The Auth **`sign`** hook is the
-   _only_ code handed the credential, and it runs in its own network-less worker — so the
-   credential-holder can't reach the network and the network-caller has no credential. Neither can
-   leak it.
+5. **Credentials are opaque.** Actions never see raw credentials. The Auth **`sign`** hook runs in
+   its own network-less worker, so the code that signs requests can't reach the network and the code
+   that calls the network has no credential. Neither can leak it. For a `serviceAccount` auth the
+   host goes one step further: the stored key is never given to any of your hooks — `sign` gets only
+   a short-lived token the host derived from it.
 
 ## File layout
 
@@ -180,15 +181,15 @@ import type { AuthDefinition } from "@w6w/types";
 
 const apiKey: AuthDefinition = {
   key: "api-key",
-  type: "apiKey", // oauth2 | apiKey | basic | bearer | custom | tenantAuth | jit
+  type: "apiKey", // oauth2 | apiKey | basic | bearer | custom | tenantAuth | jit | serviceAccount
   displayName: "API Key",
   apiKey: { in: "header", name: "Authorization", prefix: "Bearer " },
   fields: [ // collected at connect time; Param[]
     { key: "apiKey", label: "API Key", type: "secret", required: true },
   ],
 
-  // The ONLY hook given the raw credential. Runs network-less: it stamps auth onto
-  // the request and returns it, but cannot itself reach the network.
+  // Gets the stored credential on this (apiKey) path. Runs network-less: it stamps auth
+  // onto the request and returns it, but cannot itself reach the network.
   sign({ request, credential }) {
     const { apiKey } = credential as { apiKey: string };
     request.headers["authorization"] = `Bearer ${apiKey}`;
@@ -223,6 +224,51 @@ fronts the tenant/partner's own API:
 Both `sign` hooks just stamp `Authorization: Bearer ${credential.token}` — the provenance difference
 is entirely host-side. An App can declare **several** auth methods (e.g. `jit` for the tenant's base
 creds _and_ `oauth2` for a separate account); the user picks one per Connection.
+
+**Service accounts (`serviceAccount`).** For an API that authenticates a service account (e.g. a
+Google service-account key) the user stores the key **once** as a credential, and the host derives
+short-lived tokens from it through a compiled-in provider. Your App declares only which credential
+contracts it accepts, the scopes it asks for and whether it impersonates a user; it never declares a
+token URL. The key is never given to any of your hooks:
+
+```ts
+import type { AuthDefinition } from "@w6w/types";
+
+const serviceAccount: AuthDefinition = {
+  key: "service-account",
+  type: "serviceAccount",
+  displayName: "Service account",
+  fields: [ // the credential-source input: exactly one field
+    { key: "serviceAccountKey", label: "Service account key", type: "json", secret: true,
+      required: true, ui: "textarea" },
+  ],
+  serviceAccount: {
+    accepts: ["google-service-account.v1"], // the contract ids you take
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"], // the ceiling you may ask for
+    impersonation: "none", // none | optional | required
+  },
+
+  // `credential` here is the derived token, never the stored key.
+  sign({ request, credential }) {
+    const { accessToken } = credential as { accessToken: string };
+    request.headers["authorization"] = `Bearer ${accessToken}`;
+    return request;
+  },
+
+  // `credential` is null: do not read it. ctx.fetch is signed for you by the host.
+  async test(_input, ctx) {
+    const res = await ctx.fetch("https://api.example.com/whoami");
+    return { ok: res.ok };
+  },
+};
+export default serviceAccount;
+```
+
+`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the Connection's
+non-secret `binding` and `credentialDisplay` (such as the service-account email), never key material.
+A host that supplies no credential resolver refuses a `serviceAccount` auth with `provider_unsupported`.
+See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
+[`fixtures/apps/service-account`](../fixtures/apps/service-account/).
 
 ## `HookContext` (`ctx`) — the ambient API
 
@@ -387,6 +433,8 @@ The starter templates do **not** include triggers; add them only when asked, and
 - RFCs: [app](../rfcs/app.md) · [action](../rfcs/action.md) · [auth](../rfcs/auth.md) ·
   [param](../rfcs/param.md) · [connection](../rfcs/connection.md) ·
   [invocation](../rfcs/invocation.md) · [hook-runtime](../rfcs/hook-runtime.md) ·
+  [credential](../rfcs/credential.md) ·
   [categories](../rfcs/categories.md) · [trigger](../rfcs/trigger.md)
 - Working examples: [`fixtures/apps/hello`](../fixtures/apps/hello/) (no-auth) ·
-  [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign)
+  [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign) ·
+  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived token)

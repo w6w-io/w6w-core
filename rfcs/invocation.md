@@ -84,6 +84,8 @@ Before `execute` runs, the host performs the following in order. Each step is a 
 3. **Resolve params.** Run the Action's [Param resolution](./action.md#param-resolution) over the supplied `params`. Reject `param_invalid` on validation failure.
 4. **Invoke `execute`.** Pass the resolved params. For each outbound request the Action makes, the host applies `overrides` (see below), then invokes the Auth `sign` hook with the Connection's credential injected. The Action receives only the redacted Connection projection (if any).
 
+> **Amended 2026-10-27:** authorization is prepared once, before params, under host orchestration: a credential resolver when present, else the in-core refresh, and `sign` receives what the resolved authorization carries — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-preparation-in-the-resolution-sequence).
+
 ## Overrides
 
 `params` is a curated surface: a form the Action's author designed, and — by step 3 above — the only keys that survive resolution. Every other supplied key is dropped. That is correct for the common path and wrong at the edges: a vendor ships a field we have not modelled yet, documents one the author chose not to surface, or accepts an undocumented one a caller needs. Without an escape hatch, reaching such a field means abandoning the App for a raw HTTP call and re-supplying the credential outside the Connection that already holds it — trading a modelled, governed, credential-safe call for an unmodelled one.
@@ -241,3 +243,38 @@ scoping, entitlement, sub-run scheduling, awaiting, metering) is provided by the
 host**. No capability implementation crosses the seam: the engine holds only the interface and asks
 `ctx`, so the OSS engine stays host-free while the private host owns how a Callable actually runs —
 the identical split already used for `ctx.invoke` and `ctx.invokeFunction`.
+
+## Amendment — 2026-10-27: credential preparation in the resolution sequence
+
+> **Additive, with refinements.** This section names the authorization-preparation step inside the
+> resolution sequence. It refines exactly two passages, each of which carries a pointer to this
+> section: step 2's `needs_refresh` bullet ("run Auth `refresh`") and step 4's "invokes the Auth `sign`
+> hook with the Connection's credential injected". Everything else in this RFC stands.
+
+### Prepare authorization
+
+Step 2 (**Resolve Connection**) is one sequence, in this order:
+
+1. **Select the auth.** The Connection's `auth` is a key. An undeclared key fails `auth_not_found`
+   (phase `auth`) before anything else; it never falls back to another auth.
+2. **Apply the lifecycle gates.** `pending`, `revoked` and `broken` reject with their codes **before
+   any credential resolver is consulted**.
+3. **Prepare the authorization** (`prepareAuthorization`), exactly once:
+   - **With a credential resolver** (`CredentialResolver.prepare`, with a `purpose`), the resolver
+     owns the credential source and its refresh. For `connected` and `needs_refresh` it is asked once.
+     The runtime does **not** run Auth `refresh` itself and does not read the Connection's inline
+     `credential`: one refresher, under host orchestration.
+   - **Without a resolver**, behaviour is unchanged: `needs_refresh` runs Auth `refresh` in the
+     runtime; on failure the Connection is `broken` and the call rejects `connection_broken`. A
+     `serviceAccount` auth is the exception: with no resolver it fails closed with
+     `provider_unsupported`.
+   - Where the host supplies a transport that owns both signing and egress, no credential-bearing
+     path runs and the resolver is never consulted.
+
+   Preparation raises the [credential codes](./credential.md#error-codes) in phase `auth`.
+
+The resolved authorization decides step 4: for each outbound request, the host applies `overrides`
+and invokes Auth `sign` with **what the authorization carries**: nothing for `none`; the credential
+for `legacyOpaque`; and, for `derived`, **only the `DerivedToken`**, never the stored source.
+Provider derivation itself is host-side (not a sandbox hook). The Action still receives only the
+redacted Connection projection.
