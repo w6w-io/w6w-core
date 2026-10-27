@@ -1,4 +1,4 @@
-import { isFormResolvedOptions } from "@w6w/types";
+import { AUTH_TYPES, CREDENTIAL_CONTRACT_ID_RE, isFormResolvedOptions } from "@w6w/types";
 
 /**
  * Spec-rule validation over the logical model (`@w6w/types`). Distinct from the
@@ -47,7 +47,6 @@ const HEALTH_SEVERITIES = ["fatal", "degraded", "informational"];
 const HEALTH_FEED_FORMATS = ["atom", "rss", "auto"];
 /** Selector prefixes a `covers` entry may use, besides the bare `*`. */
 const COVERS_PREFIXES = ["action", "resource", "auth", "component"];
-const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
 
 /**
  * Controlled vocabulary for App `categories`. Mirrors `rfcs/categories.md`.
@@ -129,7 +128,7 @@ class Ctx {
     if (v !== undefined && !re.test(v)) this.err(path, `must ${hint}`);
   }
 
-  enum(v: unknown, allowed: string[], path: string): void {
+  enum(v: unknown, allowed: readonly string[], path: string): void {
     if (typeof v !== "string" || !allowed.includes(v)) {
       this.err(path, `must be one of: ${allowed.join(", ")}`);
     }
@@ -465,10 +464,18 @@ function validateHealthCheckInto(ctx: Ctx, check: unknown, path: string): void {
   }
 }
 
-/** Validate an Auth method's config (no hook functions). */
-export function validateAuth(auth: unknown, path = "auth"): ValidationResult {
+/**
+ * Validate an Auth method's config. The config carries no hook functions, so the
+ * `serviceAccount` sign-hook rule reads `opts.hooks` (a described auth's hook list)
+ * or `auth.sign` being a function (the AuthDefinition form).
+ */
+export function validateAuth(
+  auth: unknown,
+  path = "auth",
+  opts: { hooks?: readonly string[] } = {},
+): ValidationResult {
   const ctx = new Ctx();
-  validateAuthInto(ctx, auth, path);
+  validateAuthInto(ctx, auth, path, opts);
   return ctx.result();
 }
 
@@ -508,7 +515,67 @@ function checkOAuth2Setup(ctx: Ctx, setup: unknown, path: string): void {
   }
 }
 
-function validateAuthInto(ctx: Ctx, auth: unknown, path: string): void {
+/** The only keys a `serviceAccount` block may carry. Never a blocklist: imported JSON can never declare a destination. */
+const SERVICE_ACCOUNT_KEYS = ["accepts", "scopes", "impersonation", "bindingFields"];
+
+function checkServiceAccount(
+  ctx: Ctx,
+  auth: Record<string, unknown>,
+  path: string,
+  opts: { hooks?: readonly string[] },
+): void {
+  const sa = auth.serviceAccount;
+  const p = `${path}.serviceAccount`;
+  if (!isObject(sa)) {
+    ctx.err(p, "is required for serviceAccount auth");
+  } else {
+    for (const k of Object.keys(sa)) {
+      if (!SERVICE_ACCOUNT_KEYS.includes(k)) {
+        ctx.err(`${p}.${k}`, `is not allowed (allowed: ${SERVICE_ACCOUNT_KEYS.join(", ")})`);
+      }
+    }
+    if (!Array.isArray(sa.accepts) || sa.accepts.length === 0) {
+      ctx.err(`${p}.accepts`, "must be a non-empty array of credential contract ids");
+    } else {
+      sa.accepts.forEach((a, i) => {
+        if (typeof a !== "string" || !CREDENTIAL_CONTRACT_ID_RE.test(a)) {
+          ctx.err(`${p}.accepts[${i}]`, "must be a credential contract id like `name.v1`");
+        }
+      });
+    }
+    if (!Array.isArray(sa.scopes) || sa.scopes.length === 0) {
+      ctx.err(`${p}.scopes`, "must be a non-empty array of strings");
+    } else {
+      sa.scopes.forEach((x, i) => {
+        if (typeof x !== "string" || x.length === 0) {
+          ctx.err(`${p}.scopes[${i}]`, "must be a non-empty string");
+        }
+      });
+    }
+    ctx.enum(sa.impersonation, ["none", "optional", "required"], `${p}.impersonation`);
+    checkParams(ctx, sa.bindingFields, `${p}.bindingFields`);
+    if (Array.isArray(sa.bindingFields)) {
+      sa.bindingFields.forEach((f, i) => {
+        if (isObject(f) && f.type === "secret") {
+          ctx.err(
+            `${p}.bindingFields[${i}].type`,
+            "must not be `secret` (binding fields are non-secret)",
+          );
+        }
+      });
+    }
+  }
+  if (!opts.hooks?.includes("sign") && typeof auth.sign !== "function") {
+    ctx.err(`${path}.sign`, "a sign hook is required for serviceAccount auth");
+  }
+}
+
+function validateAuthInto(
+  ctx: Ctx,
+  auth: unknown,
+  path: string,
+  opts: { hooks?: readonly string[] } = {},
+): void {
   if (!isObject(auth)) {
     ctx.err(path, "must be an object");
     return;
@@ -543,6 +610,7 @@ function validateAuthInto(ctx: Ctx, auth: unknown, path: string): void {
       checkOAuth2Setup(ctx, o.setup, `${path}.oauth2.setup`);
     }
   }
+  if (auth.type === "serviceAccount") checkServiceAccount(ctx, auth, path, opts);
   if (auth.type === "apiKey") {
     const a = auth.apiKey;
     if (!isObject(a)) {

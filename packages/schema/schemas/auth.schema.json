@@ -4,50 +4,269 @@
   "title": "Auth",
   "description": "How a user connects their account to an App.",
   "type": "object",
-  "required": ["type", "displayName"],
+  "required": [
+    "key",
+    "type",
+    "displayName"
+  ],
   "properties": {
-    "manifestVersion": { "type": "string", "minLength": 1 },
-    "key": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
-    "type": { "type": "string", "enum": ["oauth2", "apiKey", "basic", "bearer", "custom"] },
-    "displayName": { "type": "string", "minLength": 1 },
-    "description": { "type": "string" },
-    "connectionLabel": { "type": "string" },
-    "fields": { "type": "array", "items": { "$ref": "param.schema.json" } },
-    "hooks": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+    "key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "oauth2",
+        "apiKey",
+        "basic",
+        "bearer",
+        "custom",
+        "tenantAuth",
+        "jit",
+        "serviceAccount"
+      ]
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "connectionLabel": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "$ref": "param.schema.json"
+      }
+    },
     "oauth2": {
       "type": "object",
-      "required": ["authorizationUrl", "tokenUrl"],
+      "required": [
+        "authorizationUrl",
+        "tokenUrl"
+      ],
       "additionalProperties": false,
       "properties": {
-        "authorizationUrl": { "type": "string", "minLength": 1 },
-        "tokenUrl": { "type": "string", "minLength": 1 },
-        "refreshUrl": { "type": "string", "minLength": 1 },
-        "revokeUrl": { "type": "string", "minLength": 1 },
-        "scopes": { "type": "array", "items": { "type": "string" } },
-        "scopeSeparator": { "type": "string" },
-        "pkce": { "type": "boolean" },
-        "extraAuthParams": { "type": "object" }
+        "authorizationUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tokenUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refreshUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revokeUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scopeSeparator": {
+          "type": "string"
+        },
+        "pkce": {
+          "type": "boolean"
+        },
+        "extraAuthParams": {
+          "type": "object"
+        },
+        "tokenAuthMethod": {
+          "type": "string",
+          "enum": [
+            "client_secret_post",
+            "client_secret_basic"
+          ]
+        },
+        "tokenBodyFormat": {
+          "type": "string",
+          "enum": [
+            "form",
+            "json"
+          ]
+        },
+        "setup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "consoleUrl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "clientIdHint": {
+              "type": "string"
+            },
+            "clientSecretHint": {
+              "type": "string"
+            },
+            "redirectUriHint": {
+              "type": "string"
+            },
+            "extraHint": {
+              "type": "string"
+            },
+            "extraTemplate": {
+              "type": "object"
+            }
+          }
+        }
       }
     },
     "apiKey": {
       "type": "object",
-      "required": ["in", "name"],
+      "required": [
+        "in",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "in": { "type": "string", "enum": ["header", "query", "body"] },
-        "name": { "type": "string", "minLength": 1 },
-        "prefix": { "type": "string" }
+        "in": {
+          "type": "string",
+          "enum": [
+            "header",
+            "query",
+            "body"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prefix": {
+          "type": "string"
+        }
+      }
+    },
+    "tenantAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "link": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resourcePrefix": {
+          "type": "string"
+        }
+      }
+    },
+    "jit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resourcePrefix": {
+          "type": "string"
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": [
+        "accepts",
+        "scopes",
+        "impersonation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+\\.v[0-9]+$"
+          }
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "impersonation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "optional",
+            "required"
+          ]
+        },
+        "bindingFields": {
+          "type": "array",
+          "items": {
+            "$ref": "param.schema.json"
+          }
+        }
       }
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "type": { "const": "oauth2" } }, "required": ["type"] },
-      "then": { "required": ["oauth2"] }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "oauth2"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "oauth2"
+        ]
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "apiKey" } }, "required": ["type"] },
-      "then": { "required": ["apiKey"] }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "apiKey"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "apiKey"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "serviceAccount"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "serviceAccount"
+        ]
+      }
     }
-  ]
+  ],
+  "additionalProperties": false
 }

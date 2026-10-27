@@ -9,6 +9,7 @@
  */
 import type { Option } from "./param.ts";
 import type { OutputField } from "./action.ts";
+import type { ConnectionBinding } from "./credential.ts";
 import type { ConnectionTarget, RedactedConnection } from "./connection.ts";
 import type { InvocationContext } from "./invocation.ts";
 import type { HealthCheckInput, HealthReport } from "./health.ts";
@@ -151,10 +152,14 @@ export interface SignableRequest {
 }
 
 /**
- * Auth `sign` — the ONLY hook that receives the unredacted credential. It runs
- * in an isolated, network-less context: it transforms the outbound request
- * (e.g. injects an Authorization header) but cannot itself reach the network,
- * so it can never exfiltrate the credential it holds.
+ * Auth `sign` — injects auth into an outbound request. It runs in an isolated,
+ * network-less context: it transforms the request (e.g. injects an Authorization
+ * header) but cannot itself reach the network, so it can never exfiltrate what it holds.
+ *
+ * Credential access, per hook: `exchange` output, `test`, `afterConnect`, `sign`,
+ * `handshake`, `refresh` and `revoke` receive `credential` today. For a provider-derived
+ * (`serviceAccount`) auth, `sign` receives a `DerivedToken` as `credential`, while
+ * `test` and `afterConnect` receive `credential: null` and a signed fetch instead.
  */
 export type SignHook = (
   input: { request: SignableRequest; credential: unknown },
@@ -246,7 +251,13 @@ export type RefreshHook = (
 
 /** Auth `afterConnect` — fetch display data for the connection label. */
 export type AfterConnectHook = (
-  input: { credential: unknown },
+  input: {
+    credential: unknown;
+    /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+    binding?: ConnectionBinding;
+    /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+    credentialDisplay?: Record<string, string>;
+  },
   ctx: HookContext,
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 

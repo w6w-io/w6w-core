@@ -10,6 +10,7 @@
  *   deno task validate path/to/auth.yaml
  *   deno task validate --kind=action my-action.toml
  */
+import { AUTH_TYPES } from "@w6w/types";
 import { parse as parseYaml } from "jsr:@std/yaml@^1.0.0";
 import { parse as parseToml } from "jsr:@std/toml@^1.0.0";
 import { unknownCategories, validateAction, validateApp, validateAuth } from "./mod.ts";
@@ -45,10 +46,10 @@ function parseByExt(text: string, ext: string): unknown {
 function detectKind(value: unknown): Kind {
   if (!value || typeof value !== "object") return "app";
   const v = value as Record<string, unknown>;
-  const AUTH_TYPES = ["oauth2", "apiKey", "basic", "bearer", "custom"];
   const ACTION_TYPES = ["read", "search", "perform"];
   if (
-    typeof v.type === "string" && AUTH_TYPES.includes(v.type) && typeof v.displayName === "string"
+    typeof v.type === "string" && (AUTH_TYPES as readonly string[]).includes(v.type) &&
+    typeof v.displayName === "string"
   ) {
     return "auth";
   }

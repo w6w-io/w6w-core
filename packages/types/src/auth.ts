@@ -3,6 +3,7 @@
  * See rfcs/auth.md.
  */
 import type { Param } from "./param.ts";
+import type { ConnectionBinding } from "./credential.ts";
 import type {
   AfterConnectHook,
   ExchangeHook,
@@ -12,14 +13,19 @@ import type {
   SignHook,
 } from "./hooks.ts";
 
-export type AuthType =
-  | "oauth2"
-  | "apiKey"
-  | "basic"
-  | "bearer"
-  | "custom"
-  | "tenantAuth"
-  | "jit";
+/** Every Auth method type, in canonical order. The single source for `AuthType`. */
+export const AUTH_TYPES = [
+  "oauth2",
+  "apiKey",
+  "basic",
+  "bearer",
+  "custom",
+  "tenantAuth",
+  "jit",
+  "serviceAccount",
+] as const;
+
+export type AuthType = (typeof AUTH_TYPES)[number];
 
 export interface OAuth2Config {
   authorizationUrl: string;
@@ -120,6 +126,24 @@ export interface JitConfig {
 }
 
 /**
+ * `serviceAccount` — the credential is a stored service-account source (e.g. a
+ * Google service-account key) and the host derives short-lived tokens from it
+ * through a compiled-in credential provider. The App declares only which
+ * credential contracts it accepts; it can never declare a token destination.
+ * `Auth.fields` remain the credential-source input; `bindingFields` are the
+ * non-secret, per-Connection binding inputs (e.g. `delegatedUser`, `projectId`).
+ */
+export interface ServiceAccountConfig {
+  /** Credential contract ids this auth accepts, e.g. `google-service-account.v1`. */
+  accepts: string[];
+  /** Scopes the auth requests by default. */
+  scopes: string[];
+  impersonation: "none" | "optional" | "required";
+  /** Non-secret binding inputs collected per Connection. Never `secret`. */
+  bindingFields?: Param[];
+}
+
+/**
  * An Auth method's serializable configuration — its metadata minus the hook
  * functions. This is what `describe()` returns. It is the `AuthDefinition` with
  * its hooks stripped.
@@ -142,6 +166,7 @@ export interface Auth {
   apiKey?: ApiKeyConfig;
   tenantAuth?: TenantAuthConfig;
   jit?: JitConfig;
+  serviceAccount?: ServiceAccountConfig;
 }
 
 /**
@@ -154,10 +179,24 @@ export interface AuthDefinition extends Auth {
   /** Exchange auth code / form input for the stored opaque credential. */
   exchange?: ExchangeHook;
   /** Required. Validates the credential is live. */
-  test: Hook<{ credential: unknown }, { ok: boolean; message?: string }>;
+  test: Hook<
+    {
+      credential: unknown;
+      /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+      binding?: ConnectionBinding;
+      /** signed mode only (D-A3): binding = the connection's non-secret binding; credentialDisplay = the credential's safe display metadata (e.g. client_email) — never key material */
+      credentialDisplay?: Record<string, string>;
+    },
+    { ok: boolean; message?: string }
+  >;
   /** Fetch display data for `connectionLabel`. */
   afterConnect?: AfterConnectHook;
-  /** Inject auth into every outbound request. Only hook that reads the credential. */
+  /**
+   * Inject auth into every outbound request. Credential access, per hook: `exchange` output,
+   * `test`, `afterConnect`, `sign`, `handshake`, `refresh` and `revoke` receive `credential`
+   * today. For a provider-derived (`serviceAccount`) auth, `sign` receives a `DerivedToken`,
+   * while `test` and `afterConnect` receive `credential: null` and a signed fetch.
+   */
   sign?: SignHook;
   /** Produce the protocol's auth frames, iteratively. The socket analogue of `sign`. */
   handshake?: HandshakeHook;

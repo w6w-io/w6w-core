@@ -45,3 +45,20 @@ Deno.test("CLI exits 1 for an invalid fixture", async () => {
   assertEquals(code, 1);
   assert(new TextDecoder().decode(stderr).includes("FAIL (app)"));
 });
+
+Deno.test("detectKind: Auth for every auth type", () => {
+  for (
+    const type of [
+      "oauth2",
+      "apiKey",
+      "basic",
+      "bearer",
+      "custom",
+      "tenantAuth",
+      "jit",
+      "serviceAccount",
+    ]
+  ) {
+    assertEquals(detectKind({ type, displayName: "X" }), "auth", type);
+  }
+});

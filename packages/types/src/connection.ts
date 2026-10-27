@@ -2,7 +2,12 @@
  * Connection — the stored, per-user result of a completed Auth flow.
  * See rfcs/connection.md.
  */
+import type { ApprovedBinding, ConnectionBinding } from "./credential.ts";
 
+/**
+ * `needs_refresh` is not used for a provider-derived (`serviceAccount`) credential:
+ * derived tokens refresh by expiry at use time, never by a stored state.
+ */
 export type ConnectionState =
   | "pending"
   | "connected"
@@ -58,19 +63,52 @@ export interface Connection {
    * Non-secret: it SURVIVES redaction and is visible to userland.
    */
   target?: ConnectionTarget;
+  /** The stored credential this Connection binds to, when it has one. */
+  credentialId?: string | null;
+  /** Non-secret per-Connection inputs narrowing how the credential is used. */
+  binding?: ConnectionBinding;
+  /** What the host approved the binding to carry. */
+  approved?: ApprovedBinding;
+  /** Bumped whenever the binding's scopes or delegated user change. */
+  bindingRevision?: number;
 }
 
 /**
  * The Connection as exposed to userland code (Action `execute`, editor previews).
  * `credential`, `lastRefreshedAt`, and `manifestVersion` are stripped.
  */
-export type RedactedConnection = Omit<
+export type RedactedConnection = Pick<
   Connection,
-  "credential" | "lastRefreshedAt" | "manifestVersion"
+  | "id"
+  | "app"
+  | "auth"
+  | "owner"
+  | "state"
+  | "display"
+  | "label"
+  | "createdAt"
+  | "lastTestedAt"
+  | "expiresAt"
+  | "target"
 >;
+
+const REDACTED_KEYS = [
+  "id",
+  "app",
+  "auth",
+  "owner",
+  "state",
+  "display",
+  "label",
+  "createdAt",
+  "lastTestedAt",
+  "expiresAt",
+  "target",
+] as const satisfies readonly (keyof RedactedConnection)[];
 
 /** Project a stored Connection down to the redacted form safe for userland. */
 export function redact(c: Connection): RedactedConnection {
-  const { credential: _cred, lastRefreshedAt: _lr, manifestVersion: _mv, ...rest } = c;
-  return rest;
+  const out: Record<string, unknown> = {};
+  for (const k of REDACTED_KEYS) if (k in c && c[k] !== undefined) out[k] = c[k];
+  return out as RedactedConnection;
 }
