@@ -348,3 +348,67 @@ Deno.test("validateAuth checks optional OAuth token authentication and encoding"
     false,
   );
 });
+
+// ── serviceAccount / tenantAuth / jit ────────────────────────────────────────
+const SA_AUTH = {
+  key: "service-account",
+  type: "serviceAccount",
+  displayName: "Service account",
+  serviceAccount: {
+    accepts: ["google-service-account.v1"],
+    scopes: ["https://www.googleapis.com/auth/gmail.send"],
+    impersonation: "optional",
+  },
+};
+const HOOKS = { hooks: ["test", "sign"] };
+const saWith = (patch: Record<string, unknown>) => ({
+  ...SA_AUTH,
+  serviceAccount: { ...SA_AUTH.serviceAccount, ...patch },
+});
+
+Deno.test("validateAuth: a well-formed serviceAccount auth passes in both sign-hook forms", () => {
+  const viaList = validateAuth(SA_AUTH, "auth", HOOKS);
+  assert(viaList.ok, JSON.stringify(viaList.errors));
+  const viaFn = validateAuth({ ...SA_AUTH, sign: () => ({}) });
+  assert(viaFn.ok, JSON.stringify(viaFn.errors));
+  const withBinding = validateAuth(
+    saWith({ bindingFields: [{ key: "delegatedUser", label: "User", type: "string" }] }),
+    "auth",
+    HOOKS,
+  );
+  assert(withBinding.ok, JSON.stringify(withBinding.errors));
+});
+
+Deno.test("validateAuth: serviceAccount rejections by path", () => {
+  const run = (a: unknown, opts = HOOKS) => codes(validateAuth(a, "auth", opts));
+  assertEquals(run({ ...SA_AUTH, serviceAccount: undefined }), ["auth.serviceAccount"]);
+  assertEquals(run(SA_AUTH, { hooks: ["test"] }), ["auth.sign"]);
+  assertEquals(validateAuth(SA_AUTH).errors.map((e) => e.path), ["auth.sign"]);
+  assertEquals(run(saWith({ accepts: [] })), ["auth.serviceAccount.accepts"]);
+  assertEquals(run(saWith({ accepts: ["Bad.v1"] })), ["auth.serviceAccount.accepts[0]"]);
+  assertEquals(run(saWith({ accepts: ["legacy:a#b"] })), ["auth.serviceAccount.accepts[0]"]);
+  assertEquals(run(saWith({ scopes: [] })), ["auth.serviceAccount.scopes"]);
+  assertEquals(run(saWith({ scopes: [""] })), ["auth.serviceAccount.scopes[0]"]);
+  assertEquals(run(saWith({ impersonation: "always" })), ["auth.serviceAccount.impersonation"]);
+  assertEquals(
+    run(saWith({ bindingFields: [{ key: "k", label: "K", type: "secret" }] })),
+    ["auth.serviceAccount.bindingFields[0].type"],
+  );
+});
+
+Deno.test("validateAuth: serviceAccount keys are an allowlist (no destination can be declared)", () => {
+  for (const k of ["tokenUrl", "tokenUri", "endpoint", "audience", "anything"]) {
+    assertEquals(
+      codes(validateAuth(saWith({ [k]: "https://evil.test/t" }), "auth", HOOKS)),
+      [`auth.serviceAccount.${k}`],
+      k,
+    );
+  }
+});
+
+Deno.test("validateAuth: tenantAuth and jit auths validate ok", () => {
+  for (const type of ["tenantAuth", "jit"]) {
+    const r = validateAuth({ key: type, type, displayName: type });
+    assert(r.ok, JSON.stringify(r.errors));
+  }
+});
