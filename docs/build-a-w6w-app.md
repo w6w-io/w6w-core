@@ -238,7 +238,7 @@ const serviceAccount: AuthDefinition = {
   key: "service-account",
   type: "serviceAccount",
   displayName: "Service account",
-  fields: [ // the credential-source input: exactly one field
+  fields: [ // the credential-source input: by convention exactly one field
     { key: "serviceAccountKey", label: "Service account key", type: "json", secret: true,
       required: true, ui: "textarea" },
   ],

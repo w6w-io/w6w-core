@@ -202,8 +202,8 @@ const serviceAccount: AuthDefinition = {
 };
 ```
 
-By convention (and the provider's input contract, enforced host-side by `validateSource`, not by the
-validator or schema), a `serviceAccount` auth declares exactly **one** source field, `serviceAccountKey` (`type: "json"`,
+By convention (neither the validator nor the schema enforces the count; the provider's `validateSource` validates the
+stored payload's shape), a `serviceAccount` auth declares exactly **one** source field, `serviceAccountKey` (`type: "json"`,
 `secret: true`, `required: true`, `ui: "textarea"`). It never declares a token URL or any endpoint:
 the destination of a token exchange belongs to the provider, never to the app.
 

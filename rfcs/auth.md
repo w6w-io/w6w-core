@@ -437,7 +437,7 @@ const serviceAccount: AuthDefinition = {
 
 There is **no URL or endpoint field** (D-7): the destination of a token exchange belongs to the
 provider's contract, never to the app. `Auth.fields` remain the **credential-source input**: a
-`serviceAccount` auth declares exactly one, `serviceAccountKey` (`type: "json"`, `secret: true`,
+`serviceAccount` auth declares, by convention, exactly one, `serviceAccountKey` (`type: "json"`, `secret: true`,
 `required: true`, `ui: "textarea"`). `bindingFields` are collected per Connection and stored on the
 binding, never with the source.
 
