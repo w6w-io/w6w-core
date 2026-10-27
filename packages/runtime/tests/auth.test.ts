@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
-import { describe, invoke, loadApp, signingFetch, W6WError } from "../mod.ts";
+import { authFor, describe, invoke, loadApp, signingFetch, W6WError } from "../mod.ts";
 import type { Connection, Invocation } from "@w6w/types";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
@@ -409,4 +409,58 @@ Deno.test("an invocation with no overrides is byte-identical to before", async (
   const empty = await runOnce({});
   assertEquals(empty.body, plain.body);
   assertEquals(empty.path, plain.path);
+});
+
+// ── strict authFor (T1.2 AC3) ───────────────────────────────────────────────
+
+Deno.test("authFor returns the auth the connection names", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  assertEquals(authFor(app, CONNECTION).auth.key, "api-key");
+});
+
+Deno.test("authFor throws auth_not_found for an undeclared key, naming the key and no credential", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const err = (() => {
+    try {
+      authFor(app, { ...CONNECTION, auth: "no-such-auth" });
+    } catch (e) {
+      return e;
+    }
+  })();
+  assert(err instanceof W6WError);
+  assertEquals([err.code, err.phase], ["auth_not_found", "auth"]);
+  assert(err.message.includes("no-such-auth"), err.message);
+  assertFalse(err.message.includes("test-key-123"));
+});
+
+Deno.test("authFor throws auth_not_found for an app that declares no auth at all", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const noAuth = { ...app, auths: [] };
+  const err = (() => {
+    try {
+      authFor(noAuth, CONNECTION);
+    } catch (e) {
+      return e;
+    }
+  })();
+  assert(err instanceof W6WError);
+  assertEquals(err.code, "auth_not_found");
+});
+
+Deno.test("invoke with a mismatched connection.auth rejects auth_not_found and the host sees nothing", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const { server, port, get } = captureServer();
+  try {
+    const err = await assertRejects(
+      () =>
+        invoke(app, sendInvocation(`http://127.0.0.1:${port}`), {
+          connection: { ...CONNECTION, auth: "no-such-auth" },
+        }),
+      W6WError,
+    );
+    assertEquals([err.code, err.phase], ["auth_not_found", "auth"]);
+    assertEquals(get(), undefined);
+  } finally {
+    await server.shutdown();
+  }
 });

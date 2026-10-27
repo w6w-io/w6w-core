@@ -16,12 +16,15 @@ import type {
   AppManifest,
   Auth,
   Connection,
+  ConnectionBinding,
+  DerivedToken,
   FileRef,
   HealthCheck,
   InterfaceConformance,
   Invocation,
   RedactedConnection,
   RequestOverrides,
+  ResolvedAuthorization,
   ResolveFieldsInput,
   ResolveFieldsOutput,
   SignableRequest,
@@ -36,7 +39,8 @@ import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
 import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
-import { W6WError } from "./errors.ts";
+import { credentialError, W6WError } from "./errors.ts";
+import type { CredentialPurpose, CredentialResolver } from "./authorization.ts";
 import { RESOLVE_FIELDS_TIMEOUT_MS, sanitizeResolveFieldsOutput } from "./resolve-fields.ts";
 import { openConnectionSocket, type SocketSession } from "./socket.ts";
 
@@ -97,6 +101,13 @@ export interface InvokeOptions {
    * `target` (no connect is attempted). Unset, behaviour is unchanged.
    */
   egressTransport?: (request: SignableRequest) => Promise<WireResponse>;
+  /**
+   * The host's owner of the credential source and its refresh. When set,
+   * `prepareAuthorization` asks it for the Connection's authorization instead of
+   * reading `connection.credential`, and core never runs the Auth `refresh`
+   * hook. Unset, behaviour is unchanged. Never consulted under `egressTransport`.
+   */
+  credentialResolver?: CredentialResolver;
 }
 
 export interface InvokeResult {
@@ -121,9 +132,23 @@ export function describe(app: LoadedApp): AppDescription {
   };
 }
 
-/** Pick the LoadedAuth a Connection refers to (by `auth` key), else the app's sole auth. */
-export function authFor(app: LoadedApp, connection: Connection): LoadedAuth | undefined {
-  return app.auths.find((a) => a.auth.key === connection.auth) ?? app.auths[0];
+/**
+ * Pick the LoadedAuth a Connection refers to, by `auth` key. Strict: a key the
+ * app does not declare throws `auth_not_found` rather than falling back to some
+ * other auth, because signing a Connection with a different auth method's hooks
+ * is a credential-confusion bug, not a convenience. The message names keys and
+ * ids only, never a credential.
+ */
+export function authFor(app: LoadedApp, connection: Connection): LoadedAuth {
+  const found = app.auths.find((a) => a.auth.key === connection.auth);
+  if (!found) {
+    throw credentialError(
+      "auth_not_found",
+      `Connection "${connection.id}" names auth "${connection.auth}", which app ` +
+        `"${app.manifest.id}" does not declare.`,
+    );
+  }
+  return found;
 }
 
 /**
@@ -448,24 +473,47 @@ function withDeniedUnwrap(
   };
 }
 
-interface ResolvedConnection {
-  /** The live credential to feed `sign` (post-refresh if it was stale). */
-  credential: unknown;
+export interface PrepareAuthorizationOptions {
+  purpose: CredentialPurpose;
+  credentialResolver?: CredentialResolver;
+  egressTransport?: InvokeOptions["egressTransport"];
+  timeoutMs?: number;
+}
+
+export interface PreparedAuthorization {
+  /** What the host (or the legacy path) resolved for this preparation. */
+  authorization: ResolvedAuthorization;
+  /** Exactly what the `sign`/`handshake` hook receives as `credential`. */
+  signCredential: unknown;
   /** The redacted projection exposed to the action. */
   redacted: RedactedConnection;
 }
 
 /**
- * Apply the Connection lifecycle gates from the Invocation + Connection RFCs.
- * Throws (phase `auth`) for non-live states; for `needs_refresh`, runs the Auth
- * `refresh` hook and proceeds with the new credential, or transitions to broken.
+ * The one host-realm seam every Connection's authorization passes through
+ * (`invoke`, `invokeTriggerHook`, `invokeResolveFields`, a signed health check).
+ * It runs on the HOST side of the worker boundary; what it returns as
+ * `signCredential` is the only credential-bearing value placed in a `sign` or
+ * `handshake` worker's input.
+ *
+ * Applies the Connection lifecycle gates first (`pending`/`revoked`/`broken`
+ * throw their codes before any resolver is consulted). Then:
+ *   - `egressTransport` set: the transport owns signing AND egress, so no
+ *     credential-bearing path may run — the resolver is never called and the
+ *     result is `{ kind: "none" }`;
+ *   - a `credentialResolver`: it owns the source and refresh. For `connected` and
+ *     `needs_refresh` it is called exactly once; core never reads
+ *     `connection.credential` and never runs `refresh`;
+ *   - neither: today's behaviour — the Connection's own opaque credential, with
+ *     the in-core `needs_refresh` -> `refresh` arm for embedders without a server.
  */
-async function resolveConnection(
+export async function prepareAuthorization(
   app: LoadedApp,
-  conn: Connection,
-  auth: LoadedAuth | undefined,
-  opts: InvokeOptions,
-): Promise<ResolvedConnection> {
+  auth: LoadedAuth,
+  connection: Connection,
+  opts: PrepareAuthorizationOptions,
+): Promise<PreparedAuthorization> {
+  const conn = connection;
   if (opts.egressTransport) {
     // `egressTransport` replaces `sign` AND host egress as one unit; no
     // credential-bearing path may run under it. Strict `!== undefined` (not
@@ -487,7 +535,7 @@ async function resolveConnection(
   }
   switch (conn.state) {
     case "connected":
-      return { credential: conn.credential, redacted: redact(conn) };
+      break;
     case "pending":
       throw new W6WError(
         "connection_pending",
@@ -498,32 +546,8 @@ async function resolveConnection(
       throw new W6WError("connection_revoked", "auth", "Connection was revoked; reconnect.");
     case "broken":
       throw new W6WError("connection_broken", "auth", "Connection is broken; reconnect.");
-    case "needs_refresh": {
-      if (!auth?.hooks.has("refresh")) {
-        throw new W6WError(
-          "connection_broken",
-          "auth",
-          "Connection needs refresh but its auth method has no `refresh` hook.",
-        );
-      }
-      let credential: unknown;
-      try {
-        // `refresh` gets the old credential and an un-signed, host-mediated
-        // fetch (to reach the token endpoint). On success it returns the new
-        // credential; any failure transitions the connection to broken.
-        credential = await runHook({
-          ...hookSource(app),
-          selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
-          input: { credential: conn.credential },
-          timeoutMs: opts.timeoutMs,
-          onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs),
-        });
-      } catch (e) {
-        throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
-      }
-      const refreshed: Connection = { ...conn, credential, state: "connected" };
-      return { credential, redacted: redact(refreshed) };
-    }
+    case "needs_refresh":
+      break;
     default:
       throw new W6WError(
         "connection_broken",
@@ -531,6 +555,84 @@ async function resolveConnection(
         `Unknown connection state "${(conn as Connection).state}".`,
       );
   }
+
+  if (opts.egressTransport) {
+    return { authorization: { kind: "none" }, signCredential: undefined, redacted: redact(conn) };
+  }
+
+  if (opts.credentialResolver) {
+    const authorization = await opts.credentialResolver.prepare({
+      connection: conn,
+      authKey: auth.auth.key,
+      purpose: opts.purpose,
+    });
+    // `redact` is an explicit pick that never touches `credential`; the state
+    // is then pinned to what the action sees after a (resolver-owned) refresh.
+    const redacted: RedactedConnection = { ...redact(conn), state: "connected" };
+    switch (authorization.kind) {
+      case "none":
+        return { authorization, signCredential: undefined, redacted };
+      case "legacyOpaque":
+        return { authorization, signCredential: authorization.credential, redacted };
+      case "derived": {
+        // The DerivedToken and nothing else: not the wrapper, not any extra member.
+        const { accessToken, tokenType, expiresAt } = authorization.token;
+        return {
+          authorization,
+          signCredential: { accessToken, tokenType, expiresAt } satisfies DerivedToken,
+          redacted,
+        };
+      }
+      default:
+        throw credentialError(
+          "provider_unsupported",
+          `Credential resolver returned an unsupported authorization kind ` +
+            `"${(authorization as { kind: unknown }).kind}".`,
+        );
+    }
+  }
+
+  // Legacy path (no resolver), preserved verbatim.
+  if (conn.state === "needs_refresh") {
+    if (!auth.hooks.has("refresh")) {
+      throw new W6WError(
+        "connection_broken",
+        "auth",
+        "Connection needs refresh but its auth method has no `refresh` hook.",
+      );
+    }
+    let credential: unknown;
+    try {
+      // `refresh` gets the old credential and an un-signed, host-mediated
+      // fetch (to reach the token endpoint). On success it returns the new
+      // credential; any failure transitions the connection to broken.
+      credential = await runHook({
+        ...hookSource(app),
+        selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
+        input: { credential: conn.credential },
+        timeoutMs: opts.timeoutMs,
+        onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs),
+      });
+    } catch (e) {
+      throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
+    }
+    const refreshed: Connection = { ...conn, credential, state: "connected" };
+    return {
+      authorization: { kind: "legacyOpaque", source: "stored", credential, sourceRevision: null },
+      signCredential: credential,
+      redacted: redact(refreshed),
+    };
+  }
+  return {
+    authorization: {
+      kind: "legacyOpaque",
+      source: "stored",
+      credential: conn.credential,
+      sourceRevision: null,
+    },
+    signCredential: conn.credential,
+    redacted: redact(conn),
+  };
 }
 
 /**
@@ -550,13 +652,25 @@ const CREDENTIAL_HOOK_KINDS: readonly CredentialHookKind[] = [
 export interface RunAuthHookOptions {
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
+  /**
+   * Signed mode (D-A3) for a provider-derived auth: `test`/`afterConnect` run with
+   * `credential: null` and a `ctx.fetch` signed by the auth's networkless `sign`
+   * hook from `authorization`'s derived token, under the app's allowlist. The hook
+   * input is `{ credential: null }` plus exactly `binding` / `credentialDisplay`
+   * when present (absent keys omitted) — nothing else is ever forwarded.
+   */
+  signing?: {
+    authorization: ResolvedAuthorization;
+    binding?: ConnectionBinding;
+    credentialDisplay?: Record<string, string>;
+  };
 }
 
 /**
  * Run one of an Auth method's credential-bearing lifecycle hooks — `test`,
  * `afterConnect`, `refresh` or `revoke` — in the same least-privilege sandbox
  * `invoke` uses, with host-mediated, allowlist-enforced egress. This is the
- * `resolveConnection` `needs_refresh` branch's mechanism, generalized by hook
+ * `prepareAuthorization` `needs_refresh` branch's mechanism, generalized by hook
  * name so `afterConnect` and `test` don't need their own copy.
  *
  * `sign` is refused, at runtime as well as in the `CredentialHookKind` type: it
@@ -581,12 +695,42 @@ export async function runAuthHook<T = unknown>(
         `runAuthHook can run — "sign" is network-less by RFC and never routes through here.`,
     );
   }
+  const signing = opts.signing;
+  if (signing) {
+    // Signed mode exists for the hooks that only PROBE with the credential. A
+    // `refresh`/`revoke` needs the credential source itself, which a derived
+    // token is not — so they cannot run credential-less.
+    if (hook !== "test" && hook !== "afterConnect") {
+      throw new W6WError(
+        "invalid_credential_hook",
+        "auth",
+        `Auth "${auth.auth.key}" hook "${hook}" cannot run in signed mode; ` +
+          `only "test" and "afterConnect" can.`,
+      );
+    }
+  }
   if (!auth.hooks.has(hook)) {
     throw new W6WError(
       "hook_not_declared",
       "auth",
       `Auth "${auth.auth.key}" does not declare hook "${hook}".`,
     );
+  }
+  if (signing) {
+    // Checked before any worker spawns: a signed fetch needs a `sign` hook.
+    if (!auth.hooks.has("sign")) {
+      throw new W6WError(
+        "hook_not_declared",
+        "auth",
+        `Auth "${auth.auth.key}" declares no "sign" hook, so hook "${hook}" cannot run signed.`,
+      );
+    }
+    if (signing.authorization.kind !== "derived") {
+      throw credentialError(
+        "provider_unsupported",
+        `Signed mode needs a derived authorization; got "${signing.authorization.kind}".`,
+      );
+    }
   }
   // Set from INSIDE our own `onFetch`, on the host side of the worker
   // boundary — the moment we observe hostFetch itself deny the request, not
@@ -599,16 +743,37 @@ export async function runAuthHook<T = unknown>(
   // tripped by a hook's own unrelated error — including one that merely
   // happens to end with the same wording `hostFetch` uses.
   let deniedByAllowlist = false;
+  // Signed mode: the hook's fetch goes through `signingFetch` with the derived
+  // token (the pre-sign egress check and `sign` included), and the hook input
+  // is rebuilt from scratch — the positional `credential` is never read.
+  const doFetch = signing
+    ? signingFetch(
+      app,
+      auth,
+      (signing.authorization as Extract<ResolvedAuthorization, { kind: "derived" }>).token,
+      { timeoutMs: opts.timeoutMs, onLog: opts.onLog },
+      app.netAllowlist,
+    )
+    : (req: SignableRequest) => hostFetch(app.netAllowlist, req, opts.timeoutMs);
+  const hookInput: Record<string, unknown> = signing
+    ? {
+      credential: null,
+      ...(signing.binding !== undefined ? { binding: signing.binding } : {}),
+      ...(signing.credentialDisplay !== undefined
+        ? { credentialDisplay: signing.credentialDisplay }
+        : {}),
+    }
+    : { credential };
   try {
     return await runHook<T>({
       ...hookSource(app),
       selector: { kind: "auth", key: auth.auth.key, hook },
-      input: { credential },
+      input: hookInput,
       timeoutMs: opts.timeoutMs,
       onLog: opts.onLog,
       onFetch: async (req) => {
         try {
-          return await hostFetch(app.netAllowlist, req, opts.timeoutMs);
+          return await doFetch(req);
         } catch (fetchErr) {
           if (fetchErr instanceof W6WError && fetchErr.code === "egress_denied") {
             deniedByAllowlist = true;
@@ -627,7 +792,7 @@ export async function runAuthHook<T = unknown>(
 
 /**
  * Execute an Action, following the Invocation RFC's resolution sequence:
- * resolve action -> resolve connection (lifecycle gates + refresh) -> resolve
+ * resolve action -> prepare authorization (lifecycle gates + resolver/refresh) -> resolve
  * params -> invoke `execute` in the sandbox, signing outbound requests.
  */
 export async function invoke(
@@ -652,8 +817,18 @@ export async function invoke(
   const auth = opts.connection ? authFor(app, opts.connection) : undefined;
   let credential: unknown;
   let redacted: RedactedConnection | undefined;
-  if (opts.connection) {
-    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  if (opts.connection && auth) {
+    ({ signCredential: credential, redacted } = await prepareAuthorization(
+      app,
+      auth,
+      opts.connection,
+      {
+        purpose: opts.connection.target ? "socket" : "invoke",
+        credentialResolver: opts.credentialResolver,
+        egressTransport: opts.egressTransport,
+        timeoutMs: opts.timeoutMs,
+      },
+    ));
   } else if (invocation.connection) {
     throw new W6WError(
       "unknown_connection",
@@ -784,8 +959,18 @@ export async function invokeTriggerHook(
   const auth = opts.connection ? authFor(app, opts.connection) : undefined;
   let credential: unknown;
   let redacted: RedactedConnection | undefined;
-  if (opts.connection) {
-    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  if (opts.connection && auth) {
+    ({ signCredential: credential, redacted } = await prepareAuthorization(
+      app,
+      auth,
+      opts.connection,
+      {
+        purpose: "trigger",
+        credentialResolver: opts.credentialResolver,
+        egressTransport: opts.egressTransport,
+        timeoutMs: opts.timeoutMs,
+      },
+    ));
   }
   const { onFetch, unwrap } = withDeniedUnwrap(signingFetch(app, auth, credential, opts));
 
@@ -841,8 +1026,18 @@ export async function invokeResolveFields(
   const auth = opts.connection ? authFor(app, opts.connection) : undefined;
   let credential: unknown;
   let redacted: RedactedConnection | undefined;
-  if (opts.connection) {
-    ({ credential, redacted } = await resolveConnection(app, opts.connection, auth, opts));
+  if (opts.connection && auth) {
+    ({ signCredential: credential, redacted } = await prepareAuthorization(
+      app,
+      auth,
+      opts.connection,
+      {
+        purpose: "fields",
+        credentialResolver: opts.credentialResolver,
+        egressTransport: opts.egressTransport,
+        timeoutMs: opts.timeoutMs,
+      },
+    ));
   } else if (app.auths.length > 0) {
     throw new W6WError(
       "connection_required",

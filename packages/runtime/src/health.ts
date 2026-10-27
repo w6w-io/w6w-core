@@ -23,7 +23,8 @@ import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth, LoadedHealthCheck } from "./loader.ts";
 import { W6WError } from "./errors.ts";
 import { runHook } from "./sandbox/run-hook.ts";
-import { signingFetch } from "./runtime.ts";
+import { authFor, prepareAuthorization, signingFetch } from "./runtime.ts";
+import type { CredentialResolver } from "./authorization.ts";
 import { latestPerId, parseChannelMeta, parseFeed } from "./feed.ts";
 
 /** Entries handed to a hook when the source names no `limit`. */
@@ -62,6 +63,12 @@ export interface CheckHealthOptions {
   onLog?: (level: string, message: string, data?: unknown) => void;
   /** Injected so results are stampable without the runtime reaching for a clock. */
   now?: () => Date;
+  /**
+   * The host's owner of the credential source. Set, a `signed` check prepares its
+   * authorization through `prepareAuthorization` (purpose `health`) instead of
+   * reading `connection.credential`. Unset, the raw-credential path is unchanged.
+   */
+  credentialResolver?: CredentialResolver;
 }
 
 /**
@@ -275,7 +282,7 @@ async function fetchFeed(
   }
 }
 
-function runHealthHook(
+async function runHealthHook(
   app: LoadedApp,
   loaded: LoadedHealthCheck,
   posture: ReturnType<typeof healthCredential>,
@@ -286,8 +293,16 @@ function runHealthHook(
   // Passing `auth: undefined` is how the caller says "do not sign this", which
   // is the whole contract for a `none` or `context` check.
   const auth: LoadedAuth | undefined = posture === "signed" && conn
-    ? app.auths.find((a) => a.auth.key === conn.auth) ?? app.auths[0]
+    ? authFor(app, conn)
     : undefined;
+  let signCredential: unknown = posture === "signed" ? conn?.credential : undefined;
+  if (auth && conn && opts.credentialResolver) {
+    ({ signCredential } = await prepareAuthorization(app, auth, conn, {
+      purpose: "health",
+      credentialResolver: opts.credentialResolver,
+      timeoutMs: opts.timeoutMs,
+    }));
+  }
 
   return runHook<unknown>({
     ...hookSource(app),
@@ -301,7 +316,7 @@ function runHealthHook(
     onFetch: signingFetch(
       app,
       auth,
-      posture === "signed" ? conn?.credential : undefined,
+      signCredential,
       { timeoutMs: opts.timeoutMs, onLog: opts.onLog },
       loaded.netAllowlist,
     ),

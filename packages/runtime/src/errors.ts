@@ -2,6 +2,7 @@
  * Typed errors. Each carries the phase it failed in, mirroring the Invocation
  * RFC's error table so callers can decide what is retryable.
  */
+import type { CredentialErrorCode } from "@w6w/types";
 
 export type ErrorPhase = "load" | "resolution" | "auth" | "execute" | "output";
 
@@ -28,4 +29,17 @@ export class LoadError extends W6WError {
     super(code, "load", message, details);
     this.name = "LoadError";
   }
+}
+
+/**
+ * A credential-resolution failure. Phase is always `auth`; `code` is one of
+ * `CREDENTIAL_ERROR_CODES` (@w6w/types). Messages name keys and ids, never a
+ * credential.
+ */
+export function credentialError(
+  code: CredentialErrorCode,
+  message: string,
+  details?: unknown,
+): W6WError {
+  return new W6WError(code, "auth", message, details);
 }
