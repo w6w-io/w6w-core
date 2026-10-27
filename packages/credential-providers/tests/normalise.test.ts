@@ -149,7 +149,7 @@ Deno.test("common: client_email|private_key canonical names; missing type defaul
   assertEquals(out.source.type, "service_account");
 });
 
-Deno.test("common: any other type is refused", async () => {
+Deno.test("common: any other type is refused", () => {
   const e = assertThrows(() =>
     norm({ email: EMAIL, privateKey: KEY, type: "authorized_user" }, decl(["a"]))
   );
@@ -234,15 +234,17 @@ Deno.test("scopes: absent or blank payload scopes -> declared", async () => {
 Deno.test("derived state dropped: accessToken/expiresAt/access_token/expires_at never surface", async () => {
   const out = norm(
     await base({
-      accessToken: "T1",
-      expiresAt: "2030-01-01T00:00:00Z",
-      access_token: "T2",
+      accessToken: "STALE-ONE-q9x",
+      expiresAt: "EXP-ISO-q9x",
+      access_token: "STALE-TWO-q9x",
       expires_at: 9,
     }),
     decl(["a"]),
   );
   const s = JSON.stringify(out);
-  assert(!s.includes("T1") && !s.includes("T2") && !s.includes("2030") && !s.includes('"expires'));
+  for (const needle of ["STALE-ONE-q9x", "STALE-TWO-q9x", "EXP-ISO-q9x", '"expires']) {
+    assert(!s.includes(needle), needle);
+  }
 });
 
 Deno.test("settings: omitted when empty; non-string projectId/location ignored", async () => {
@@ -260,7 +262,7 @@ Deno.test("source never carries payload scopes or token_uri", async () => {
   assert(!("token_uri" in out.source));
 });
 
-Deno.test("invalid key in payload is refused by validateSource", async () => {
+Deno.test("invalid key in payload is refused by validateSource", () => {
   const e = assertThrows(() => norm({ email: EMAIL, privateKey: "nope" }, decl(["a"])), W6WError);
   assertEquals((e.details as { field: string }).field, "private_key");
 });

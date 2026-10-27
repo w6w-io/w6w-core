@@ -108,7 +108,7 @@ Deno.test("validateSource: serviceAccountKey wrapper (JSON string)", async () =>
   assertEquals(out.type, "service_account");
 });
 
-Deno.test("validateSource: wrapper with an extra key is rejected", async () => {
+Deno.test("validateSource: wrapper with an extra key is rejected", () => {
   const e = errOf(
     assertThrows(() => p.validateSource({ serviceAccountKey: undefined, other: 1 })),
   );
@@ -314,7 +314,7 @@ Deno.test("derive: key import failure -> credential_invalid with zero egress", a
     private_key: "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----",
   });
   const e = errOf(
-    await assertRejects(async () =>
+    await assertRejects(() =>
       p.deriveAuthorization({ source: bad, binding: {}, approved: approved(), egress: m.egress })
     ),
   );
