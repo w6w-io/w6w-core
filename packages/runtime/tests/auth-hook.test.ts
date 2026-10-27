@@ -132,3 +132,101 @@ Deno.test("a hook the auth doesn't declare is refused, naming the auth key and t
   assert(err.message.includes(auth.auth.key), `expected message to name "${auth.auth.key}"`);
   assert(err.message.includes("revoke"), `expected message to name "revoke"`);
 });
+
+// ── T1.5 / R-30: a serviceAccount auth never runs an unsigned hook ──────────
+
+const SERVICE_ACCOUNT_DIR = fromFileUrl(
+  new URL("../../../fixtures/apps/service-account", import.meta.url),
+);
+
+/** A credential whose members count reads, as `structuredClone` into a worker would. */
+function sentinelCredential() {
+  let reads = 0;
+  const credential = {};
+  Object.defineProperty(credential, "privateKey", {
+    enumerable: true,
+    get() {
+      reads++;
+      return "SENTINEL";
+    },
+  });
+  return { credential, reads: () => reads };
+}
+
+Deno.test("T1.5 (b): every unsigned hook on a serviceAccount auth rejects provider_unsupported before any worker spawns", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT_DIR);
+  const auth = app.auths[0];
+  assertEquals(auth.auth.type, "serviceAccount");
+  const real = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (() => {
+    fetches++;
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  }) as typeof fetch;
+  try {
+    // `refresh`/`revoke` are not declared by the fixture: the guard must still
+    // win over `hook_not_declared`, so ANY hook is refused.
+    for (const hook of ["test", "afterConnect", "refresh", "revoke"] as const) {
+      const s = sentinelCredential();
+      const err = await assertRejects(() => runAuthHook(app, auth, hook, s.credential), W6WError);
+      assertEquals(err.code, "provider_unsupported", hook);
+      assertEquals(err.phase, "auth", hook);
+      assertEquals(
+        err.message,
+        "A serviceAccount connection needs the host's credential resolver; none was supplied.",
+      );
+      assertEquals(s.reads(), 0, `${hook} read the credential`);
+    }
+    assertEquals(fetches, 0);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+Deno.test("T1.5 (b): the same hook WITH signing runs exactly as before (credential:null, signed fetch)", async () => {
+  const app = await loadApp(SERVICE_ACCOUNT_DIR);
+  const real = globalThis.fetch;
+  const seenAuth: Array<string | null> = [];
+  globalThis.fetch = ((_i: string | URL | Request, init?: RequestInit) => {
+    seenAuth.push(new Headers(init?.headers).get("authorization"));
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  }) as typeof fetch;
+  try {
+    const out = await runAuthHook<{ message: string }>(app, app.auths[0], "test", undefined, {
+      signing: {
+        authorization: {
+          kind: "derived",
+          token: { accessToken: "ya29.t1-5", tokenType: "Bearer", expiresAt: 4102444800000 },
+          expiresAt: 4102444800000,
+          sourceRevision: 1,
+        },
+      },
+    });
+    assertEquals(out.message, '{"credential":null}');
+    assertEquals(seenAuth, ["Bearer ya29.t1-5"]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+Deno.test("T1.5 (AC4 control): an unsigned hook on a non-serviceAccount auth with a stray serviceAccount block still runs", async () => {
+  const app = await loadApp(SENDGRID_DIR);
+  const auth = {
+    ...app.auths[0],
+    auth: {
+      ...app.auths[0].auth,
+      serviceAccount: {
+        accepts: ["google-service-account.v1"],
+        scopes: [],
+        impersonation: "none" as const,
+      },
+    },
+  };
+  assertNotEquals(auth.auth.type, "serviceAccount");
+  const out = await runAuthHook<{ label: string }>(app, auth, "afterConnect", { apiKey: "key-A" });
+  assert(typeof out.label === "string");
+  const plain = await runAuthHook<{ label: string }>(app, app.auths[0], "afterConnect", {
+    apiKey: "key-A",
+  });
+  assertEquals(out, plain);
+});
