@@ -266,3 +266,10 @@ Deno.test("invalid key in payload is refused by validateSource", () => {
   const e = assertThrows(() => norm({ email: EMAIL, privateKey: "nope" }, decl(["a"])), W6WError);
   assertEquals((e.details as { field: string }).field, "private_key");
 });
+
+Deno.test("binding.scopes and approved.scopes are distinct arrays", async () => {
+  const out = norm(await base({}), decl(["a", "b"]));
+  assert(out.binding.scopes !== out.approved.scopes);
+  out.binding.scopes!.push("widened");
+  assertEquals(out.approved.scopes, ["a", "b"]);
+});

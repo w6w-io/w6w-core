@@ -84,6 +84,6 @@ export function normaliseLegacyGoogleServiceAccount(
   return {
     source,
     binding,
-    approved: { scopes: approvedScopes, delegatedUser: binding.delegatedUser ?? null },
+    approved: { scopes: [...approvedScopes], delegatedUser: binding.delegatedUser ?? null },
   };
 }
