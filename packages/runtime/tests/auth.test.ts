@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl } from "jsr:@std/path@^1.0.0";
-import { authFor, describe, invoke, loadApp, signingFetch, W6WError } from "../mod.ts";
+import { describe, invoke, loadApp, signingFetch, W6WError } from "../mod.ts";
+import { authFor } from "../mod.ts";
 import type { Connection, Invocation } from "@w6w/types";
 
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
