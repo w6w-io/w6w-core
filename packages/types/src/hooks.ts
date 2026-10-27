@@ -151,10 +151,14 @@ export interface SignableRequest {
 }
 
 /**
- * Auth `sign` — the ONLY hook that receives the unredacted credential. It runs
- * in an isolated, network-less context: it transforms the outbound request
- * (e.g. injects an Authorization header) but cannot itself reach the network,
- * so it can never exfiltrate the credential it holds.
+ * Auth `sign` — injects auth into an outbound request. It runs in an isolated,
+ * network-less context: it transforms the request (e.g. injects an Authorization
+ * header) but cannot itself reach the network, so it can never exfiltrate what it holds.
+ *
+ * Credential access, per hook: `exchange` output, `test`, `afterConnect`, `sign`,
+ * `handshake`, `refresh` and `revoke` receive `credential` today. For a provider-derived
+ * (`serviceAccount`) auth, `sign` receives a `DerivedToken` as `credential`, while
+ * `test` and `afterConnect` receive `credential: null` and a signed fetch instead.
  */
 export type SignHook = (
   input: { request: SignableRequest; credential: unknown },
