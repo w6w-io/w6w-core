@@ -7,7 +7,9 @@
 ## Summary
 
 A `Credential` is a **stored, tenant-owned secret source** that one or more [Connections](./connection.md)
-bind to. The platform stores it, never shows it, and never hands it to publisher code. For an auth
+bind to. The platform stores it and never shows it. For a provider-derived auth (`serviceAccount`) it
+never hands the source to publisher code; the other auth types keep the behaviour the hook-runtime
+table describes. For an auth
 of type `serviceAccount` the host uses a **compiled-in credential provider** to _derive_ a
 short-lived authorization (a `DerivedToken`) from the source; only that token ever reaches the
 Auth `sign` hook. For every other auth type the source is the opaque blob the [Auth RFC](./auth.md)
@@ -167,8 +169,10 @@ A credential has a **contract id**. A provider-backed contract id is `<name>.v<N
 ### A `serviceAccount` auth (code-first)
 
 The shape below is the code-first declaration; [`auth.schema.json`](../packages/schema) validates the
-declaration, which has no `hooks` and no `manifestVersion` member. It mirrors the
-[`service-account` fixture](../fixtures/apps/service-account/auth/service-account.ts).
+declaration, which has no `hooks` and no `manifestVersion` member. It is adapted from the
+[`service-account` fixture](../fixtures/apps/service-account/auth/service-account.ts), which
+declares no `fields` block and has a different `test` and an `afterConnect`; the `fields` entry
+below is the provider input contract added here.
 
 ```ts
 const serviceAccount: AuthDefinition = {
@@ -198,9 +202,13 @@ const serviceAccount: AuthDefinition = {
 };
 ```
 
-A `serviceAccount` auth declares exactly **one** source field, `serviceAccountKey` (`type: "json"`,
+By convention (and the provider's input contract, enforced host-side by `validateSource`, not by the
+validator or schema), a `serviceAccount` auth declares exactly **one** source field, `serviceAccountKey` (`type: "json"`,
 `secret: true`, `required: true`, `ui: "textarea"`). It never declares a token URL or any endpoint:
 the destination of a token exchange belongs to the provider, never to the app.
+
+The validator requires a `sign` hook for a `serviceAccount` auth (alongside the generic rule that
+only `hooks.test` is required elsewhere).
 
 ## Provider contract
 
