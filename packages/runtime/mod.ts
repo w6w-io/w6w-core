@@ -26,9 +26,21 @@ export {
   invoke,
   invokeResolveFields,
   invokeTriggerHook,
+  prepareAuthorization,
   runAuthHook,
   signingFetch,
 } from "./src/runtime.ts";
+export {
+  authorizationCacheKey,
+  isExpiring,
+  normalizeScopes,
+  TOKEN_SKEW_MS,
+} from "./src/authorization.ts";
+export type {
+  AuthorizationCacheKeyInput,
+  CredentialPurpose,
+  CredentialResolver,
+} from "./src/authorization.ts";
 export type {
   AppDescription,
   CredentialHookKind,
@@ -36,6 +48,8 @@ export type {
   InvokeOptions,
   InvokeResult,
   InvokeTriggerHookOptions,
+  PrepareAuthorizationOptions,
+  PreparedAuthorization,
   RunAuthHookOptions,
 } from "./src/runtime.ts";
 export type { SignableRequest } from "@w6w/types";
@@ -88,5 +102,5 @@ export {
 } from "./src/socket.ts";
 export type { SocketSession } from "./src/socket.ts";
 
-export { LoadError, W6WError } from "./src/errors.ts";
+export { credentialError, LoadError, W6WError } from "./src/errors.ts";
 export type { ErrorPhase } from "./src/errors.ts";

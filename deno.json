@@ -6,7 +6,8 @@
     "./packages/validator",
     "./packages/expr",
     "./packages/schema",
-    "./packages/app-build"
+    "./packages/app-build",
+    "./packages/credential-providers"
   ],
   "exclude": ["**/dist/"],
   "imports": {

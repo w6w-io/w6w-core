@@ -48,6 +48,13 @@
       "order": 40
     },
     {
+      "path": "../rfcs/credential.md",
+      "slug": "app-contract/credential",
+      "section": "reference-spec",
+      "title": "Credential",
+      "order": 45
+    },
+    {
       "path": "../rfcs/healthcheck.md",
       "slug": "app-contract/healthcheck",
       "section": "reference-spec",

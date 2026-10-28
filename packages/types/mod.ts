@@ -24,3 +24,5 @@ export * from "./src/file.ts";
 export * from "./src/artifact.ts";
 export * from "./src/digest.ts";
 export * from "./src/skill-package.ts";
+export * from "./src/model-completion.ts";
+export * from "./src/credential.ts";

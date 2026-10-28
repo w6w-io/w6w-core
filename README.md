@@ -3,7 +3,7 @@
 The core monorepo for the workflow platform.
 
 **Status:** Source-available under [FSL-1.1-ALv2](./LICENSE) (converts to Apache 2.0).
-**Current spec:** `manifestVersion: "1"` — all primitive RFCs are Final.
+**Current spec:** `manifestVersion: "1"` — all primitive RFCs are Final except Credential, which is in Review.
 
 ## Purpose
 
@@ -32,7 +32,7 @@ Every RFC carries one of:
 | `Final` | Frozen for the current `manifestVersion`. Breaking changes require a new RFC and a `manifestVersion` bump. |
 | `Superseded` | Replaced by another RFC; carries a pointer to its successor. |
 
-`manifestVersion: "1"` covers the primitive RFCs listed below plus the Hook Runtime and Categories vocabulary. **There are 17 RFCs**; Trigger, Workflow, Engine, Node Types, Function, Endpoint and Health Check have all landed since this section was first written, and Webhook and Run are still TBD. New RFCs use the template at [`rfcs/_template.md`](./rfcs/_template.md).
+`manifestVersion: "1"` covers the primitive RFCs listed below plus the Hook Runtime and Categories vocabulary. **There are 19 RFCs**; Trigger, Workflow, Engine, Node Types, Function, Endpoint and Health Check have all landed since this section was first written, and Webhook and Run are still TBD. New RFCs use the template at [`rfcs/_template.md`](./rfcs/_template.md).
 
 ## Packages
 
@@ -44,6 +44,7 @@ Every RFC carries one of:
 | [`@w6w/validator`](./packages/validator/README.md) | Validate manifests against the spec rules. Ships a `core validate <path>` CLI (`deno task validate`). |
 | [`@w6w/schema`](./packages/schema/README.md) | JSON Schema (Draft 2020-12) for every primitive — structural validation layer. |
 | [`@w6w/expr`](./packages/expr/README.md) | JSONLogic engine for Param `showIf` and expression evaluation. |
+| [`@w6w/credential-providers`](./packages/credential-providers/README.md) | Host-side, compiled-in credential providers (Google service account v1) that derive short-lived tokens from a stored source. |
 
 Each package is transport-free and independently focused; deployment concerns
 (an HTTP server, a CLI, credential storage) are wrappers built on top — some
@@ -70,8 +71,9 @@ The platform is built from a small set of primitives. Each one has (or will have
 |---|---|---|
 | **App** | Unit of integration — identity, presentation, and provenance of an integrated service. | [`rfcs/app.md`](./rfcs/app.md) — Final |
 | **Action** | A single operation a user can perform through an App (`read` / `search` / `perform`). | [`rfcs/action.md`](./rfcs/action.md) — Final |
-| **Auth** | How a user connects their account to an App (`oauth2` / `apiKey` / `basic` / `bearer` / `custom`) plus lifecycle hooks. | [`rfcs/auth.md`](./rfcs/auth.md) — Final |
-| **Connection** | The stored, per-user result of a completed Auth flow. Holds the opaque credential, display metadata, and lifecycle state. | [`rfcs/connection.md`](./rfcs/connection.md) — Final |
+| **Auth** | How a user connects their account to an App (`oauth2` / `apiKey` / `basic` / `bearer` / `custom` / `tenantAuth` / `jit` / `serviceAccount`) plus lifecycle hooks. | [`rfcs/auth.md`](./rfcs/auth.md) — Final |
+| **Connection** | The stored, per-user result of a completed Auth flow. References a stored Credential (or, on the legacy path, holds the opaque credential), plus display metadata, binding and lifecycle state. | [`rfcs/connection.md`](./rfcs/connection.md) — Final |
+| **Credential** | A stored, tenant-owned secret source that Connections bind to, and the provider seam that derives short-lived authorization from it (`serviceAccount`). | [`rfcs/credential.md`](./rfcs/credential.md) — Review |
 | **Invocation** | The envelope used to call an Action — binds App, Action, Connection, and resolved params. | [`rfcs/invocation.md`](./rfcs/invocation.md) — Final |
 | **Function** | A saved operation with a **stable declared interface** over a **swappable implementation** — `inputs`/`output` stay fixed while `impl` changes. Switch vendors without breaking callers. | [`rfcs/function.md`](./rfcs/function.md) |
 | **Endpoint** | A named entry point dispatching to a Callable (Function or Workflow), sync or async. How anything outside calls in. | [`rfcs/endpoint.md`](./rfcs/endpoint.md) |
@@ -128,7 +130,8 @@ core/
 │   ├── sources/           # @w6w/sources — resolve source refs to a local dir
 │   ├── validator/         # @w6w/validator — spec-rule validation
 │   ├── schema/            # @w6w/schema — JSON Schemas (Draft 2020-12) per RFC
-│   └── expr/              # @w6w/expr — JSONLogic engine
+│   ├── expr/              # @w6w/expr — JSONLogic engine
+│   └── credential-providers/ # @w6w/credential-providers — host-side token derivation
 ├── fixtures/apps/         # Example apps the runtime is tested against
 └── .github/workflows/     # CI (tests) + publish (npm OIDC + JSR, on release)
 ```

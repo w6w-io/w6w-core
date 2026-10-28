@@ -1,0 +1,9 @@
+{
+  "name": "@w6w/credential-providers",
+  "version": "0.1.0",
+  "exports": "./mod.ts",
+  "imports": {
+    "@w6w/types": "../types/mod.ts",
+    "@w6w/runtime": "../runtime/mod.ts"
+  }
+}
