@@ -41,7 +41,7 @@ export interface WorkerRunOptions {
    * Read scope for an `entryPath` (dir) start. IGNORED for an `entryUrl` (exec) start,
    * whose Worker never gets read permission — see `workerReadPermission`.
    */
-  readScope?: string;
+  readScope?: string | string[];
   timeoutMs?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
@@ -90,9 +90,12 @@ const EXEC_URL_PREFIX = "data:text/javascript;base64,";
 /**
  * THE sink for the Worker's read permission. An `entryUrl` start (exec code) gets
  * `false` — any `readScope` is ignored, and the URL must be a `data:` module so
- * nothing on disk is ever imported; an `entryPath` start gets exactly `[readScope]`.
+ * nothing on disk is ever imported; an `entryPath` start gets exactly the supplied scope(s).
  */
-function workerReadPermission(start: HostMessage, readScope: string | undefined): false | string[] {
+function workerReadPermission(
+  start: HostMessage,
+  readScope: string | string[] | undefined,
+): false | string[] {
   if (start.type !== "start") throw new Error("runWorker: first message must be a start message.");
   if (start.entryUrl !== undefined) {
     if (!start.entryUrl.startsWith(EXEC_URL_PREFIX)) {
@@ -111,7 +114,7 @@ function workerReadPermission(start: HostMessage, readScope: string | undefined)
       "Refusing to spawn: an entryPath start requires a readScope.",
     );
   }
-  return [readScope];
+  return typeof readScope === "string" ? [readScope] : readScope;
 }
 
 /**
@@ -347,7 +350,9 @@ export type RunHookOptions =
   & RunHookFields;
 
 /** Where the code is: a dir (path + read scope) or exec code (`data:` URL, read-less). */
-export type HookSourceOptions = { entryPath: string; readScope: string } | { code: ExecCode };
+export type HookSourceOptions = { entryPath: string; readScope: string | string[] } | {
+  code: ExecCode;
+};
 
 interface RunHookFields {
   /** Which callable inside the exported app object to run. */
@@ -383,7 +388,7 @@ export function runHook<T = unknown>(opts: RunHookOptions): Promise<T> {
 /** Import the entry module in the sandbox and extract its serializable app config. */
 export function describeApp(
   entryPath: string,
-  readScope: string,
+  readScope: string | string[],
   timeoutMs?: number,
 ): Promise<DescribedApp> {
   return runWorker<DescribedApp>(

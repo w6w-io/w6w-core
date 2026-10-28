@@ -6,6 +6,7 @@
 import { join } from "jsr:@std/path@^1.0.0";
 import { sourceDigestOf } from "@w6w/types";
 import { BuildError, isTestPath } from "./errors.ts";
+import { resolveSharedRoots } from "./shared.ts";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "tests"]);
 
@@ -50,6 +51,12 @@ export async function computeSourceDigest(appDir: string): Promise<string> {
     );
   }
   const files: { path: string; bytes: Uint8Array }[] = [];
-  await walk(real, "", files, appDir);
+  const sharedRoots = await resolveSharedRoots(real);
+  // Keep existing digests unchanged for apps with no includes. Shared apps use
+  // separate namespaces: sourceDigestOf deliberately disallows parent paths.
+  await walk(real, sharedRoots.length ? "app" : "", files, appDir);
+  for (const [i, root] of sharedRoots.entries()) {
+    await walk(root, `shared/${i}`, files, appDir);
+  }
   return await sourceDigestOf(files);
 }

@@ -5,6 +5,7 @@
  */
 import { assert, assertEquals, assertNotEquals, assertRejects } from "jsr:@std/assert@^1.0.0";
 import { dirname, join } from "jsr:@std/path@^1.0.0";
+import { hookSource, loadApp, loadedAppFromArtifact, runHook } from "@w6w/runtime";
 import { digestDescriptionVersioned } from "@w6w/types";
 import { buildApp, BuildError, computeSourceDigest } from "../mod.ts";
 
@@ -253,3 +254,131 @@ Deno.test("fields_hook_invalid: a hook no param opts in to builds with a warning
     await Deno.remove(f.tmp, { recursive: true });
   }
 });
+
+Deno.test("shared includes: sibling apps build standalone code/assets, hash shared changes, and preserve identity", async () => {
+  const f = await fixture({
+    "package.json": pkgJson({}, {
+      build: { include: ["../_shared"] },
+      appearance: { icon: { svg: "../_shared/icon.svg" } },
+    }),
+    "index.ts": `import { answer } from "../_shared/value.ts";
+export default { actions: [{ key: "answer", displayName: "Answer", execute() { return answer(); } }] };`,
+    "../_shared/value.ts": "export function answer() { return 42; }",
+    "../_shared/icon.svg": '<svg xmlns="http://www.w3.org/2000/svg"/>',
+  });
+  try {
+    const source = await loadApp(f.app);
+    assertEquals(
+      await runHook({
+        ...hookSource(source),
+        selector: { kind: "action", key: "answer" },
+        input: {},
+      }),
+      42,
+    );
+    const first = await buildApp(f.app, f.out, { sourcemap: true });
+    assertEquals(first.id, "io.test.demo");
+    const art = JSON.parse(await Deno.readTextFile(join(first.outDir, "manifest.json")));
+    assert(art.manifest.appearance.icon.svg.startsWith("data:image/svg+xml;base64,"));
+    assertEquals(first.sourceDigest, await computeSourceDigest(f.app));
+    const map = JSON.parse(await Deno.readTextFile(join(first.outDir, "app.js.map")));
+    assert(map.sources.includes("../_shared/value.ts"), JSON.stringify(map.sources));
+    assert(!JSON.stringify(map.sources).includes(f.tmp));
+    await Deno.writeTextFile(
+      join(f.tmp, "_shared/value.ts"),
+      "export function answer() { return 43; }",
+    );
+    const second = await buildApp(f.app, join(f.tmp, "out2"));
+    assertNotEquals(first.sourceDigest, second.sourceDigest);
+    assertNotEquals(first.execSha256, second.execSha256);
+    // Build a second consumer with a distinct identity from the same shared source.
+    const sibling = join(f.tmp, "second");
+    await Deno.mkdir(sibling);
+    for (const name of ["index.ts", "deno.json", "package.json"]) {
+      await Deno.copyFile(join(f.app, name), join(sibling, name));
+    }
+    await Deno.writeTextFile(
+      join(sibling, "package.json"),
+      pkgJson({}, {
+        id: "io.test.second",
+        build: { include: ["../_shared"] },
+      }),
+    );
+    const third = await buildApp(sibling, f.out);
+    assertEquals(third.id, "io.test.second");
+    // No source tree is required to execute either emitted app.
+    await Deno.remove(f.app, { recursive: true });
+    await Deno.remove(sibling, { recursive: true });
+    await Deno.remove(join(f.tmp, "_shared"), { recursive: true });
+    for (const [result, expected] of [[first, 42], [second, 43], [third, 43]] as const) {
+      const manifest = JSON.parse(await Deno.readTextFile(join(result.outDir, "manifest.json")));
+      const code = await Deno.readTextFile(join(result.outDir, "app.js"));
+      const loaded = await loadedAppFromArtifact(manifest, code);
+      assertEquals(
+        await runHook({
+          ...hookSource(loaded),
+          selector: { kind: "action", key: "answer" },
+          input: {},
+        }),
+        expected,
+      );
+    }
+  } finally {
+    await Deno.remove(f.tmp, { recursive: true });
+  }
+});
+
+for (
+  const include of ["..", "../../outside", "/tmp", "./", "../_shared/..", "https://example.com"]
+) {
+  Deno.test(`refuse shared directory escape: ${include}`, () =>
+    refuse("shared_path_invalid", {
+      "package.json": pkgJson({}, { build: { include: [include] } }),
+    }));
+}
+
+Deno.test("refuse shared include that is not an array", () =>
+  refuse("shared_path_invalid", {
+    "package.json": pkgJson({}, { build: { include: "../_shared" } }),
+  }));
+
+Deno.test("refuse shared symlink root", () =>
+  refuse("shared_path_invalid", {
+    "package.json": pkgJson({}, { build: { include: ["../_shared"] } }),
+    "../elsewhere/value.ts": "export const value = 1;",
+  }, async (f) => {
+    await Deno.symlink(join(f.tmp, "elsewhere"), join(f.tmp, "_shared"));
+  }));
+
+Deno.test("refuse shared symlink file", () =>
+  refuse("source_symlink", {
+    "package.json": pkgJson({}, { build: { include: ["../_shared"] } }),
+    "../_shared/value.ts": "export const value = 1;",
+  }, async (f) => {
+    await Deno.symlink(join(f.tmp, "_shared/value.ts"), join(f.tmp, "_shared/alias.ts"));
+  }));
+
+Deno.test("refuse tests imported from a shared directory", () =>
+  refuse("graph_tests", {
+    "package.json": pkgJson({}, { build: { include: ["../_shared"] } }),
+    "index.ts": 'import "../_shared/tests/value.ts"; export default { actions: [] };',
+    "../_shared/tests/value.ts": "export const value = 1;",
+  }));
+
+Deno.test("refuse transitive import beyond an included directory", () =>
+  refuse("graph_outside_app", {
+    "package.json": pkgJson({}, { build: { include: ["../_shared"] } }),
+    "index.ts": 'import "../_shared/value.ts"; export default { actions: [] };',
+    "../_shared/value.ts": 'import "../other/value.ts";',
+    "../other/value.ts": "export const value = 1;",
+  }));
+
+Deno.test("refuse asset outside included directory", () =>
+  refuse("asset_path", {
+    "package.json": pkgJson({}, {
+      build: { include: ["../_shared"] },
+      appearance: { icon: { svg: "../other/icon.svg" } },
+    }),
+    "../_shared/value.ts": "export const value = 1;",
+    "../other/icon.svg": "<svg/>",
+  }));

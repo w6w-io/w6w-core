@@ -5,6 +5,7 @@
  * Actions inside a least-privilege Deno Worker sandbox. Wrap this with an HTTP
  * service or a CLI in a separate package; the engine itself is transport-free.
  */
+export { resolveSharedRoots } from "./src/shared.ts";
 export { loadApp } from "./src/loader.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
 export {

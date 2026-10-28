@@ -1,7 +1,7 @@
 /**
  * Asset inlining — replaces every app-local image reference in the manifest with a
  * `data:` URI so the artifact is self-contained. Stricter than a host-side walk: refs
- * must be relative, regular files (never symlinks), inside the app dir, a known image
+ * must be relative, regular files (never symlinks), inside the app or declared shared directories, a known image
  * type, and within per-file and per-app byte caps. Any failure is a refusal.
  */
 import { extname, resolve } from "jsr:@std/path@^1.0.0";
@@ -40,6 +40,7 @@ class Inliner {
     private readonly realAppDir: string,
     private readonly appDir: string,
     private readonly limits: AssetLimits,
+    private readonly sharedRoots: string[],
   ) {}
 
   private fail(code: string, msg: string): never {
@@ -50,7 +51,7 @@ class Inliner {
     if (REMOTE_OR_DATA.test(ref)) return ref;
     if (
       ref === "" || ref.startsWith("/") || ref.includes("\\") ||
-      ref.split("/").includes("..") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(ref)
+      /^[A-Za-z][A-Za-z0-9+.-]*:/.test(ref)
     ) {
       this.fail("asset_path", `${where}: asset ref must be a relative path inside the app: ${ref}`);
     }
@@ -58,7 +59,9 @@ class Inliner {
     const mime = MIME[ext];
     if (!mime) this.fail("asset_extension", `${where}: unsupported asset type ".${ext}": ${ref}`);
     const path = resolve(this.realAppDir, ref);
-    if (!isInside(this.realAppDir, path)) {
+    const roots = [this.realAppDir, ...this.sharedRoots];
+    const root = roots.find((dir) => isInside(dir, path));
+    if (!root || (root === this.realAppDir && ref.split("/").includes(".."))) {
       this.fail("asset_path", `${where}: asset ref escapes the app: ${ref}`);
     }
     let st: Deno.FileInfo;
@@ -70,7 +73,7 @@ class Inliner {
     if (st.isSymlink) this.fail("asset_symlink", `${where}: asset is a symlink: ${ref}`);
     if (!st.isFile) this.fail("asset_not_file", `${where}: asset is not a regular file: ${ref}`);
     const real = await Deno.realPath(path);
-    if (!isInside(this.realAppDir, real)) {
+    if (!root || !isInside(root, real)) {
       this.fail("asset_path", `${where}: asset resolves outside the app: ${ref}`);
     }
     if (st.size > this.limits.maxAssetBytes) {
@@ -119,8 +122,9 @@ export async function inlineAssets(
   realAppDir: string,
   appDir: string,
   limits: AssetLimits,
+  sharedRoots: string[] = [],
 ): Promise<AppManifest> {
-  const inl = new Inliner(realAppDir, appDir, limits);
+  const inl = new Inliner(realAppDir, appDir, limits, sharedRoots);
   const out = structuredClone(manifest) as AppManifest & { assetsRoot?: string };
   delete out.assetsRoot;
   const ap = out.appearance;

@@ -18,7 +18,7 @@ const haveApps = (() => {
   }
 })();
 
-const SIX = ["apify", "gotify", "webex", "hubspot", "s3", "salesforce"];
+const SIX = ["apify", "gotify", "webex", "hubspot", "aws/s3", "salesforce"];
 
 async function inTmp<T>(fn: (tmp: string) => Promise<T>): Promise<T> {
   const tmp = await Deno.makeTempDir({ prefix: "w6w-build-test-" });

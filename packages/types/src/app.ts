@@ -167,6 +167,8 @@ export type W6WPackageMetadata =
   & {
     /** Entry module exporting the AppDefinition. Defaults to package `main`, then `./index.ts`. */
     entry?: string;
+    /** Build-time shared source/assets directories, relative to this app, within its parent. */
+    build?: { include?: string[] };
     /** Opt-in: load the identity manifest from a separate file instead of package.json. */
     manifest?: string;
   };
