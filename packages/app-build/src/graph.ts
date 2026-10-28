@@ -89,13 +89,14 @@ interface InfoModule {
 
 /**
  * Assert every module reachable from `entryRel` (app-relative) is a `file:` module that is
- * either inside the app (and not test code) or inside the app's own `@w6w/types` package.
+ * inside the app or declared shared directories (excluding test code), or in `@w6w/types`.
  */
 export async function assertGraph(
   realAppDir: string,
   appDir: string,
   entryRel: string,
   typesRoot: string | null,
+  sharedRoots: string[] = [],
 ): Promise<void> {
   const fail = (code: string, msg: string): never => {
     throw new BuildError(code, msg, appDir);
@@ -140,8 +141,9 @@ export async function assertGraph(
       fail("graph_module_error", `${m.specifier}: ${(e as Error).message}`);
       return;
     }
-    if (isInside(realAppDir, real)) {
-      const rel = relative(realAppDir, real).split("\\").join("/");
+    const sourceRoot = [realAppDir, ...sharedRoots].find((root) => isInside(root, real));
+    if (sourceRoot) {
+      const rel = relative(sourceRoot, real).split("\\").join("/");
       if (isTestPath(rel)) fail("graph_tests", `app code imports test code: ${rel}`);
     } else if (!(typesRoot && isInside(typesRoot, real))) {
       fail("graph_outside_app", `module outside the app: ${m.specifier}`);

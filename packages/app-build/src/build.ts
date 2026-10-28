@@ -20,6 +20,7 @@ import { inlineAssets } from "./assets.ts";
 import { BuildError, isInside } from "./errors.ts";
 import { assertGraph, resolveTypesRoot, runDeno } from "./graph.ts";
 import { computeSourceDigest } from "./source-digest.ts";
+import { resolveSharedRoots } from "./shared.ts";
 import pkgConfig from "../deno.json" with { type: "json" };
 
 /** Per-file cap on an inlined asset, in bytes. */
@@ -123,7 +124,7 @@ async function bundle(
  * - identity: `app_dir_invalid`, `invalid_package`, `manifest_file_forbidden`,
  *   `invalid_manifest`, `invalid_id`, `invalid_version`, `npm_dependencies`,
  *   `entry_outside_app`, `entry_missing`, `config_missing`, `config_invalid`,
- *   `types_root_invalid`
+ *   `types_root_invalid`, `shared_path_invalid`
  * - graph: `graph_failed`, `graph_npm`, `graph_jsr`, `graph_remote`, `graph_non_file`,
  *   `graph_module_error`, `graph_outside_app`, `graph_tests`
  * - bundle: `bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`
@@ -201,9 +202,10 @@ export async function buildApp(
     fail("config_missing", "the app has no deno.json (its import map is required)");
   }
   const typesRoot = await resolveTypesRoot(realAppDir, appDir);
+  const sharedRoots = await resolveSharedRoots(realAppDir);
 
   // ---- graph: the real refusal ----
-  await assertGraph(realAppDir, appDir, entryRel, typesRoot);
+  await assertGraph(realAppDir, appDir, entryRel, typesRoot, sharedRoots);
 
   const tmp = await Deno.realPath(await Deno.makeTempDir({ prefix: "w6w-app-build-" }));
   try {
@@ -240,7 +242,7 @@ export async function buildApp(
     const inlined = await inlineAssets(manifest, realAppDir, appDir, {
       maxAssetBytes: opts.maxAssetBytes ?? MAX_ASSET_BYTES,
       maxAppAssetBytes: opts.maxAppAssetBytes ?? MAX_APP_ASSET_BYTES,
-    });
+    }, sharedRoots);
 
     const sourceDigest = await computeSourceDigest(realAppDir);
     const execSha256 = await sha256HexBytes(js);

@@ -20,6 +20,7 @@ import type {
 } from "@w6w/types";
 import { verifySha256 } from "@w6w/types";
 import { LoadError } from "./errors.ts";
+import { resolveSharedRoots } from "./shared.ts";
 import type { DescribedApp } from "./sandbox/protocol.ts";
 import { describeApp } from "./sandbox/run-hook.ts";
 
@@ -61,6 +62,8 @@ export interface DirCode {
   dir: string;
   /** Absolute path to the entry module. Imported in the sandbox to run any hook. */
   entryPath: string;
+  /** Explicit shared directories validated from w6w.build.include. */
+  sharedDirs?: string[];
 }
 
 /** An app built into one self-contained bundle: hooks import it from a `data:` URL, read-less. */
@@ -127,9 +130,11 @@ export interface AppPackageJson {
  */
 export function hookSource(
   app: { code: AppCode },
-): { entryPath: string; readScope: string } | { code: ExecCode } {
+): { entryPath: string; readScope: string | string[] } | { code: ExecCode } {
   const c = app.code;
-  return c.kind === "dir" ? { entryPath: c.entryPath, readScope: c.dir } : { code: c };
+  return c.kind === "dir"
+    ? { entryPath: c.entryPath, readScope: c.sharedDirs?.length ? [c.dir, ...c.sharedDirs] : c.dir }
+    : { code: c };
 }
 
 /** Strip an npm scope: `@acme/slack` -> `slack`. */
@@ -489,8 +494,14 @@ export async function loadApp(dir: string): Promise<LoadedApp> {
   }
 
   const entryPath = resolveAppEntry(root, pkg);
-  const described = await describeApp(entryPath, root);
-  return assembleLoadedApp(described, manifest, { kind: "dir", dir: root, entryPath }, entryPath);
+  const sharedDirs = await resolveSharedRoots(root);
+  const described = await describeApp(entryPath, [root, ...sharedDirs]);
+  return assembleLoadedApp(described, manifest, {
+    kind: "dir",
+    dir: root,
+    entryPath,
+    ...(sharedDirs.length ? { sharedDirs } : {}),
+  }, entryPath);
 }
 
 /**
