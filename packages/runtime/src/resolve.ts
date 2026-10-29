@@ -7,6 +7,7 @@
  * later slice; this covers the path that needs no hook execution.
  */
 import { isSection, type Param, type Validation } from "@w6w/types";
+import { effectiveParam } from "../../expr/mod.ts";
 import { W6WError } from "./errors.ts";
 
 function fail(message: string, details?: unknown): never {
@@ -47,6 +48,26 @@ export function resolveParams(
   params: Param[],
   supplied: Record<string, unknown>,
 ): Record<string, unknown> {
+  return resolveList(params, supplied, flatten(params));
+}
+
+/** Section-descending flatten, so a nested `when.if` can name a top-level sibling. */
+function flatten(list: Param[]): Param[] {
+  const out: Param[] = [];
+  for (const p of list) {
+    out.push(p);
+    if (isSection(p)) out.push(...flatten(p.children));
+  }
+  return out;
+}
+
+function resolveList(
+  params: Param[],
+  supplied: Record<string, unknown>,
+  all: Param[],
+): Record<string, unknown> {
+  const getValue = (k: string): unknown =>
+    supplied[k] !== undefined ? supplied[k] : all.find((p) => p.key === k)?.default;
   const resolved: Record<string, unknown> = {};
 
   for (const param of params) {
@@ -59,7 +80,7 @@ export function resolveParams(
     // flattened — a group's children DO nest under the group's key and are
     // copied whole below.
     if (isSection(param)) {
-      Object.assign(resolved, resolveParams(param.children, supplied));
+      Object.assign(resolved, resolveList(param.children, supplied, all));
       continue;
     }
 
@@ -67,7 +88,9 @@ export function resolveParams(
     const value = hasSupplied ? supplied[param.key] : param.default;
 
     if (value === undefined || value === null) {
-      if (param.required) fail(`Required param "${param.key}" is missing.`);
+      if (effectiveParam(param, getValue).required) {
+        fail(`Required param "${param.key}" is missing.`);
+      }
       continue;
     }
 

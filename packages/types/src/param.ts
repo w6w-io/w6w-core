@@ -88,6 +88,30 @@ export interface Validation {
   hook?: string;
 }
 
+/** Condition for a `when` entry; same shape as the simple `showIf` dialect. */
+export interface ParamCondition {
+  field: string;
+  equals?: unknown;
+  in?: readonly unknown[];
+  notIn?: readonly unknown[];
+  truthy?: boolean;
+}
+
+/** The only Param keys a `when` entry may override. */
+export interface ParamOverlay {
+  label?: string;
+  hint?: string;
+  required?: boolean;
+  ui?: string;
+  options?: Options;
+}
+
+/** First matching entry overlays the static param. */
+export interface ParamWhen {
+  if: ParamCondition;
+  set: ParamOverlay;
+}
+
 export interface Param {
   /** Machine name. Unique within the enclosing form. */
   key: string;
@@ -123,6 +147,8 @@ export interface Param {
   /** Conditional visibility. JSONLogic expression (per ROADMAP resolution of the open question). */
   showIf?: unknown;
   options?: Options;
+  /** Conditional overlay of label/hint/required/ui/options; first match wins. */
+  when?: ParamWhen[];
   validation?: Validation;
   /**
    * Nested params. Used when `type: "group"` (a nested object whose value nests

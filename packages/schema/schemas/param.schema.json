@@ -105,6 +105,39 @@
       "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
     },
     "showIf": true,
+    "when": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["if", "set"],
+        "properties": {
+          "if": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field"],
+            "properties": {
+              "field": { "type": "string", "minLength": 1 },
+              "equals": true,
+              "in": { "type": "array" },
+              "notIn": { "type": "array" },
+              "truthy": { "type": "boolean" }
+            }
+          },
+          "set": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "hint": { "type": "string" },
+              "required": { "type": "boolean" },
+              "ui": { "type": "string" },
+              "options": { "$ref": "#/$defs/options" }
+            }
+          }
+        }
+      }
+    },
     "options": { "$ref": "#/$defs/options" },
     "validation": { "$ref": "#/$defs/validation" },
     "config": { "$ref": "#/$defs/config" },
