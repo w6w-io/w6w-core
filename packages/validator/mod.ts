@@ -9,6 +9,7 @@
 export {
   CATEGORIES,
   checkFormResolvedFields,
+  checkParamWhen,
   unknownCategories,
   validateAction,
   validateApp,

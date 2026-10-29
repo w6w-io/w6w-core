@@ -184,10 +184,17 @@ function checkParam(ctx: Ctx, p: unknown, path: string): void {
 
   // Recurse into nested params (section / group children) so their key/label/type
   // are validated too.
-  if (Array.isArray(p.children)) checkParams(ctx, p.children, `${path}.children`);
+  if (Array.isArray(p.children)) checkParamList(ctx, p.children, `${path}.children`);
 }
 
+/** Check a form root: the structural rules, then its `when` overlays (whole-form scope). */
 function checkParams(ctx: Ctx, params: unknown, path: string): void {
+  if (params === undefined) return;
+  checkParamList(ctx, params, path);
+  for (const e of checkParamWhen(params, path)) ctx.err(e.path, e.message);
+}
+
+function checkParamList(ctx: Ctx, params: unknown, path: string): void {
   if (params === undefined) return;
   if (!Array.isArray(params)) {
     ctx.err(path, "must be an array");
@@ -274,6 +281,92 @@ export function checkFormResolvedFields(
     });
   }
   return { errors, warnings };
+}
+
+/**
+ * Check the `when` overlays of a form (Param RFC, 2026-10-29 amendment). Pure and tolerant of
+ * malformed input. Scope mirrors {@link checkFormResolvedFields}: `section` children are flattened
+ * into the enclosing form; a `group`'s children are their own scope, with the enclosing scopes
+ * visible (group-local keys first, then outward).
+ */
+export function checkParamWhen(params: unknown, path: string): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const err = (p: string, message: string) => errors.push({ path: p, message });
+
+  const flatten = (
+    list: unknown,
+    at: string,
+    out: { p: Record<string, unknown>; path: string }[],
+  ) => {
+    if (!Array.isArray(list)) return out;
+    list.forEach((p, i) => {
+      if (!isObject(p)) return;
+      const here = `${at}[${i}]`;
+      if (p.type === "section") flatten(p.children, `${here}.children`, out);
+      else out.push({ p, path: here });
+    });
+    return out;
+  };
+
+  const SET_KEYS = ["label", "hint", "required", "ui", "options"];
+  const ARMS = ["equals", "in", "notIn", "truthy"];
+
+  const checkWhen = (p: Record<string, unknown>, here: string, visible: Set<unknown>) => {
+    const w = `${here}.when`;
+    if (p.when === undefined) return;
+    if (!Array.isArray(p.when)) return err(w, "must be an array");
+    p.when.forEach((e, j) => {
+      const ep = `${w}[${j}]`;
+      if (!isObject(e)) return err(ep, "must be an object");
+      const cond = e.if;
+      if (!isObject(cond)) {
+        err(`${ep}.if.field`, "must be a non-empty string");
+        err(`${ep}.if`, "must be an object");
+      } else {
+        const f = cond.field;
+        if (typeof f !== "string" || f.length === 0) {
+          err(`${ep}.if.field`, "must be a non-empty string");
+        } else if (f === p.key) {
+          err(`${ep}.if.field`, "must not name the field itself");
+        } else if (!visible.has(f)) {
+          err(`${ep}.if.field`, `names no param in scope: ${JSON.stringify(f)}`);
+        }
+        if (!ARMS.some((a) => cond[a] !== undefined)) {
+          err(`${ep}.if`, "must have one of equals, in, notIn, truthy");
+        }
+        for (const a of ["in", "notIn"]) {
+          if (cond[a] !== undefined && !Array.isArray(cond[a])) {
+            err(`${ep}.if.${a}`, "must be an array");
+          }
+        }
+        if (cond.truthy !== undefined && typeof cond.truthy !== "boolean") {
+          err(`${ep}.if.truthy`, "must be a boolean");
+        }
+      }
+      const set = e.set;
+      if (!isObject(set)) return err(`${ep}.set`, "must be an object");
+      for (const k of Object.keys(set)) {
+        if (!SET_KEYS.includes(k)) {
+          err(`${ep}.set.${k}`, `is not overlayable (allowed: ${SET_KEYS.join(", ")})`);
+        } else if (["label", "hint", "ui"].includes(k) && typeof set[k] !== "string") {
+          err(`${ep}.set.${k}`, "must be a string");
+        } else if (k === "required" && typeof set[k] !== "boolean") {
+          err(`${ep}.set.${k}`, "must be a boolean");
+        }
+      }
+    });
+  };
+
+  const walk = (list: unknown, at: string, outer: Set<unknown>) => {
+    const scope = flatten(list, at, []);
+    const visible = new Set<unknown>([...outer, ...scope.map((e) => e.p.key)]);
+    for (const { p, path: here } of scope) {
+      checkWhen(p, here, visible);
+      if (p.type === "group") walk(p.children, `${here}.children`, visible);
+    }
+  };
+  walk(params, path, new Set());
+  return errors;
 }
 
 /** Validate an Action's config (the serializable part — no `execute`). */
