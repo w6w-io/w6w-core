@@ -3,6 +3,13 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1]
+
+### Added
+
+- `matchesParamCondition`, `effectiveParam`, `PARAM_OVERLAY_KEYS` and the `ParamCondition` /
+  `ParamOverlay` / `ParamWhen` types: the shared evaluator and overlay for `Param.when`.
+
 ## [0.1.0]
 
 First npm release.

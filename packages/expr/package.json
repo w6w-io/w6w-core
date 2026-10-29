@@ -1,6 +1,6 @@
 {
   "name": "@w6w/expr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The w6w platform's expression engine — a JSONLogic evaluator. Pure, dependency-free TypeScript.",
   "license": "MIT",
   "repository": {
