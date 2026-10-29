@@ -3,7 +3,7 @@
  * `resolveFields` surface.
  */
 import { assert, assertFalse } from "jsr:@std/assert@^1.0.0";
-import { isFormResolvedOptions, type Options } from "../src/param.ts";
+import { isFormResolvedOptions, type Options, type Param } from "../src/param.ts";
 import type { Action, ActionDefinition } from "../src/action.ts";
 import type { ResolveFieldsHook } from "../src/hooks.ts";
 
@@ -34,4 +34,22 @@ Deno.test("resolveFields typing", () => {
   const flagged: Action = { ...base, resolveFields: true };
   assert(ok.resolveFields === hook);
   assert(flagged.resolveFields === true);
+});
+
+Deno.test("Param.when typing", () => {
+  const p: Param = {
+    key: "k",
+    label: "K",
+    type: "string",
+    when: [{ if: { field: "scope", equals: "org" }, set: { required: true, label: "Org" } }],
+  };
+  assert(p.when?.length === 1);
+  const bad: Param = {
+    key: "k",
+    label: "K",
+    type: "string",
+    // @ts-expect-error `type` is not an overlay key
+    when: [{ if: { field: "a" }, set: { type: "number" } }],
+  };
+  assert(bad);
 });
