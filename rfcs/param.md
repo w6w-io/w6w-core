@@ -162,6 +162,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `ui` | string | ⬜ | Render hint — see UI hints by type. |
 | `dependsOn` | string[] | ⬜ | Keys of other params. Disabled until all listed keys have values; changes invalidate cached `options` and re-run `validate`. |
 | `showIf` | [JSONLogic](https://jsonlogic.com) rule | ⬜ | Conditional visibility based on other field values. Evaluated against the current form state; truthy → visible. The platform ships a JSONLogic engine in [`@w6w/expr`](../packages/expr/README.md). |
+| `when` | `Array<{ if, set }>` | ⬜ | Conditional overlay: the first entry whose `if` matches replaces the param's `label`, `hint`, `required`, `ui` and/or `options` with its `set`. `if` is the simple condition `{ field, equals \| in \| notIn \| truthy }` (not JSONLogic). See [the 2026-10-29 amendment](#amendment--2026-10-29-conditional-overlay-when). |
 | `options` | Options | ⬜ | For choice types. Static list or dynamic hook source. |
 | `validation` | Validation | ⬜ | Declarative rules and/or a custom hook. |
 | `children` | Param[] | ⬜ | Nested params for `type: "group"` (nested object) or `type: "section"` (flat, layout-only). |
@@ -210,6 +211,8 @@ re-select a sibling's `ui`. A host whose editor mode should track a sibling para
 example, a `code` param whose language depends on another param's current selection) reads that
 sibling param's **current value** directly at render time — this spec supplies no mechanism that
 does it for the host.
+
+> Amended 2026-10-29: `ui` is static per param **except** where a `when` overlay sets it — see [Amendment — 2026-10-29](#amendment--2026-10-29-conditional-overlay-when), which also qualifies Concept items 1 and 3 and the `label`, `hint`, `required`, `ui`, `showIf` and `options` rows, the *`showIf` expression language* resolved question, and the group-local-first rule of the Groups amendment.
 
 ### Options
 
@@ -463,3 +466,37 @@ single-step test must do, are specified by the Workflow RFC's
    and flags it.
 6. **The per-field path form is specified but has no reference implementation.** The `./hooks/x.ts`
    arm stays in this RFC as written; nothing in this amendment implements or removes it.
+
+## Amendment — 2026-10-29: conditional overlay (`when`)
+
+> This amendment qualifies, and does not edit, the following passages: §Concept items 1 (identity &
+> presentation) and 3 (behavior); the field-table rows `label`, `hint`, `required` ("Defaults to
+> `false`."), `ui`, `showIf` and `options`; the paragraph "`ui` is **static per param**"; the
+> Resolved-questions row "`showIf` expression language" ("No bespoke mini-language."); and item 2 of
+> the Groups amendment (group-local siblings first). Each reads as written except where a param
+> declares `when`. Every passage above is otherwise unchanged.
+
+A Param may carry `when?: Array<{ if: { field; equals?; in?; notIn?; truthy? }; set: { label?; hint?;
+required?; ui?; options? } }>` — a conditional overlay on the static param, driven by the value of
+another param.
+
+1. **`when.if` is the simple condition shape**, `{ field, equals | in | notIn | truthy }`. The first
+   present arm decides, in that order (`equals`, `in`, `notIn`, `truthy`), using strict equality; an
+   `if` with no arm matches. It is **not JSONLogic**: `showIf`'s own language (JSONLogic, see
+   Resolved questions) is unchanged by this amendment, and reconciling the two dialects is left open.
+2. **`if.field` resolution.** `if.field` resolves to the named param's current value, else its
+   declared `default`. `section` children are flat (a section's children share the enclosing form's
+   scope). Inside a `group`, group-local siblings are looked up first, then the enclosing form — the
+   same rule as the Groups amendment's item 2 for `showIf`. A param must not name itself.
+3. **First match wins.** The first matching entry's `set` keys replace the param's `label`, `hint`,
+   `required`, `ui` and `options`. No other Param key is overlayable. When no entry matches, the
+   static param applies.
+4. **Effective `required`** is the overlaid value (else the static `required`, default `false`).
+   Invocation enforces the effective `required` — a behaviour change, since `required` was
+   previously unconditional. `showIf` is still not evaluated at invocation.
+5. **Static consumers.** A consumer that cannot express a conditional `required` or `options` (for
+   example a generated tool schema) MUST treat the param as inexpressible.
+
+Validators reject a malformed `when` (non-array, entry or `set` not an object, missing/self/unknown
+`if.field`, an `if` with no arm, a wrongly-typed arm, a `set` key outside the five overlayable keys
+or of the wrong type).

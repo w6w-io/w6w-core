@@ -445,3 +445,11 @@ This table restates *When resolution runs* and replaces it where they differ:
 | Editor — user edits a value | Invalidate downstream cached options; re-run from the changed node. On commit of a `refreshOn` key, one `resolveFields` `change` call refreshes only that key's dependants. A downstream value is never silently dropped: it is kept and flagged when absent from the returned options, except that a field without `allowCustom` has its stale value cleared on a `refreshOn` change (Param RFC amendment). |
 | Invocation — programmatic call | Run over the supplied `params`. Per-field `options.source` hooks may be re-run to validate that supplied values are valid options under the current dependency state; `resolveFields` is **not** re-run. Missing `dependsOn` references reject the Invocation. |
 | Replay — re-running a recorded Run | Skip resolution. Replay uses the previously-recorded resolved values verbatim so executions are deterministic. |
+
+## Amendment — 2026-10-29: effective `required` at invocation
+
+A param's `required` is now the *effective* `required`: the static value overlaid by the first
+matching `when` entry's `set.required` (see the
+[Param amendment](param.md#amendment--2026-10-29-conditional-overlay-when)). Invocation enforces
+that effective value against the supplied `params`; previously `required` was unconditional.
+`showIf` is still not evaluated at invocation.

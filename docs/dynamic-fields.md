@@ -18,9 +18,9 @@ updatedAt: null
 
 # Dynamic fields
 
-Some params can only offer real choices once w6w knows which account the call will run against —
-the models the user's Anthropic key can reach, the organizers under one Eventbrite organization.
-A **dynamic field** fetches those choices from the user's own connection while they fill the form,
+Some params can only offer real choices once w6w knows which account the call will run against — the
+models the user's Anthropic key can reach, the organizers under one Eventbrite organization. A
+**dynamic field** fetches those choices from the user's own connection while they fill the form,
 instead of shipping a fixed list that goes stale.
 
 One hook per Action, `resolveFields`, answers for all of them in a single call: the editor sends the
@@ -50,10 +50,10 @@ collide — a path always starts with `./`.
 
 Two optional pieces go with it:
 
-| Setting | Where it goes | What it does |
-| --- | --- | --- |
-| `refreshOn` | inside `options`, beside `source` | The sibling keys whose **commit** (a pick for a select or combobox, blur for a text input — never per keystroke) refetches this field's options. Unlike `dependsOn` it never disables the field, so a typed-in value stays possible before the parent is chosen. |
-| `config.allowCustom` | `config` on the param | Turns the field into a combobox that also accepts free text. Without it, the returned options constrain the value exactly as before. |
+| Setting              | Where it goes                     | What it does                                                                                                                                                                                                                                                     |
+| -------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshOn`          | inside `options`, beside `source` | The sibling keys whose **commit** (a pick for a select or combobox, blur for a text input — never per keystroke) refetches this field's options. Unlike `dependsOn` it never disables the field, so a typed-in value stays possible before the parent is chosen. |
+| `config.allowCustom` | `config` on the param             | Turns the field into a combobox that also accepts free text. Without it, the returned options constrain the value exactly as before.                                                                                                                             |
 
 The Eventbrite app uses both, because an organizer belongs to an organization:
 
@@ -90,14 +90,14 @@ definition carries the function.
 to `params` and `execute`. Its input is what the editor knows, and nothing that only exists at run
 time:
 
-| Key | Type | What it holds |
-| --- | --- | --- |
-| `reason` | `"init"` \| `"change"` | `init` opens the form; `change` follows a commit of a key named in some field's `refreshOn`. |
-| `form` | `Record<string, unknown>` | The form's **literal** values only. |
-| `previous` | `Record<string, unknown>` \| absent | The values the fields had before the change that triggered this call. |
-| `changed` | `string[]` \| absent | The key(s) whose commit triggered a `change` call. |
-| `fields` | `string[]` | The keys to answer for. Return options for these and ignore the rest. |
-| `unresolved` | `string[]` | Keys the editor withheld because their value is an expression, a `{ type: "secret" }` envelope or a var binding. |
+| Key          | Type                                | What it holds                                                                                                    |
+| ------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `reason`     | `"init"` \| `"change"`              | `init` opens the form; `change` follows a commit of a key named in some field's `refreshOn`.                     |
+| `form`       | `Record<string, unknown>`           | The form's **literal** values only.                                                                              |
+| `previous`   | `Record<string, unknown>` \| absent | The values the fields had before the change that triggered this call.                                            |
+| `changed`    | `string[]` \| absent                | The key(s) whose commit triggered a `change` call.                                                               |
+| `fields`     | `string[]`                          | The keys to answer for. Return options for these and ignore the rest.                                            |
+| `unresolved` | `string[]`                          | Keys the editor withheld because their value is an expression, a `{ type: "secret" }` envelope or a var binding. |
 
 Return `{ fields: Record<key, { options?, error? }> }`: `options` is an `Option[]` of
 `{ value, label, description? }`, and `error` is a per-field message instead — one field failing
@@ -145,8 +145,8 @@ sorted newest first, `label` from `display_name` with the id as fallback, `descr
 
 Four rules the host enforces around your hook:
 
-- **No credential.** It runs in phase `resolution`, and `ctx.connection` is redacted. `ctx.fetch`
-  is signed exactly as it is for `action.execute`, behind the same `network.allow`, so the same
+- **No credential.** It runs in phase `resolution`, and `ctx.connection` is redacted. `ctx.fetch` is
+  signed exactly as it is for `action.execute`, behind the same `network.allow`, so the same
   manifest hosts apply.
 - **10 s.** This is the one hook the host caps at 10 seconds rather than the 30 000 ms default,
   because it sits in the editor's critical path. Page enough to be useful, not enough to time out.
@@ -158,11 +158,11 @@ Four rules the host enforces around your hook:
 
 ## When the hook runs
 
-| Moment | What the host does |
-| --- | --- |
-| The user opens the form | One `init` call asking for every `source: "resolveFields"` field. |
-| A `refreshOn` key is committed | One `change` call asking only for that key's dependants. A newer request aborts an older in-flight one. |
-| An Invocation or a replay | Nothing. Invocation does not re-run `resolveFields` to validate a supplied value, and replay uses the previously resolved values verbatim. |
+| Moment                         | What the host does                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| The user opens the form        | One `init` call asking for every `source: "resolveFields"` field.                                                                          |
+| A `refreshOn` key is committed | One `change` call asking only for that key's dependants. A newer request aborts an older in-flight one.                                    |
+| An Invocation or a replay      | Nothing. Invocation does not re-run `resolveFields` to validate a supplied value, and replay uses the previously resolved values verbatim. |
 
 A `resolveFields` call is **not** an Invocation — there is no verdict, no run history entry and
 nothing to replay — but it is still metered: the global metering middleware records it as one
@@ -189,9 +189,37 @@ The editor never silently drops a value the user already has. The rules, in the 
    free text and shows that its options are unavailable; the dynamic field itself can still be bound
    with an expression, and the ƒx binding keeps working.
 
-That is why a field can usefully be dynamic *and* `allowCustom` *and* still expression-bound: the
+That is why a field can usefully be dynamic _and_ `allowCustom` _and_ still expression-bound: the
 hook is a convenience, not a validator. Invocation re-checks nothing about `resolveFields`; validate
 what matters in the Action's own code.
+
+## Change a field's label or requirement with `when`
+
+A param can adapt to another param's value. `when` is an ordered list of `{ if, set }` entries; the
+**first** entry whose `if` matches overlays its `set` on the param, and if none matches the param is
+exactly as declared. `set` may replace only `label`, `hint`, `required`, `ui` and `options`.
+
+```ts
+{
+  key: "ticketId",
+  label: "Ticket",
+  type: "string",
+  when: [
+    { if: { field: "kind", equals: "paid" }, set: { label: "Paid ticket", required: true } },
+    { if: { field: "kind", in: ["free", "donation"] }, set: { hint: "Optional for free events" } },
+  ],
+}
+```
+
+`if` is `{ field, equals | in | notIn | truthy }`: the first arm present decides (strict equality),
+and an `if` with no arm always matches. `field` names another param in the same form; inside a
+`group` the group's own siblings are looked up first, then the enclosing form. It reads that param's
+current value, else its `default`. A param cannot name itself.
+
+This is **not JSONLogic**. `showIf` keeps its own JSONLogic language; `when.if` is the small
+condition shape above, and the two are not interchangeable. The effective `required` (the overlaid
+value) is what Invocation enforces. Tooling that cannot express a conditional `required` or
+`options`, such as a generated tool schema, treats the param as inexpressible.
 
 ## Checklist
 
