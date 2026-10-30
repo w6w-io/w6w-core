@@ -4,11 +4,51 @@
  * cover `file:` and `github:`. A reference's scheme selects the resolver.
  */
 
+/**
+ * Which credential a remote resolve presents. Absent ≡ `{ mode: "host" }`
+ * (today's env-token behaviour). `anonymous` sends no credential on any
+ * request; `token` sends only the given token (never an env token).
+ */
+export type SourceAuth =
+  | { mode: "host" }
+  | { mode: "anonymous" }
+  | { mode: "token"; token: string };
+
 export interface ResolveOptions {
   /** Root for cached downloads. Defaults to `$W6W_CACHE` or an OS temp dir. */
   cacheDir?: string;
-  /** Re-download even if a cached copy exists. */
+  /** Re-download even if a cached copy exists (also bypasses the GitHub ref→SHA memo read). */
   force?: boolean;
+  /** Credential selection for remote resolvers. Absent ≡ `{ mode: "host" }`. */
+  auth?: SourceAuth;
+  /** Abort the resolve; any abort surfaces as `SourceError("timeout")`. Absent = unbounded. */
+  signal?: AbortSignal;
+  /** Cap on DECOMPRESSED tarball bytes; beyond it `SourceError("too_large")`. Absent = unbounded. */
+  maxBytes?: number;
+}
+
+/** The auth class a resolve belongs to; partitions the cache and the SHA memo. */
+export type AuthClass = "host" | "anonymous" | "token";
+
+/** Class of `auth` (absent ≡ host). */
+export function authClassOf(auth?: SourceAuth): AuthClass {
+  return auth?.mode === "anonymous" ? "anonymous" : auth?.mode === "token" ? "token" : "host";
+}
+
+/**
+ * First cache-key segment for a host (`github`, …) in an auth class. Host keeps
+ * the bare name, so today's on-disk layout is unchanged; the other classes get
+ * their own namespace so a credentialed fetch is never served to another class.
+ */
+export function classSegment(base: string, cls: AuthClass): string {
+  return cls === "host" ? base : `${base}-${cls}`;
+}
+
+/** Result of {@link Resolver.resolveDetailed}. */
+export interface ResolvedSource {
+  dir: string;
+  /** The immutable revision the fetch actually used (GitHub commit SHA); `undefined` otherwise. */
+  revision?: string;
 }
 
 export interface Resolver {
@@ -18,6 +58,8 @@ export interface Resolver {
   canResolve(ref: string): boolean;
   /** Resolve `ref` to an absolute local directory. */
   resolve(ref: string, opts: ResolveOptions): Promise<string>;
+  /** Like `resolve`, but also reports the revision the fetch used. Optional. */
+  resolveDetailed?(ref: string, opts: ResolveOptions): Promise<ResolvedSource>;
 }
 
 export class SourceError extends Error {

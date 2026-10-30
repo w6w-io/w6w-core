@@ -9,13 +9,17 @@
  * Runs host-side (full Deno perms) — this is a wrapper concern, never sandboxed.
  */
 import {
+  authClassOf,
+  classSegment,
+  type ResolvedSource,
   type ResolveOptions,
   type Resolver,
+  type SourceAuth,
   SourceError,
   splitFragment,
   splitRef,
 } from "./types.ts";
-import { resolveViaTarball } from "./tarball.ts";
+import { httpFailure, resolveViaTarball } from "./tarball.ts";
 import { assertSafeGitRef, isSafeSegment } from "./refcheck.ts";
 
 export interface GithubRef {
@@ -63,10 +67,17 @@ export function githubToken(): string | undefined {
   return Deno.env.get("W6W_GITHUB_TOKEN") ?? Deno.env.get("GITHUB_TOKEN") ?? undefined;
 }
 
-/** Headers for a GitHub tarball fetch (auth when a token is set). */
-export function githubAuthHeaders(): HeadersInit {
+/**
+ * Headers for a GitHub fetch. Host/absent `auth`: the env token when set.
+ * `anonymous`: no credential. `token`: only the given token (never env).
+ */
+export function githubAuthHeaders(auth?: SourceAuth): HeadersInit {
   const headers: Record<string, string> = { "User-Agent": "w6w-sources" };
-  const token = githubToken();
+  const token = auth?.mode === "anonymous"
+    ? undefined
+    : auth?.mode === "token"
+    ? auth.token
+    : githubToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
     headers["Accept"] = "application/vnd.github+json";
@@ -115,26 +126,35 @@ const SHA_MEMO_TTL_MS = 30_000;
 export async function resolveGithubCommitSha(
   gh: GithubRef,
   headers: HeadersInit,
+  opts: Pick<ResolveOptions, "force" | "auth" | "signal"> = {},
 ): Promise<string> {
   if (isCommitSha(gh.ref)) return gh.ref;
 
+  const cls = authClassOf(opts.auth);
   const key = `${gh.owner}/${gh.repo}@${gh.ref}`;
+  // The memo is partitioned by auth class: a credentialed lookup is never served to another class.
+  const memoKey = `${cls}:${key}`;
   const now = Date.now();
-  const cached = shaMemo.get(key);
-  if (cached && cached.expires > now) return cached.sha;
+  const cached = shaMemo.get(memoKey);
+  // `force` bypasses the READ but still writes below (same lookup, not a second cache).
+  if (!opts.force && cached && cached.expires > now) return cached.sha;
 
   const url = `https://api.github.com/repos/${gh.owner}/${gh.repo}/commits/${gh.ref}`;
   const res = await fetch(url, {
     headers: { ...headers, Accept: "application/vnd.github.sha" },
+    signal: opts.signal,
   });
   if (!res.ok) {
-    throw new SourceError("fetch_failed", `GitHub ref lookup failed (${res.status}): ${key}`);
+    if (cls === "host") {
+      throw new SourceError("fetch_failed", `GitHub ref lookup failed (${res.status}): ${key}`);
+    }
+    throw httpFailure(cls, "GitHub ref lookup", res.status, res.headers, key);
   }
   const sha = (await res.text()).trim();
   if (!isCommitSha(sha)) {
     throw new SourceError("fetch_failed", `GitHub ref lookup returned a non-SHA body for ${key}`);
   }
-  shaMemo.set(key, { sha, expires: now + SHA_MEMO_TTL_MS });
+  shaMemo.set(memoKey, { sha, expires: now + SHA_MEMO_TTL_MS });
   return sha;
 }
 
@@ -146,22 +166,30 @@ export const githubResolver: Resolver = {
   },
 
   async resolve(ref: string, opts: ResolveOptions = {}): Promise<string> {
+    return (await githubResolver.resolveDetailed!(ref, opts)).dir;
+  },
+
+  async resolveDetailed(ref: string, opts: ResolveOptions = {}): Promise<ResolvedSource> {
     const { subpath } = splitFragment(ref);
     const gh = parseGithubRef(ref);
-    const token = githubToken();
-    const headers = githubAuthHeaders();
+    const cls = authClassOf(opts.auth);
+    const headers = githubAuthHeaders(opts.auth);
+    // Credentialed (host env token, or an explicit token) → API endpoint; else codeload.
+    const credentialed = cls === "token"
+      ? opts.auth?.mode === "token" && opts.auth.token !== ""
+      : cls === "host" && !!githubToken();
     // Resolve a moving ref to the exact commit it names right now, so the
     // tarball cache below is keyed by immutable content — see
     // `resolveGithubCommitSha`'s doc comment for why.
-    const sha = await resolveGithubCommitSha(gh, headers);
+    const sha = await resolveGithubCommitSha(gh, headers, opts);
     const pinned = { ...gh, ref: sha };
-    // Authenticated → API endpoint (private-capable); anonymous → codeload.
-    const url = token ? githubApiTarballUrl(pinned) : githubTarballUrl(pinned);
-    return resolveViaTarball(
+    const url = credentialed ? githubApiTarballUrl(pinned) : githubTarballUrl(pinned);
+    const dir = await resolveViaTarball(
       {
-        cacheKey: ["github", gh.owner, gh.repo, sha],
+        cacheKey: [classSegment("github", cls), gh.owner, gh.repo, sha],
         url,
         headers,
+        authClass: cls,
         label: "GitHub",
         subpath,
         // Keyed by an immutable commit SHA, so older sibling SHAs are superseded.
@@ -169,5 +197,6 @@ export const githubResolver: Resolver = {
       },
       opts,
     );
+    return { dir, revision: sha };
   },
 };
