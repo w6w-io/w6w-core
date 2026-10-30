@@ -909,7 +909,6 @@ step whose raw `with` reads a vault secret is refused before invoke.
 
 | action | type | params | output |
 |---|---|---|---|
-| action | type | params | output |
 | `get` | read | `store`*, `key`*, `required` (boolean, default false) | `{ found: true, key, value, version, expiresAt }` · miss: `{ found: false, key }`; miss + `required` ⇒ node error |
 | `set` | perform | `store`*, `key`*, `value`* (json), `ifVersion`, `ttlSeconds` | `{ key, value, version, expiresAt }` (echoes `value`) |
 | `delete` | perform | `store`*, `key`* | `{ key, deleted: boolean }` |
