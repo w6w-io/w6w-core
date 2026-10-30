@@ -115,6 +115,13 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 }
 ```
 
+For APIs whose inputs already use comma-separated strings, a `multiselect` can
+set `config: { "valueFormat": "csv" }`. The picker reads a value such as
+`"live,draft"` into separate chips and writes a comma-separated string when
+choices change. A string `default` uses the same format; clearing all choices
+writes `""`. Without this config (or with `valueFormat: "array"`), multiselects
+continue to store arrays. Use CSV only for choices whose values contain no commas.
+
 ### Secret
 
 ```json
@@ -181,7 +188,7 @@ A form is `Param[]`. The surface that owns the form (Action, Trigger, Auth, …)
 | `number` | number | Use `validation.integer` to restrict to integers. |
 | `boolean` | boolean | Rendered as toggle or checkbox. |
 | `select` | string \| number | Single choice from `options`. |
-| `multiselect` | array | Zero or more choices from `options`. |
+| `multiselect` | array or string | Zero or more choices from `options`; `config.valueFormat: "csv"` stores a comma-separated string. |
 | `date` | string (`YYYY-MM-DD`) | |
 | `datetime` | string (ISO 8601) | Includes timezone. |
 | `secret` | string | Masked in UI, encrypted at rest. Implies `secret: true`. |
