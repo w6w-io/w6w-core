@@ -866,3 +866,50 @@ A host that implements `@w6w/model` MUST:
 - Classify the id as **non-echo** (`NON_ECHO_INTERNAL_APPS`, absent from `SECRET_ECHO_APPS`) and as
   **host-only** (`HOST_INTERNAL_APPS`), refusing it on a spoke with an error whose message starts
   `model_unavailable:`, and refusing to ship a workflow containing it to a spoke (`model_step`).
+
+## Amendment — 2026-10-30: run data in `@w6w/script` — `input` bindings, literal `code`, `digest`
+
+> **Additive.** Qualifies the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table's
+> `@w6w/script` row and the [Workflow RFC](./workflow.md)'s root-anchored template strings
+> ([amendment 2026-08-14](./workflow.md#amendment--2026-08-14-root-anchored-template-strings-in-with-values))
+> and template-strings-as-authored-form ([amendment 2026-10-29](./workflow.md#amendment--2026-10-29-template-strings-are-the-authored-form))
+> for exactly one `with` key. It adds no scope root and no marker form, and edits no sentence above.
+
+**`code` is source text, never a template.** A host resolves no `{{ }}` marker, `$` marker or
+`ExprValue` inside `@w6w/script`'s `code`: the string reaches the sandbox byte-identical, and the
+step record carries it unchanged. Splicing a value into a program is string concatenation into
+syntax: an object becomes its string form, and a quote in the data ends (or rewrites) the program.
+Because `code` is not resolved, it is also not read for references: it adds no dependency, trips no
+own-control refusal and names no vault secret to any oracle a host walks over a `with` block. The
+rule is per app and per key; a `code` param of any other app resolves as before.
+
+**Run data enters through `input`.** The optional `input` key is an ordinary `with` value, so its
+markers resolve type-preserved under the existing rules: `"{{ nodes.fetch.output }}"` delivers the
+upstream object itself, and an object of bindings — `{ "order": "{{ nodes.fetch.output }}",
+"region": "{{ var.region }}" }` — delivers an object of typed values. The script reads it as `input`
+in both languages. An editor declares `input` as a `json` param with the `whole` flag
+([Param RFC, amendment 2026-10-30](./param.md#amendment--2026-10-30-hidden-and-whole-param-flags)).
+
+**`digest(value, algorithm?)`.** Both v1 languages expose a `digest` function to step code. It
+returns the lowercase hex digest of `value` under `algorithm` — `"sha256"` when omitted, else one of
+`"sha1"`, `"sha256"`, `"sha384"`, `"sha512"`, case-insensitive, `-` ignored. A string is hashed as its
+UTF-8 text and bytes as themselves; any other value is hashed as the UTF-8 of its JSON text with
+object keys sorted and no insignificant whitespace. In JavaScript it returns a promise; in Python it
+returns the string.
+
+### Conformance (additive)
+
+A host that implements `@w6w/script`·`run` MUST:
+
+- pass `code` through every `with` resolution it performs — a workflow run, a sub-block, a
+  single-node test, an ad-hoc invoke, a Function or Endpoint adapter pass — byte-identical.
+  Testably: a step whose `code` is `return "{{ var.x }}";` returns the text `{{ var.x }}`;
+- exclude `code` from every reference or secret-name walk over the step's `with` block;
+- resolve `input` exactly as any other `with` value;
+- give `digest` the same result for the same value in both languages. Testably:
+  `digest("abc")` is `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`, and
+  `digest({ "b": 1, "a": [true, null] })` equals `digest({ "a": [true, null], "b": 1 })` and the
+  Python twin's result for the same dict;
+- refuse an algorithm outside the four names, failing the step with a message naming it.
+
+A host MAY expose further helpers; `digest` is the only one this amendment requires.
