@@ -23,6 +23,11 @@ export function abortedError(): SourceError {
   return new SourceError("timeout", "Source fetch was aborted or timed out");
 }
 
+/** True when `e` is the fallout of `signal` aborting (everything but a cap breach). */
+export function isAbortFallout(e: unknown, signal?: AbortSignal): boolean {
+  return !!signal?.aborted && !(e instanceof SourceError && e.code === "too_large");
+}
+
 /**
  * Settle with `p`, or reject `timeout` the moment `signal` aborts. `p` is left
  * running (a joiner must not cancel a shared op). No `signal` → `p` unchanged.
@@ -223,6 +228,10 @@ export async function resolveViaTarball(
   const force = !!opts.force;
   const signal = opts.signal;
   if (signal?.aborted) throw abortedError();
+  // A cap that is not a positive finite number would silently be no cap at all.
+  if (opts.maxBytes !== undefined && !(Number.isFinite(opts.maxBytes) && opts.maxBytes > 0)) {
+    throw new SourceError("bad_ref", "maxBytes must be a positive finite number");
+  }
   // Refuse before any stat/remove/mkdir/rename: `dest` must be strictly inside the cache.
   assertCacheDest(cacheDir, dest, key);
 
@@ -270,7 +279,7 @@ async function loadTarball(
     return await loadTarballUnbounded(src, cacheDir, dest, force, opts);
   } catch (e) {
     // Any abort (fetch rejection, stalled body, …) is one coded error.
-    if (opts.signal?.aborted && !(e instanceof SourceError && e.code === "too_large")) {
+    if (isAbortFallout(e, opts.signal)) {
       throw abortedError();
     }
     throw e;

@@ -32,7 +32,11 @@ export type AuthClass = "host" | "anonymous" | "token";
 
 /** Class of `auth` (absent ≡ host). */
 export function authClassOf(auth?: SourceAuth): AuthClass {
-  return auth?.mode === "anonymous" ? "anonymous" : auth?.mode === "token" ? "token" : "host";
+  if (auth === undefined) return "host";
+  // Fail closed: an unrecognised runtime mode must never fall back to the host token.
+  const mode = (auth as { mode?: unknown } | null)?.mode;
+  if (mode === "host" || mode === "anonymous" || mode === "token") return mode;
+  throw new SourceError("bad_ref", "Unknown source auth mode");
 }
 
 /**

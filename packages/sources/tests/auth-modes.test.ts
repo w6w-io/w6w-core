@@ -461,7 +461,7 @@ function releaseAfter3s(openGate: () => void) {
   return () => clearTimeout(t);
 }
 
-Deno.test("bounds: a fetch that never answers rejects `timeout` on abort (signal reaches fetch)", async () => {
+Deno.test("bounds: a tarball fetch stalled until released (3s) rejects `timeout` on abort (needs the signal at the tarball fetch)", async () => {
   await withTmp(async (cacheDir) => {
     const o = uniq("o");
     let release!: () => void;
@@ -757,3 +757,106 @@ Deno.test("tar: symlink entries are never materialized; regular files still extr
     }
   });
 });
+
+// ---------- Round 1: the moving-ref lookup honours the signal (P5) ----------
+
+/** A stalled lookup: fetch (or its body) only ends on the signal; a mutant is released after 3 s. */
+for (const where of ["fetch", "body"] as const) {
+  Deno.test(`bounds: a stalled github lookup ${where} on a moving ref rejects \`timeout\` on abort`, async () => {
+    await withTmp(async (cacheDir) => {
+      const o = uniq("o");
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const clearRelease = releaseAfter3s(release);
+      const impl = ((input: string | URL | Request, init?: RequestInit) => {
+        if (!LOOKUP_RE.test(String(input))) return Promise.resolve(new Response(oneFile()));
+        const abortErr = () => new DOMException("aborted", "AbortError");
+        if (where === "fetch") {
+          return new Promise<Response>((res, rej) => {
+            init?.signal?.addEventListener("abort", () => rej(abortErr()));
+            gate.then(() => res(new Response(SHA1)));
+          });
+        }
+        const body = new ReadableStream<Uint8Array>({
+          async pull(ctl) {
+            await new Promise<void>((r) => {
+              init?.signal?.addEventListener("abort", () => r());
+              gate.then(() => r());
+            });
+            if (init?.signal?.aborted) ctl.error(abortErr());
+            else {
+              ctl.enqueue(new TextEncoder().encode(SHA1));
+              ctl.close();
+            }
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }) as typeof fetch;
+      const { signal, clear } = abortAfter(100);
+      try {
+        const err = await withFetch(impl, () =>
+          assertRejects(
+            () => resolve(HOSTS.github(o, "lookup" + where, "main"), { cacheDir, signal }),
+            SourceError,
+          ));
+        assertEquals(err.code, "timeout");
+      } finally {
+        clear();
+        clearRelease();
+        release();
+      }
+    });
+  });
+}
+
+Deno.test("bounds: a pre-aborted signal on a moving ref rejects `timeout` before any lookup", async () => {
+  await withTmp(async (cacheDir) => {
+    const stub = okStub();
+    const ctl = new AbortController();
+    ctl.abort();
+    const err = await withFetch(stub.impl, () =>
+      assertRejects(
+        () => resolve(HOSTS.github(uniq("o"), uniq("r"), "main"), { cacheDir, signal: ctl.signal }),
+        SourceError,
+      ));
+    assertEquals(err.code, "timeout");
+    assertEquals(stub.calls.length, 0);
+  });
+});
+
+// ---------- Round 1: fail-closed hardening (F1, F3) ----------
+
+for (const [label, bad] of [["ANONYMOUS", { mode: "ANONYMOUS" }], ["{}", {}], ["null", null]]) {
+  Deno.test(`auth: an unknown runtime auth.mode (${label}) is refused, never the host token`, async () => {
+    await withTmp(async (cacheDir) => {
+      await withEnv({ W6W_GITHUB_TOKEN: "ghp_hosttoken_sentinel" }, async () => {
+        const stub = okStub();
+        const r = await withFetch(
+          stub.impl,
+          () =>
+            code(resolve(HOSTS.github(uniq("o"), uniq("r")), {
+              cacheDir,
+              auth: bad as unknown as SourceAuth,
+            })),
+        );
+        assertEquals(r.code, "bad_ref");
+        assert(!r.message.includes("hosttoken"));
+        assertEquals(stub.calls.length, 0);
+      });
+    });
+  });
+}
+
+for (const bad of [NaN, Infinity, 0, -5]) {
+  Deno.test(`bounds: maxBytes ${bad} is refused rather than silently unbounded`, async () => {
+    await withTmp(async (cacheDir) => {
+      const stub = okStub();
+      const r = await withFetch(
+        stub.impl,
+        () => code(resolve(HOSTS.github(uniq("o"), uniq("r")), { cacheDir, maxBytes: bad })),
+      );
+      assertEquals(r.code, "bad_ref");
+      assertEquals(stub.calls.length, 0);
+    });
+  });
+}

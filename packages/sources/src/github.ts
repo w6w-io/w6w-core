@@ -19,7 +19,7 @@ import {
   splitFragment,
   splitRef,
 } from "./types.ts";
-import { httpFailure, resolveViaTarball } from "./tarball.ts";
+import { abortedError, httpFailure, isAbortFallout, resolveViaTarball } from "./tarball.ts";
 import { assertSafeGitRef, isSafeSegment } from "./refcheck.ts";
 
 export interface GithubRef {
@@ -140,17 +140,25 @@ export async function resolveGithubCommitSha(
   if (!opts.force && cached && cached.expires > now) return cached.sha;
 
   const url = `https://api.github.com/repos/${gh.owner}/${gh.repo}/commits/${gh.ref}`;
-  const res = await fetch(url, {
-    headers: { ...headers, Accept: "application/vnd.github.sha" },
-    signal: opts.signal,
-  });
-  if (!res.ok) {
-    if (cls === "host") {
-      throw new SourceError("fetch_failed", `GitHub ref lookup failed (${res.status}): ${key}`);
+  if (opts.signal?.aborted) throw abortedError();
+  let sha: string;
+  try {
+    const res = await fetch(url, {
+      headers: { ...headers, Accept: "application/vnd.github.sha" },
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      if (cls === "host") {
+        throw new SourceError("fetch_failed", `GitHub ref lookup failed (${res.status}): ${key}`);
+      }
+      throw httpFailure(cls, "GitHub ref lookup", res.status, res.headers, key);
     }
-    throw httpFailure(cls, "GitHub ref lookup", res.status, res.headers, key);
+    sha = (await res.text()).trim();
+  } catch (e) {
+    // Any abort (fetch rejection, stalled body read) is one coded error, never a raw DOMException.
+    if (isAbortFallout(e, opts.signal)) throw abortedError();
+    throw e;
   }
-  const sha = (await res.text()).trim();
   if (!isCommitSha(sha)) {
     throw new SourceError("fetch_failed", `GitHub ref lookup returned a non-SHA body for ${key}`);
   }
