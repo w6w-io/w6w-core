@@ -136,6 +136,20 @@ export interface Param {
    */
   advanced?: boolean;
   /**
+   * A form renderer does not render this field: a canvas or host owns its value.
+   * The value is still validated and invoked as declared (a hidden `required`
+   * param is still enforced). Not `readOnly` (shown, not editable) and not
+   * `advanced` (collapsed, still reachable). Not overlayable by `when`.
+   */
+  hidden?: boolean;
+  /**
+   * The authored value is one value or one expression (a literal, a template
+   * string that is a single reference, or a `$`/`$expr` binding), so a picked
+   * reference binds the whole value instead of being nested inside a structure.
+   * Changes neither resolution nor validation. Not overlayable by `when`.
+   */
+  whole?: boolean;
+  /**
    * Lay this param out on a shared row with adjacent params carrying the same
    * `row` id (e.g. a username/password pair side by side).
    */

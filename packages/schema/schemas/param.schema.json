@@ -88,6 +88,8 @@
     "readOnly": { "type": "boolean" },
     "repeat": { "type": "boolean" },
     "advanced": { "type": "boolean" },
+    "hidden": { "type": "boolean" },
+    "whole": { "type": "boolean" },
     "row": { "type": "string" },
     "ui": { "type": "string" },
     "item": {

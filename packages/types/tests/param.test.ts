@@ -53,3 +53,24 @@ Deno.test("Param.when typing", () => {
   };
   assert(bad);
 });
+
+Deno.test("Param.hidden / Param.whole typing", () => {
+  const p: Param = { key: "k", label: "K", type: "json", hidden: true, whole: true };
+  assert(p.hidden === true && p.whole === true);
+  const bad: Param = {
+    key: "k",
+    label: "K",
+    type: "string",
+    // @ts-expect-error `hidden` is boolean
+    hidden: "yes",
+  };
+  assert(bad);
+  const overlay: Param = {
+    key: "k",
+    label: "K",
+    type: "string",
+    // @ts-expect-error `hidden` is not an overlay key
+    when: [{ if: { field: "a" }, set: { hidden: true } }],
+  };
+  assert(overlay);
+});
