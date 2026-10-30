@@ -913,3 +913,27 @@ A host that implements `@w6w/script`·`run` MUST:
 - refuse an algorithm outside the four names, failing the step with a message naming it.
 
 A host MAY expose further helpers; `digest` is the only one this amendment requires.
+
+## Amendment — 2026-10-30: the `"typescript"` value of `@w6w/script`'s `language`
+
+> **Additive.** Adds a third value to the `language` enum of the
+> [2026-09-19 amendment](#amendment--2026-09-19-the-language-param-on-w6wscriptrun-f-1). It edits
+> no sentence above; that amendment's Conformance bullets bind `"typescript"` as they bind every
+> other value.
+
+`language: "typescript"` runs `code` as JavaScript after its TypeScript syntax is erased.
+Type-only syntax (annotations, interfaces, type aliases, generics, `as` casts) is removed, and
+emitting syntax (`enum`, parameter properties) compiles to its JavaScript form. **Types are not
+checked**: a step that a type checker would reject still runs, so the dialect is a way to write
+types, not a gate. Everything else is the JavaScript path's: the same function-body contract, the
+same `input`, `digest` and `fetch`, the same sandbox, timeout and failure shape. Every
+JavaScript body is a valid TypeScript body.
+
+### Conformance (additive)
+
+A host that implements `language: "typescript"` MUST:
+
+- erase types inside the same no-ambient-authority sandbox, never by downloading a compiler or
+  shelling out;
+- run the erased body exactly as a `"javascript"` step would run it;
+- report a syntax error naming the line the author wrote, before running any of the code.
