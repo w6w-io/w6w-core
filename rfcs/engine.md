@@ -209,6 +209,8 @@ Runs a sub-block once per item in `items`, collecting outputs.
 
 **Semantics:** for each item in `items`, the engine spawns a **child scope** where `foreach.item` and `foreach.index` are added to the run scope for the sub-block's steps. The sub-block's `StepExecution` records are keyed under `steps.<forEachStepId>.iterations[<index>].<stepId>`. When all iterations complete, the parent step's `output` is `{ items: [<per-iteration output>] }` where each per-iteration output is the last step's output in the sub-block.
 
+**Own-output reads are refused.** A step owned by a control's sub-block MUST NOT read that control's output (`nodes.<id>.output` / `steps.<id>.output`), directly or through any enclosing control: the output exists only after the sub-block finishes. A host MUST refuse such a workflow at plan time, naming the step and the control. Inside a `foreach` body the current item is `foreach.item`.
+
 **Failure modes:** if any iteration fails and the parent step's `onError` is `"fail"`, all in-flight iterations are canceled (via `context.signal`) and the run fails. Under `"continue"`, per-iteration failures are recorded and iteration continues.
 
 ### `@w6w/control` · `parallel`
