@@ -114,7 +114,17 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "enum": ["llm", "embedding", "reranking", "image-generation", "video-generation", "speech-to-text", "text-to-speech", "audio-generation", "moderation"]
+            "enum": [
+              "llm",
+              "embedding",
+              "reranking",
+              "image-generation",
+              "video-generation",
+              "speech-to-text",
+              "text-to-speech",
+              "audio-generation",
+              "moderation"
+            ]
           }
         },
         "modelFamilies": {
