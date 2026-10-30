@@ -978,3 +978,50 @@ A host that implements `@w6w/store` MUST:
 - Classify the id as **secret-echo** (`SECRET_ECHO_APPS`, absent from `NON_ECHO_INTERNAL_APPS`) and as
   **host-only** (`HOST_INTERNAL_APPS`), failing the step on a spoke and refusing to ship a workflow
   containing it to a spoke (`store_step`).
+
+## Amendment — 2026-10-30: app trigger nodes (B-1)
+
+> **Governs where it disagrees.** This amendment supersedes three statements above, and where
+> they disagree this amendment governs; nothing else in this document is edited.
+>
+> 1. Non-Goals, "App-declared triggers and subscription delivery — see `trigger.md`. This RFC adds
+>    only **system** triggers (manual)." — an _app_ trigger is now also expressible as a node
+>    (below). Subscription delivery itself stays in `trigger.md`.
+> 2. "Triggers as nodes", "`Workflow.trigger` field and the trigger node are two views of the same
+>    fact; the field is authoritative for _how a run is launched_ …, the node is its position in
+>    the DAG." — for an **app** trigger node there is no `Workflow.trigger` field to be a second
+>    view: the node IS the trigger, and a workflow may hold several.
+> 3. "Only **manual** is defined here. `schedule` and `event` remain as in `trigger.md`;
+>    app-declared triggers are out of scope." — app-declared triggers are in scope as nodes, per
+>    this amendment.
+
+### Grammar (D-5)
+
+An **app trigger node** is an ordinary app-Action node with one additive marker:
+
+```json
+{ "id": "updated", "uses": { "app": "eventbrite", "action": "event-updated",
+                             "connection": "conn_1", "trigger": true },
+  "with": { "event_id": "123" } }
+```
+
+- `uses.trigger: true` (absent means a plain app Action node). `uses.action` is the **trigger key**
+  the app declares; `with` carries the trigger's params; `uses.connection` is the connection the
+  trigger authenticates with. The `{ function }` arm has no such marker.
+- `classifyNode` yields `"trigger"` for it (before the reserved-`@w6w/` arm), in addition to
+  `@w6w/trigger`. `isTriggerNode` is true for `@w6w/trigger`, `@w6w/webhook`, `@w6w/scheduler`
+  and any `uses.trigger: true` node.
+- Executing it is a **pass-through of the fired event payload** (like `@w6w/webhook`); the host
+  does not invoke the vendor action.
+- **Multiple triggers.** A workflow may hold several trigger nodes of any of these grammars.
+- The **poll interval is not part of the node in v1** (planner ruling P-1): the host's polling
+  cadence is its own concern, not a param of the definition.
+
+### Run start (D-6)
+
+A fire starts the run at the trigger node that fired (`RunSeed.entry`). With `entry` set, only the
+entry node and the nodes reachable from it via edges execute; every other root — trigger-class or
+not — is recorded skipped, and so is every node reachable only from skipped roots; a join reachable
+from the entry still runs. With `entry` absent, every root starts. See the [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1).
+Subscriptions for app trigger nodes are derived from the saved definition on publish; see the
+[Trigger RFC amendment](./trigger.md#amendment--2026-10-30-trigger-nodes-bind-subscriptions-b-1).

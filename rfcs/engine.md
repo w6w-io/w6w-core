@@ -438,3 +438,26 @@ iterations count as complete on resume (Open question 2) stays open.
 it: the hub's `runStatePatch` inspects only `status` and deliberately does not inspect any other
 key. A mixed-version pair therefore loses per-iteration records, not the run. The earlier
 sentences "`RunStatePatch` is unchanged" (here and in `workflow.md`) read as of their own dates.
+
+## Amendment — 2026-10-30: trigger-entry run start (B-1)
+
+Additive. `RunSeed` gains `entry?: string` (a node id) and `RunState`/`RunStatePatch` gain
+`entry?: string`.
+
+- **`entry` absent** — unchanged: every root starts.
+- **`entry` set** — only the entry node and the nodes reachable from it via edges execute. Every
+  other root — trigger-class or not (a floating non-trigger node included) — is **not executed**: it
+  is recorded `skipped`, and so is every node reachable only from skipped roots (its outgoing edges
+  are marked skipped and the ordinary edge-skip rule propagates). A join reachable from the entry
+  still runs under the existing join semantics. A non-root node follows ordinary edge-skip.
+- **Invalid `entry`** — an `entry` naming a node that is not in the workflow, or a node that is not
+  a trigger node, is a `PlanError` raised before any node runs and before any checkpoint.
+- **Both schedulers** (sequential and ready-set) obey the rule identically.
+- **Persistence.** `entry` is written with the run's first checkpoint and read back by resume and
+  replay (as `event` is), so a resumed run keeps the other triggers skipped.
+
+### Conformance (additive)
+
+An engine MUST, for T1→A→J, T2→B→J plus a floating non-trigger root F: with `entry: "T1"` run
+T1, A and J and skip T2, B and F; with `entry: "T2"` the mirror image; with no `entry` run all six.
+The reference fixtures are the three `trigger-entry` entries in `@w6w/engine-conformance`.
