@@ -17,9 +17,9 @@
  * regardless. The `=` arm is unaffected by mode.
  *
  * The `var` ref is the FULL path the engine reads via JSONLogic `{ var: ref }`
- * against `{ vars, steps, trigger, foreach }` — e.g. `vars.env`,
+ * against `{ var, const, steps, trigger, foreach }` — e.g. `var.env`,
  * `steps.fetch.output.title`. A project variable named `env` is therefore
- * `vars.env`, matching `RunScope`. Secrets are keyed by bare name
+ * `var.env` (`vars.env` is its permanent alias). Secrets are keyed by bare name
  * (`scope.secrets[NAME]`), so they carry the `secrets.` prefix only in text form.
  *
  * A sealed at-rest secret ({ type:"secret", ciphertext, iv }) has no text form
@@ -55,6 +55,32 @@ const SECRET_PREFIX = "secrets.";
  * doc and the contract's "post-filter is the wrong mechanism" note.
  */
 export type TemplateMode = "editor" | "render";
+
+/**
+ * Opt-in `\{{` escaping. A backslash directly before `{{` makes the marker literal text — but
+ * ONLY when the marker would otherwise be one of the caller's own ({@link isOurs}). A marker
+ * that is not ours (a vendor's Handlebars `\{{name}}`, which uses the same escape) is left
+ * byte-for-byte alone, backslash included. `\\{{` is a literal backslash followed by a live
+ * marker. `@w6w/expr` has no opinion on which markers are "ours" (the root set lives with the
+ * engine), so the caller supplies it.
+ */
+export interface TemplateEscape {
+  /** True when a marker that parses to `part` belongs to the caller, and so can be escaped. */
+  isOurs(part: ExprPart): boolean;
+  /**
+   * `"strip"` (resolution): consume the escaping backslashes, so `\{{ var.x }}` yields the
+   * text `{{ var.x }}`. `"keep"` (editing): keep the source text verbatim, so an editor's text
+   * parts round-trip unchanged — the escaped marker still becomes text, never a part.
+   */
+  backslash: "strip" | "keep";
+}
+
+/** How many `\` end `s`. */
+function trailingBackslashes(s: string): number {
+  let n = 0;
+  while (n < s.length && s[s.length - 1 - n] === "\\") n += 1;
+  return n;
+}
 
 /** A `||`/`??` chain's JSONLogic key, and the infix token that spells it. */
 type ChainOp = "or" | "??";
@@ -231,8 +257,14 @@ function findBalancedClose(input: string, start: number): number {
  * an unterminated `{{` (no matching `}}`) is treated as literal text, never an
  * error — so half-typed input stays editable. `mode` (default `"editor"`)
  * selects which arms {@link innerToPart} can dispatch to — see {@link TemplateMode}.
+ * `escape` opts in to `\{{` escaping (see {@link TemplateEscape}); omitted, a backslash is
+ * ordinary text, as it always was.
  */
-export function parseTemplate(input: string, mode: TemplateMode = "editor"): ExprPart[] {
+export function parseTemplate(
+  input: string,
+  mode: TemplateMode = "editor",
+  escape?: TemplateEscape,
+): ExprPart[] {
   const parts: ExprPart[] = [];
   let text = "";
   let i = 0;
@@ -262,8 +294,21 @@ export function parseTemplate(input: string, mode: TemplateMode = "editor"): Exp
         text += input.slice(i); // unterminated → literal
         break;
       }
+      const part = innerToPart(input.slice(innerStart, end).trim(), mode);
+      const slashes = escape ? trailingBackslashes(text) : 0;
+      if (escape && slashes > 0 && escape.isOurs(part)) {
+        if (escape.backslash === "strip") {
+          // `\\` → `\`; an odd count leaves one more, which escapes the marker.
+          text = text.slice(0, text.length - slashes) + "\\".repeat(Math.floor(slashes / 2));
+        }
+        if (slashes % 2 === 1) {
+          text += input.slice(i, end + CLOSE.length); // escaped → the marker's own source text
+          i = end + CLOSE.length;
+          continue;
+        }
+      }
       flushText();
-      parts.push(innerToPart(input.slice(innerStart, end).trim(), mode));
+      parts.push(part);
       i = end + CLOSE.length;
     } else {
       text += input[i];
