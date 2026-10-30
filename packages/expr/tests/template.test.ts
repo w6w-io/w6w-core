@@ -427,3 +427,47 @@ Deno.test("hasRefusedChainToken: true only for a ref still carrying a top-level 
   assertEquals(hasRefusedChainToken('vars.a || "x||y"'), true); // the outer token, not the quoted one
   assertEquals(hasRefusedChainToken('"a||b"'), false); // wholly inside quotes — opaque
 });
+
+// ── `\{{` escaping (opt-in, `TemplateEscape`) ──────────────────────────────────────────────
+const rooted = (p: ExprPart) => p.kind !== "var" || (p.ref ?? "").startsWith("var.");
+const strip = { isOurs: rooted, backslash: "strip" } as const;
+const keep = { isOurs: rooted, backslash: "keep" } as const;
+
+Deno.test("escape — without the option a backslash is ordinary text (unchanged behaviour)", () => {
+  assertEquals(parseTemplate("\\{{ var.x }}"), [
+    { kind: "text", value: "\\" },
+    { kind: "var", ref: "var.x" },
+  ]);
+});
+
+Deno.test("escape — strip: `\\{{ ours }}` is the literal marker text, backslash consumed", () => {
+  assertEquals(parseTemplate("a \\{{ var.x }} b", "editor", strip), [
+    { kind: "text", value: "a {{ var.x }} b" },
+  ]);
+});
+
+Deno.test("escape — keep: the escaped marker is text and the source is verbatim", () => {
+  assertEquals(parseTemplate("a \\{{ var.x }} b", "editor", keep), [
+    { kind: "text", value: "a \\{{ var.x }} b" },
+  ]);
+});
+
+Deno.test("escape — `\\\\{{` is a literal backslash then a live marker", () => {
+  assertEquals(parseTemplate("C:\\\\{{ var.dir }}", "editor", strip), [
+    { kind: "text", value: "C:\\" },
+    { kind: "var", ref: "var.dir" },
+  ]);
+  assertEquals(parseTemplate("C:\\\\{{ var.dir }}", "editor", keep), [
+    { kind: "text", value: "C:\\\\" },
+    { kind: "var", ref: "var.dir" },
+  ]);
+});
+
+Deno.test("escape — a marker that is not ours keeps its backslash (vendor Handlebars)", () => {
+  assertEquals(parseTemplate("\\{{name}} {{ var.x }}", "editor", strip), [
+    { kind: "text", value: "\\" },
+    { kind: "var", ref: "name" },
+    { kind: "text", value: " " },
+    { kind: "var", ref: "var.x" },
+  ]);
+});

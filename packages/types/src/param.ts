@@ -31,6 +31,8 @@ export interface ParamConfig {
    * the value.
    */
   allowCustom?: boolean;
+  /** Multiselect storage format. Defaults to an array; CSV preserves string-based API inputs. */
+  valueFormat?: "array" | "csv";
 }
 
 /**

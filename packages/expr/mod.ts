@@ -18,6 +18,7 @@ export {
   parseRenderTemplate,
   parseTemplate,
   serializeTemplate,
+  type TemplateEscape,
   type TemplateMode,
 } from "./src/template.ts";
 export { effectiveParam, matchesParamCondition, PARAM_OVERLAY_KEYS } from "./src/param-when.ts";
