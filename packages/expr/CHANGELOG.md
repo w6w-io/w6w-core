@@ -9,6 +9,8 @@ All notable changes to `@w6w/expr` are documented here. The format follows
 
 - `matchesParamCondition`, `effectiveParam`, `PARAM_OVERLAY_KEYS` and the `ParamCondition` /
   `ParamOverlay` / `ParamWhen` types: the shared evaluator and overlay for `Param.when`.
+- `parseTemplate(input, mode, escape?)` takes an opt-in `TemplateEscape`: with it, `\{{` is read as
+  a literal `{{` instead of opening a marker. `TemplateEscape` is exported.
 
 ## [0.1.0]
 
