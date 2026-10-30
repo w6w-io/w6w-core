@@ -866,3 +866,116 @@ A host that implements `@w6w/model` MUST:
 - Classify the id as **non-echo** (`NON_ECHO_INTERNAL_APPS`, absent from `SECRET_ECHO_APPS`) and as
   **host-only** (`HOST_INTERNAL_APPS`), refusing it on a spoke with an error whose message starts
   `model_unavailable:`, and refusing to ship a workflow containing it to a spoke (`model_step`).
+
+## Amendment — 2026-10-30: the `@w6w/store` host node (F-2)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change and edits none of the following, which **stand unedited**,
+> superseded in reading by this amendment — identified by link and location rather than reproduced:
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table, which this amendment
+>   extends with one more id;
+> - the [Node kinds](#node-kinds) table's `internal` row, whose examples this amendment extends;
+> - the paragraph under [Non-echo classification](#non-echo-classification) in the 2026-10-24
+>   `@w6w/model` amendment, whose list of apps subject to the secret-echo refusal now also includes
+>   `@w6w/store`.
+>
+> Like the [2026-10-24 `@w6w/model` amendment](#amendment--2026-10-24-the-w6wmodel-host-node-f-3),
+> it has no companion amendment in [`invocation.md`](./invocation.md): the host performs the work.
+
+`@w6w/store` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself to
+read and write **persistent data stores** that outlive a run — key/value entries, documents and table
+rows. Its params are ordinary expression-capable `with` values. Like `@w6w/control`, `@w6w/script`,
+`@w6w/data`, `@w6w/trigger`, `@w6w/call`, `@w6w/document`, `@w6w/template` and `@w6w/model`, it is a
+**host** node with host capabilities — **not** a sandboxed `packages/apps` app. No registered app id
+may begin with `@w6w/`, so `@w6w/store` can never collide with a catalog app.
+
+### Kind & routing
+
+`@w6w/store` slots into the existing tables as an **internal** kind that routes through the one invoke
+seam — there is no parallel code path:
+
+| Kind       | `uses.app`   | Executed by                 | Examples                          |
+| ---------- | ------------ | --------------------------- | --------------------------------- |
+| `internal` | `@w6w/store` | the **host's internal API** | read or write a persistent entry  |
+
+Routing is unchanged: `isInternalApp("@w6w/store")` is `true` (the reserved `@w6w/` prefix), so the
+invoke seam dispatches it to the **host's internal node processor** rather than to the registry.
+
+### Reserved internal pseudo-app
+
+`store` = store NAME in the run's account+project (never an id, never another scope). Ignored if
+present: `scope`, `account`, `project`, `tenant`, `subject`, `input`. Class: **secret-echo** (R-1) — a
+step whose raw `with` reads a vault secret is refused before invoke.
+
+| action | type | params | output |
+|---|---|---|---|
+| action | type | params | output |
+| `get` | read | `store`*, `key`*, `required` (boolean, default false) | `{ found: true, key, value, version, expiresAt }` · miss: `{ found: false, key }`; miss + `required` ⇒ node error |
+| `set` | perform | `store`*, `key`*, `value`* (json), `ifVersion`, `ttlSeconds` | `{ key, value, version, expiresAt }` (echoes `value`) |
+| `delete` | perform | `store`*, `key`* | `{ key, deleted: boolean }` |
+| `increment` | perform | `store`*, `key`*, `by` (number, default 1) | `{ key, value, version }` |
+| `list` | read | `store`*, `prefix`, `cursor`, `limit` (≤200, default 50) | `{ items: Entry[], nextCursor? }` |
+| `query` | read | `store`*, `where` (json object), `order` (`col`/`-col`), `limit` | `{ items: Entry[] }` |
+| `insert` | perform | `store`*, `row`* (json), `ttlSeconds` | `{ key, value, version }` |
+
+A `*` marks a required param. `Entry` = `{ key, value, version, sizeBytes, expiresAt, createdAt,
+updatedAt }`. `query` and `insert` address **table** stores; `increment` addresses a **kv** store whose
+value type is `number` or `integer`. Node errors are `InternalNodeError` whose message starts with the
+store error code (`data_store_not_found: …`).
+
+### Scope, archive and expiry
+
+- **Scope.** A store belongs to the run's own **account and project**, and is shared by every member
+  and service account of that account — there is no per-subject or per-creator privacy. The host
+  binds the scope; no param moves it, and a host MUST NOT fall back to a default project when the
+  run's project is unavailable.
+- **Archive.** Deleting a store archives it. Its name is free again, and an archived store is not
+  found: a step naming it fails with `data_store_not_found:`. Because a step names a store by NAME,
+  archiving a store and creating a new one under the same name rebinds the step to the new store.
+  Deleting an **entry** (`delete`) is a real delete.
+- **Expiry.** `ttlSeconds` sets an entry's expiry. An entry that has expired is absent to `get`,
+  `list` and `query`, and a write to it restarts at version 1. Expired entries are reclaimed lazily
+  on later writes; there is no background sweep.
+
+### Echo classification
+
+Unlike `@w6w/model`, `@w6w/store` **does copy its parameters into data a run can read back**:
+`set` and `insert` persist their params where every account member can read them, and `get` returns
+them into later step outputs. It is therefore a **secret-echo** app: it is listed in the engine's
+`SECRET_ECHO_APPS` ([Engine RFC](./engine.md)) and is **absent** from the host's
+`NON_ECHO_INTERNAL_APPS`. A step whose raw `with` reads a vault secret is refused before invoke
+(code `param_invalid`, phase `resolution`), exactly as for `@w6w/data`, `@w6w/template` and
+`@w6w/trigger`.
+
+### Spoke refusal
+
+A store needs the host's database, which a **spoke** does not hold. So `@w6w/store` is a **host-only**
+node:
+
+- A host MUST classify the id in `HOST_INTERNAL_APPS` and refuse it on a spoke: a `@w6w/store` step
+  executed on a spoke **fails the step** — never a success carrying an empty or `null` output.
+- A workflow containing a `@w6w/store` step is **not spoke-eligible**: the eligibility report names
+  the reason `store_step`, so the refusal above is the defence in depth, not the normal path.
+
+### Open/closed seam
+
+`@w6w/store` sits on the same open/closed boundary as `@w6w/model`, `@w6w/document` and
+`ctx.invoke` (STRATEGY §5.1). The **contract** — the `@w6w/store` node kind and its reserved id
+constant `STORE_APP` — is declared in the open `@w6w/workflow-types`; the **implementation** (store
+resolution, scope binding, limits and persistence) is provided by the **closed server host**. The
+engine holds only the reserved id and routes to the host.
+
+### Conformance (additive)
+
+A host that implements `@w6w/store` MUST:
+
+- Classify a node whose `uses.app === "@w6w/store"` as an **internal** kind, route it through the one
+  invoke seam to the host's internal node processor, and accept no other execution path.
+- Support exactly the seven actions `get`, `set`, `delete`, `increment`, `list`, `query`,
+  `insert`, and **reject any other** action under this id.
+- Resolve `store` by name within the **run's own account and project**, ignoring any caller-supplied
+  `scope`, `account`, `project`, `tenant`, `subject` or `input`.
+- Treat an archived store as not found (`data_store_not_found:`), and apply expiry as above.
+- Classify the id as **secret-echo** (`SECRET_ECHO_APPS`, absent from `NON_ECHO_INTERNAL_APPS`) and as
+  **host-only** (`HOST_INTERNAL_APPS`), failing the step on a spoke and refusing to ship a workflow
+  containing it to a spoke (`store_step`).
