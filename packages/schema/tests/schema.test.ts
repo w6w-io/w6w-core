@@ -39,6 +39,7 @@ import {
   CREDENTIAL_CONTRACT_ID_RE,
   type OAuth2ClientSetup,
   type OAuth2Config,
+  type Param,
   type ServiceAccountConfig,
 } from "@w6w/types";
 
@@ -145,4 +146,43 @@ Deno.test("connection.schema.json gains the 4 optional properties, required unch
     "state",
     "createdAt",
   ]);
+});
+
+const PARAM_KEYS: Record<keyof Param, true> = {
+  key: true,
+  label: true,
+  type: true,
+  placeholder: true,
+  hint: true,
+  required: true,
+  default: true,
+  secret: true,
+  readOnly: true,
+  repeat: true,
+  advanced: true,
+  hidden: true,
+  whole: true,
+  row: true,
+  ui: true,
+  item: true,
+  dependsOn: true,
+  showIf: true,
+  when: true,
+  options: true,
+  validation: true,
+  config: true,
+  children: true,
+  section: true,
+  title: true,
+  subtitle: true,
+  layout: true,
+  collapsed: true,
+};
+
+Deno.test("param.schema.json: key set equals keyof Param, closed, hidden/whole boolean", () => {
+  const param = schemas.param as J;
+  assertEquals(keys(param.properties), keys(PARAM_KEYS));
+  assertEquals(param.additionalProperties, false);
+  assertEquals(param.properties.hidden, { type: "boolean" });
+  assertEquals(param.properties.whole, { type: "boolean" });
 });

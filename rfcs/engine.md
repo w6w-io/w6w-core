@@ -386,3 +386,53 @@ The fan-in join with optional explicit entries. No new reserved `@w6w/*` id; no 
 - **`NodeRun` remains the executeNode record** — the result of `executeNode(workflow, nodeId, startState)`, defined in [Node Types RFC — NodeRun](./node-types.md#noderun). It is a different record from `NodeExecution`, which is the run-state record.
 - **Engine host-hook requests** (`InvokeStepRequest` and kin) keep `stepId`: it feeds `Invocation.context.stepId`, which this amendment does not change.
 - `StepError`, `StepMeta`, `StepUses` and `RunState.stepErrors` keep their names.
+
+## Amendment — 2026-10-30: per-iteration records for `foreach`
+
+> Settles what a `foreach` run records per iteration. It qualifies, without editing them: the
+> `body` row ("contiguous DAG" — the editor authors `body` as a linear list, see (e)); the
+> Semantics keying `steps.<forEachStepId>.iterations[<index>].<stepId>`; the Failure-modes
+> `"continue"` sentence (see (c)); Open questions 1 (**Nested control actions**, see (d)) and 2
+> (**Cursor state** in `foreach`, see (f)); the 2026-10-07 bullet "`RunStatePatch` is unchanged"
+> and the same sentence in the Scheduler section of `workflow.md` (see (g)); and the 2026-10-22
+> bullet keying `nodes.<forEachNodeId>.iterations[<index>].<nodeId>` (see (b)).
+
+**(a) Checkpoint seam.** `RunStatePatch` gains an optional `iteration`, and `RunState` an
+optional `iterations` side table:
+
+```ts
+RunStatePatch.iteration?: { nodeId: string /* the For each */; index: number; node: NodeExecution }
+RunState.iterations?: Record<string, Record<number, Record<string, NodeExecution>>>
+```
+
+Every body-step execution in every iteration is checkpointed through `patch.iteration`, on
+success and on failure. Body step ids are never keys in `RunState.nodes`. The For each's own
+record is checkpointed `running` before iteration 0, and its `output` stays `{ items: [...] }`.
+
+**(b) Keying.** The keying written above as `steps.<forEachStepId>.iterations[<index>].<stepId>`
+and `nodes.<forEachNodeId>.iterations[<index>].<nodeId>` is realised in engine state as
+`RunState.iterations[<forEachNodeId>][<index>][<nodeId>]`. On the reference host's run read
+(`GET /runs/:id`), only a For each node record gains `iterations[]`, sorted by index, each
+`{ index, status, failedNodeId?, nodes }` with `status` one of `succeeded`, `failed`, `running`
+and `nodes` keyed by body step id, plus `iterationsTotal`, `iterationsFailed` and
+`iterationsTruncated`. A host may cap the served list; the reference serves the first 100 by
+index plus every failed iteration. `?wait=true` does not carry iterations.
+
+**(c) `continue` is not implemented per iteration.** Per-iteration `onError: "continue"` is not
+implemented: the first failed iteration aborts the loop, and later items are not invoked. The
+Failure-modes sentence describing per-iteration continuation is not realised by the reference.
+
+**(d) Scope.** Only a `foreach` run from the main graph records iterations. `if` and `parallel`
+sub-blocks, and a `foreach` nested inside a sub-block, record none; Open question 1 stays open.
+
+**(e) Body shape.** The editor authors `body` as a linear list and the engine runs it as an
+ordered list. The editor manifest declares `body` `required: false` (canvas-owned, `hidden`, see
+the `param.md` 2026-10-30 amendment), while the engine still requires it at run time.
+
+**(f) Not resume state.** Iteration records are a record of what ran, not resume state; which
+iterations count as complete on resume (Open question 2) stays open.
+
+**(g) Additive and mixed versions.** `iteration` is additive. A consumer that predates it drops
+it: the hub's `runStatePatch` inspects only `status` and deliberately does not inspect any other
+key. A mixed-version pair therefore loses per-iteration records, not the run. The earlier
+sentences "`RunStatePatch` is unchanged" (here and in `workflow.md`) read as of their own dates.

@@ -165,6 +165,8 @@ continue to store arrays. Use CSV only for choices whose values contain no comma
 | `default` | any | ⬜ | Prefilled value. Must match `type`. |
 | `secret` | boolean | ⬜ | Input is sensitive. Host MUST mask in UI and store encrypted. Implicit `true` when `type: "secret"`. |
 | `readOnly` | boolean | ⬜ | Display-only; not submitted. |
+| `hidden` | boolean | ⬜ | Not rendered by a form; a canvas or host owns the value. See [the 2026-10-30 amendment](#amendment--2026-10-30-hidden-and-whole-param-flags). |
+| `whole` | boolean | ⬜ | The value is one value or one expression, so a picked reference binds the whole value. See [the 2026-10-30 amendment](#amendment--2026-10-30-hidden-and-whole-param-flags). |
 | `repeat` | boolean | ⬜ | Allow multiple values (array of `type`). UI renders as an add/remove list. |
 | `ui` | string | ⬜ | Render hint — see UI hints by type. |
 | `dependsOn` | string[] | ⬜ | Keys of other params. Disabled until all listed keys have values; changes invalidate cached `options` and re-run `validate`. |
@@ -507,3 +509,28 @@ another param.
 Validators reject a malformed `when` (non-array, entry or `set` not an object, missing/self/unknown
 `if.field`, an `if` with no arm, a wrongly-typed arm, a `set` key outside the five overlayable keys
 or of the wrong type).
+
+## Amendment — 2026-10-30: `hidden` and `whole` param flags
+
+> Adds two optional presentation hints. It qualifies four passages without editing them:
+> **Concept** item 3 (the Behavior list names `required`, `default`, `secret`, `readOnly`,
+> `repeat`; `hidden` and `whole` join it as hints that change no behavior), the `readOnly` row
+> ("Display-only; not submitted" — a `hidden` value, unlike a `readOnly` one, **is** submitted),
+> the `json` Types row ("host renders a JSON editor" — not for a `hidden` param), and `when`
+> item 3 ("No other Param key is overlayable" — still true: neither flag is overlayable).
+
+Two optional boolean keys on `Param`; both default to `false`.
+
+- **`hidden`** — a form renderer does not render the field. A canvas or host owns its value; the
+  value is still validated and invoked as declared, so a hidden `required` param is still
+  enforced. `hidden` is not `readOnly` (a `readOnly` field is shown but not editable and is not
+  submitted; a hidden field is not shown but is submitted) and not `advanced` (`advanced` is
+  collapsed under "Additional parameters" yet reachable; `hidden` is never shown).
+- **`whole`** — the authored value is one value or one expression: a literal, a template string
+  that is a single reference, or a `$`/`$expr` binding. A picked reference therefore binds the
+  whole value instead of being nested inside a structure. It builds on the whole-value bindings
+  of [the 2026-10-12 amendment](#amendment--2026-10-12-whole-value-bindings-for-json-and-group)
+  and, like it, changes neither resolution nor validation.
+
+Neither flag changes resolution or validation, and neither is overlayable by a `when` entry
+(`ParamOverlay` is unchanged). `param.schema.json` carries both as `{ "type": "boolean" }`.
