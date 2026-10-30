@@ -36,3 +36,29 @@ jobs:
           deno-version: v2.x
       # `npm test` runs the root package.json test script (deno test).
       - run: npm test
+
+  # publish-expr.yml's build + tarball smoke, on every push and PR. Its file list is checked
+  # against what the build emits, so a new source module that the list misses fails here
+  # instead of failing the publish after the expr-v… release is cut.
+  expr-pack:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/expr
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm run build
+      - name: Pack smoke (tarball contents + ESM/require from a scratch consumer)
+        run: bash scripts/pack-smoke.sh
+      # npm refuses even a dry run over a version it already has, so skip once it is published.
+      - name: Dry-run publish
+        run: |
+          VER="$(node -p "require('./package.json').version")"
+          if npm view "@w6w/expr@$VER" version >/dev/null 2>&1; then
+            echo "::notice::@w6w/expr@$VER is already on npm — dry-run publish skipped"
+          else
+            npm publish --dry-run
+          fi
