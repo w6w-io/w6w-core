@@ -1019,7 +1019,9 @@ An **app trigger node** is an ordinary app-Action node with one additive marker:
 
 ### Run start (D-6)
 
-A fire starts the run at the trigger node that fired (`RunSeed.entry`), and runs the nodes wired
-to THAT trigger; see the [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1).
+A fire starts the run at the trigger node that fired (`RunSeed.entry`). With `entry` set, only the
+entry node and the nodes reachable from it via edges execute; every other root — trigger-class or
+not — is recorded skipped, and so is every node reachable only from skipped roots; a join reachable
+from the entry still runs. With `entry` absent, every root starts. See the [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1).
 Subscriptions for app trigger nodes are derived from the saved definition on publish; see the
 [Trigger RFC amendment](./trigger.md#amendment--2026-10-30-trigger-nodes-bind-subscriptions-b-1).

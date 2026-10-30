@@ -485,7 +485,7 @@ Additive. A workflow's app triggers are now **nodes** in its definition (`uses.t
   subscription for a trigger node itself.
 - **A fire starts at that node.** A delivery on a node-bound subscription starts the run with
   `RunSeed.entry` set to the bound `nodeId`; the engine then runs the nodes wired to that trigger
-  and skips the workflow's other trigger nodes
+  and skips every other root and the nodes reachable only from them
   ([Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1)).
 - **No interval in v1.** The poll interval is not part of the trigger node (planner ruling P-1).
 - Per-workflow multiple schedule/webhook keying is not defined here (deferred).

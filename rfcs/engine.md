@@ -445,11 +445,11 @@ Additive. `RunSeed` gains `entry?: string` (a node id) and `RunState`/`RunStateP
 `entry?: string`.
 
 - **`entry` absent** — unchanged: every root starts.
-- **`entry` set** — every _other_ root for which `isTriggerNode` is true (`@w6w/trigger`,
-  `@w6w/webhook`, `@w6w/scheduler`, or `uses.trigger: true`) is **not executed**: it is recorded
-  `skipped` and its outgoing edges are marked skipped, so its exclusive descendants skip through
-  the ordinary edge-skip rule. A join also reachable from the fired trigger still runs. Non-trigger
-  roots are unaffected.
+- **`entry` set** — only the entry node and the nodes reachable from it via edges execute. Every
+  other root — trigger-class or not (a floating non-trigger node included) — is **not executed**: it
+  is recorded `skipped`, and so is every node reachable only from skipped roots (its outgoing edges
+  are marked skipped and the ordinary edge-skip rule propagates). A join reachable from the entry
+  still runs under the existing join semantics. A non-root node follows ordinary edge-skip.
 - **Invalid `entry`** — an `entry` naming a node that is not in the workflow, or a node that is not
   a trigger node, is a `PlanError` raised before any node runs and before any checkpoint.
 - **Both schedulers** (sequential and ready-set) obey the rule identically.
@@ -459,5 +459,5 @@ Additive. `RunSeed` gains `entry?: string` (a node id) and `RunState`/`RunStateP
 ### Conformance (additive)
 
 An engine MUST, for T1→A→J, T2→B→J plus a floating non-trigger root F: with `entry: "T1"` run
-T1, A, J and F and skip T2 and B; with `entry: "T2"` the mirror image; with no `entry` run all six.
+T1, A and J and skip T2, B and F; with `entry: "T2"` the mirror image; with no `entry` run all six.
 The reference fixtures are the three `trigger-entry` entries in `@w6w/engine-conformance`.
