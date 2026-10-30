@@ -1599,3 +1599,17 @@ content) has no escape: its grammar is unchanged.
 Conformance (additive): a host MUST resolve a single-marker string to the typed value per the
 table above, MUST apply the escape rule above to `with` strings, and SHOULD write template strings
 rather than the structured forms.
+
+## Amendment — 2026-10-30: `uses.trigger` and `RunSeed.entry` (B-1)
+
+Additive; the `uses` table above is not edited. Read it with two further rows.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `uses.trigger` | `true` | ⬜ | On an app `{ app, action }` Action only: marks the node an **app trigger node** — `action` is the app's trigger key, `with` its params, `connection` its connection. Absent means a plain Action. A workflow may hold several trigger nodes. See [Node Types RFC amendment](./node-types.md#amendment--2026-10-30-app-trigger-nodes-b-1). The poll interval is not part of the node in v1. |
+
+`RunSeed.entry?: string` — the id of the trigger node that fired. Absent: every root starts, as
+before. Set: the run starts at that trigger; see the
+[Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1). A host that
+persists run state persists `entry` with it (`RunState.entry`, `RunStatePatch.entry`) so resume and
+replay start the same way. `normalizeWorkflow` preserves `uses.trigger`.

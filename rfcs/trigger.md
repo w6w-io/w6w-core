@@ -469,3 +469,23 @@ A stored call is immutable: its subscription, raw call, normalized event and rec
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for `manifestVersion: "1"`. Breaking changes require a new RFC and a `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-10-30: trigger nodes bind subscriptions (B-1)
+
+Additive. A workflow's app triggers are now **nodes** in its definition (`uses.trigger: true`;
+[Node Types RFC amendment](./node-types.md#amendment--2026-10-30-app-trigger-nodes-b-1)).
+
+- **Binding.** A `Subscription` MAY be bound to a trigger node of its workflow by that node's id
+  (`nodeId`). A subscription with no `nodeId` behaves exactly as before (it targets the
+  workflow's single trigger; `WorkflowTrigger` `{ type: "event", subscriptionId }` is unchanged).
+- **Derived on publish.** For each app trigger node in a published definition the host derives the
+  subscription (trigger key from `uses.action`, params from `with`, connection from
+  `uses.connection`), creating, updating or removing it to match the definition. Draft saves do
+  not subscribe — a subscription is dormant until publish. The client does not create a
+  subscription for a trigger node itself.
+- **A fire starts at that node.** A delivery on a node-bound subscription starts the run with
+  `RunSeed.entry` set to the bound `nodeId`; the engine then runs the nodes wired to that trigger
+  and skips the workflow's other trigger nodes
+  ([Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1)).
+- **No interval in v1.** The poll interval is not part of the trigger node (planner ruling P-1).
+- Per-workflow multiple schedule/webhook keying is not defined here (deferred).
