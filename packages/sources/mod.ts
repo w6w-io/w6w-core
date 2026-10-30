@@ -10,7 +10,8 @@
  * Pluggable: a `Resolver` can be registered (or extracted to its own package)
  * without changing how callers invoke `resolve()`.
  */
-export { defaultResolvers, resolve, SourceRegistry } from "./src/resolve.ts";
+export { defaultResolvers, resolve, resolveDetailed, SourceRegistry } from "./src/resolve.ts";
+export { resolveGrantedFolder } from "./src/folder.ts";
 export { localResolver } from "./src/local.ts";
 export {
   githubApiTarballUrl,
@@ -41,8 +42,10 @@ export type { BitbucketRef } from "./src/bitbucket.ts";
 export { defaultCacheDir, extractStripped, resolveViaTarball } from "./src/tarball.ts";
 export { applySubpath } from "./src/subpath.ts";
 export {
+  type ResolvedSource,
   type ResolveOptions,
   type Resolver,
+  type SourceAuth,
   SourceError,
   splitFragment,
   splitRef,
