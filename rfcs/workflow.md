@@ -681,13 +681,14 @@ cannot reach `secrets`.
 ### Run-scope roots
 
 The `RunScope` block under [Expression markers](#expression-markers) enumerates three roots (`vars`,
-`steps`, `trigger`). Two more are part of the model and are declared here; per the governing clause
+`steps`, `trigger`). Three more are part of the model and are declared here; per the governing clause
 above, that block is incomplete rather than exhaustive.
 
 | Root | Contents | Reachable through the generic data root? |
 |---|---|---|
 | `secrets` | Host-injected **plaintext**, keyed by secret name. | **No — never.** |
 | `documents` | The run's project-scoped document store, keyed by document `key`. Ordinary data. | **Yes.** |
+| `const` | The run's account constants, keyed by name. Ordinary data, read-only. | **Yes.** |
 
 **`secrets`** is injected by the host from its vault before the run and is never persisted with run
 state. Exactly one production in this model may read it: a `secret` part of an `ExprValue`, which
@@ -705,7 +706,14 @@ by key at run time instead, so the key can come from a trigger input or an upstr
 is what the
 [`@w6w/document` node](./node-types.md#amendment--2026-08-11-the-w6wdocument-host-node-f-3) is for.
 
-This section declares `secrets` and `documents`, and only those two. Any further root a host
+**`const`** *(amendment, 2026-10-29)* is injected by the host from the run's **account**: named
+values the account's users read but cannot change. Every account carries `account_id` — the
+account's own identifier as its users know it (a host that federates identity uses the identity
+provider's account claim when there is one). Like `documents` it is ordinary data on the generic
+data root. A host MUST load it only from the account the run executes in: no caller-supplied input
+(run `variables`, a trigger payload, a start state) may supply or shadow it.
+
+This section declares `secrets`, `documents` and `const`, and only those three. Any further root a host
 populates for a particular pass is neither declared nor forbidden here; it remains unspecified by
 this RFC.
 
@@ -1517,3 +1525,77 @@ CanvasSection { id: string; title: string; color: string; position: { x: number;
   duplicate ids, a node in more than one section, or any shape or cap violation above.
 - **Section execution** (run a section, disable a section) is deliberately unspecified; see
   [Open questions](#open-questions) item 6.
+
+## Amendment — 2026-10-29: the `var` and `const` expression roots
+
+> **Additive.** Renames the project-variables expression root from `vars` to `var`, and names the
+> account-constants root ([Run-scope roots](#run-scope-roots)) `const`. Every `vars.<key>` in this
+> file — the `RunScope` block, the root-anchoring rule's closed root set, the worked examples — is read
+> under this amendment as `var.<key>`. No earlier sentence is edited; this section supersedes their
+> spelling, not their meaning.
+
+- **`var.<key>` is canonical.** A workflow variable, or a host-injected project variable, is read as
+  `var.<key>` from every expression shape: `{ "$": "var.<key>" }`, a `var` part, a `{{ var.<key> }}`
+  template, and a JSONLogic `{ "var": "var.<key>" }`.
+- **The `vars.<key>` root is a permanent alias of `var.<key>`.** It resolves to the **same object**,
+  so existing `{ "$": "vars.…" }` markers and `{{ vars.… }}` templates keep working unchanged. Writers
+  — editors, exporters, generated examples — emit `var.`; the alias is read-only and has no sunset.
+- **`const.<name>` reads the account constants.** There is no `constants` root: a marker naming
+  `constants.<name>` names no root and, like any unrooted marker, is left literal.
+- **The closed root set** of [Amendment — 2026-08-14](#amendment--2026-08-14-root-anchored-template-strings-in-with-values)
+  therefore holds `var`, `vars`, `const`, `nodes`, `steps`, `trigger`, `secrets`, `documents`,
+  `inputs`, `output` and `foreach`. A root is an expression-visible **name**, not a field of the
+  host's scope object: a host keeps whatever field names it likes internally (the reference engine's
+  `RunScope` keeps `vars` and `constants`) so long as the data root it evaluates against exposes
+  exactly these names.
+- **Workflow `variables` are unchanged.** `WorkflowVariable.key` still names the slot; only the root
+  it is read under is respelled.
+
+## Amendment — 2026-10-29: template strings are the authored form
+
+> **Additive for every definition that exists.** Every structured form below keeps resolving
+> exactly as before. What changes is the meaning of two rows of the
+> [2026-08-14 semantics](#amendment--2026-08-14-root-anchored-template-strings-in-with-values) —
+> a string that is a single marker, and a backslash before a marker — and which form a writer
+> emits.
+
+**One syntax.** A reference in a `with` value is written as a `{{ }}` template string, in every
+surface: the editor shows it, the definition stores it, an export carries it. A writer (editor,
+exporter, generated example, MCP guidance) emits template strings. The structured forms
+`{ "$": <path> }`, `{ "$expr": <jsonlogic> }` and the `ExprValue` envelope remain readable with
+their existing semantics; the envelope remains the only spelling of a `render` part, which has no
+`{{ }}` spelling (above).
+
+**A whole-value marker is typed.** A string that parses, under the root-anchoring rule, to
+**exactly one** `var` or `expr` part — nothing before or after it — resolves to that part's value
+itself, not to its string form:
+
+| `with` value | Resolves to |
+|---|---|
+| `"{{ var.count }}"` (`count: 5`) | `5` |
+| `"{{ nodes.a.output }}"` | the output object |
+| `"{{ var.region \|\| \"eu\" }}"`, `"{{ =<jsonlogic> }}"` | the expression's value |
+| `"{{ var.count }} "`, `"n={{ var.count }}"` | `"5 "`, `"n=5"` (any text makes it a string) |
+| `"{{ var.missing }}"` (the path names nothing) | `""` — unchanged |
+| `"{{ secrets.K }}"` | the plaintext string — unchanged |
+
+So `"{{ <path> }}"` is `{ "$": "<path>" }`, except that a path naming nothing yields `""` rather
+than `null`. An `ExprValue` envelope is unaffected: it still always resolves to a single string.
+
+**Escaping.** A backslash immediately before `{{` makes that marker literal text **when the marker
+is one of ours** (it would resolve under the root-anchoring rule), and the backslash is consumed.
+Written as text (in JSON each backslash doubles):
+
+| Text | In JSON | Sends |
+|---|---|---|
+| `\{{ var.x }}` | `"\\{{ var.x }}"` | `{{ var.x }}` |
+| `\\{{ var.x }}` | `"\\\\{{ var.x }}"` | a backslash, then the value of `var.x` |
+| `\{{name}}` (not ours — a vendor's Handlebars escape) | `"\\{{name}}"` | `\{{name}}`, unchanged |
+
+An escaped marker counts toward the all-or-nothing rule as one of ours: a string mixing it with an
+unrooted marker is still passed through whole and unchanged. Render mode (a `render` part's
+content) has no escape: its grammar is unchanged.
+
+Conformance (additive): a host MUST resolve a single-marker string to the typed value per the
+table above, MUST apply the escape rule above to `with` strings, and SHOULD write template strings
+rather than the structured forms.
