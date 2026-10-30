@@ -9,8 +9,11 @@
  * Runs host-side (full Deno perms) — never sandboxed.
  */
 import {
+  authClassOf,
+  classSegment,
   type ResolveOptions,
   type Resolver,
+  type SourceAuth,
   SourceError,
   splitFragment,
   splitRef,
@@ -66,9 +69,13 @@ export function gitlabArchiveUrl({ path, ref }: GitlabRef, host = gitlabHost()):
 }
 
 /** Headers for a GitLab archive fetch (auth when a token is set). */
-export function gitlabAuthHeaders(): HeadersInit {
+export function gitlabAuthHeaders(auth?: SourceAuth): HeadersInit {
   const headers: Record<string, string> = { "User-Agent": "w6w-sources" };
-  const token = Deno.env.get("W6W_GITLAB_TOKEN");
+  const token = auth?.mode === "anonymous"
+    ? undefined
+    : auth?.mode === "token"
+    ? auth.token
+    : Deno.env.get("W6W_GITLAB_TOKEN");
   if (token) headers["PRIVATE-TOKEN"] = token;
   return headers;
 }
@@ -84,11 +91,13 @@ export const gitlabResolver: Resolver = {
     const { subpath } = splitFragment(ref);
     const gl = parseGitlabRef(ref);
     const host = gitlabHost();
+    const cls = authClassOf(opts.auth);
     return resolveViaTarball(
       {
-        cacheKey: ["gitlab", host, gl.path, gl.ref],
+        cacheKey: [classSegment("gitlab", cls), host, gl.path, gl.ref],
         url: gitlabArchiveUrl(gl, host),
-        headers: gitlabAuthHeaders(),
+        headers: gitlabAuthHeaders(opts.auth),
+        authClass: cls,
         label: "GitLab",
         subpath,
       },
