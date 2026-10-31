@@ -1119,6 +1119,11 @@ The engine passes the snapshot on the step's invoke request (`InvokeStepRequest.
 running a script outside a run (a single-node test, an ad-hoc invoke, a Function adapter pass)
 builds it from the same values its `{{ }}` resolution reads there.
 
+**An empty Input means `input` is `state`.** When a `run` step's Input binding is empty (no `with.input`,
+or an empty one), the code's `input` is the same `state` snapshot, so a script with no binding still
+reads the upstream records and the trigger. A non-empty binding is unchanged: `input` is exactly what
+it resolves to.
+
 **Secrets never reach these names.** The snapshot is built from an allowlist of roots: `secrets`,
 `documents`, a Function's `inputs`/`output` and credentials are never in it. A host MUST also keep
 sealed secret envelopes out: a var or constant whose value holds one is omitted, and run state that
