@@ -23,11 +23,11 @@ for d in packages/*/; do
 done
 [ "$rc" = 0 ]
 
-step typecheck;    deno check packages/
-step lint;         deno lint packages/
+step typecheck;    deno check packages/ scripts/
+step lint;         deno lint packages/ scripts/
 # fixtures/ is excluded on purpose: some fixtures are byte-exact inputs (built bundles, digests).
-step "fmt --check"; deno fmt --check packages/
-step test;         deno test -A --unstable-worker-options packages/
+step "fmt --check"; deno fmt --check packages/ scripts/
+step test;         deno task test
 
 step "@w6w/expr: build, pack smoke, publish dry-run"
 (
