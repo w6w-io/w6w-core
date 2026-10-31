@@ -461,3 +461,36 @@ Additive. `RunSeed` gains `entry?: string` (a node id) and `RunState`/`RunStateP
 An engine MUST, for T1→A→J, T2→B→J plus a floating non-trigger root F: with `entry: "T1"` run
 T1, A and J and skip T2, B and F; with `entry: "T2"` the mirror image; with no `entry` run all six.
 The reference fixtures are the three `trigger-entry` entries in `@w6w/engine-conformance`.
+
+## Amendment — 2026-10-31: partial runs from one node (`startFrom`) and disabled nodes
+
+Additive. `RunSeed` gains `startFrom?: { node: string; stopAt?: string[]; nodes?: Record<string, {
+output?, meta? }> }`, and `RunState`/`RunStatePatch` gain the same `startFrom`. It is what an
+editor's ▶ "run from this node" sends: a real run with the normal executor, not a second one.
+
+- **Reach.** `node` and every main-graph node reachable from it along edges execute, routing as in a
+  full run (If true/false routes, Router routes, error edges, For each bodies, joins). A `node` owned
+  by a control's sub-block starts at its outermost owning control, since its block needs the loop
+  item. The start node runs even when no inbound edge is live.
+- **Outside the reach.** A node with an entry in `nodes` is recorded `succeeded` with that output
+  (its success edges stay live, its error edges are skipped), so downstream expressions resolve as
+  after a real run. Every other node is recorded `skipped` with all outgoing edges skipped.
+- **Stop points.** A node in `stopAt` (other than the start node) is recorded `skipped` and its
+  outgoing edges are skipped, so each path stops before it; inside a sub-block it skips the rest of
+  that block. `stopAt` comes from the editor's paused nodes (`Node.ui.paused`, see the Node Types
+  RFC); published and triggered runs never carry one.
+- **Invalid `node`.** A `node` not in the workflow is a `PlanError` before anything runs.
+- **Persistence.** `startFrom` is written with the first checkpoint and read back on resume and
+  replay, like `entry`.
+
+**Disabled nodes** (`Node.disabled: true`, Node Types RFC) are recorded `skipped` in every run, with
+every outgoing edge skipped, so a node reached only through one skips too and a join with another
+live inbound edge still runs. Inside a sub-block a disabled step skips the rest of its block. Both
+schedulers obey both rules identically.
+
+### Conformance (additive)
+
+For T1→A→B→C→D plus T2→E and A→J, E→J: `startFrom: { node: "A", stopAt: ["C"], nodes: { T1 } }`
+executes A, B and J, records T1 `succeeded` with the supplied output and skips C, D, T2 and E. With
+`B.disabled` and no `startFrom`, B, C and D are skipped and J still runs. Reference tests:
+`w6w-workflow` `tests/start_from_test.ts`.

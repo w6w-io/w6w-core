@@ -1136,3 +1136,15 @@ A host that implements `@w6w/script`·`run` MUST give step code `vars`, `consts`
 above, in every language it offers, as empty objects (`state.nodes` empty) where no scope exists,
 and MUST apply the sealed-envelope rule. Testably: a step whose code is `return consts.account_id;`
 returns the account id, and a step run with a var whose value is a sealed envelope sees no such key.
+
+## Amendment — 2026-10-31: `disabled` and editor-only `ui` on a node
+
+Additive; existing definitions are unchanged.
+
+- **`disabled?: boolean`** is engine semantics, stored in the definition: `true` means the node never
+  executes in any run (published, triggered, manual or partial). It is recorded `skipped` and its
+  outgoing edges are skipped, so what depends only on it does not run (Engine RFC, 2026-10-31).
+  Absent or `false` runs as before. An editor writes the key only when it is `true`.
+- **`ui?: { paused?: boolean }`** is authoring presentation, like `position`: the engine never reads
+  it. `paused` marks where the editor's ▶ "run from here" stops; the editor sends paused ids as
+  `RunSeed.startFrom.stopAt`. A published or triggered run ignores it.
