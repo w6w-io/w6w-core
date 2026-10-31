@@ -494,3 +494,37 @@ For T1→A→B→C→D plus T2→E and A→J, E→J: `startFrom: { node: "A", st
 executes A, B and J, records T1 `succeeded` with the supplied output and skips C, D, T2 and E. With
 `B.disabled` and no `startFrom`, B, C and D are skipped and J still runs. Reference tests:
 `w6w-workflow` `tests/start_from_test.ts`.
+
+## Amendment — 2026-10-31: a `foreach` body may branch
+
+> Realises the `body` row's "contiguous DAG rooted at the first id, with edges internal to the
+> sub-block", and qualifies the 2026-10-30 amendment's (e) **Body shape** ("the engine runs it as an
+> ordered list") and the **Scope** sentence of failure-conditioned edges above ("a main-graph edge
+> touching one is already rejected"), with its twin in `workflow.md`.
+
+- **Body edges.** An edge whose `from` and `to` are both in the same `foreach`'s `body` is a body
+  edge. It is not a main-graph edge: it never enters the main topological order, and the 2026-10-07
+  scheduler never sees it. Every other edge touching a sub-block step is still a `PlanError` — no
+  edge enters a body from outside, leaves one, or links the `foreach` to its own body; `if`
+  `then`/`else` and `parallel` `branches` blocks still take no edges.
+- **Shape.** A body with body edges MUST be a DAG rooted at `body[0]`: `body[0]` has no inbound body
+  edge and every other body step has at least one. Violations are `PlanError`s at load time.
+- **Execution.** A body with no body edges runs as the ordered list it was. A body with any runs per
+  item as a graph, in topological order (ties by `body` order), under the same per-iteration scope:
+  an edge-mode `if` takes its branch (`route: "false"` for false, unrouted or `"true"` for true), a
+  `@w6w/router` takes its matched route, a failed step with a `when: "error"` body edge routes down
+  it (otherwise the iteration fails, as before), and a step whose inbound body edges are all skipped
+  is `skipped`. Branches may end separately; joins are allowed. The iteration's output is the
+  output of the last step that succeeded, in that order. Skips never carry into the next item.
+- **Unchanged.** A Stop workflow in any branch ends the loop and the run; a disabled step or a
+  `startFrom.stopAt` point is `skipped` and skips what depends on it; per-iteration records (the
+  2026-10-30 amendment) cover every body step, skipped ones included.
+- **Router placement.** A `@w6w/router` may sit in a `foreach` body that has body edges, or last in
+  one that has none; anywhere else in a sub-block it is a `PlanError` (it needs edges to route).
+
+### Conformance (additive)
+
+`foreach` over `[1, 2, 3]` with body `[gate, even, odd, join]` and body edges `gate→even`,
+`gate→odd (route "false")`, `even→join`, `odd→join`, where `gate` is `if item is even`: items 1 and 3
+run `odd` then `join`, item 2 runs `even` then `join`, and each iteration records the untaken step
+`skipped`. Reference tests: `w6w-workflow` `tests/foreach_branching_body_test.ts`.
