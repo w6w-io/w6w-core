@@ -111,6 +111,21 @@ export interface InvokeOptions {
    * hook. Unset, behaviour is unchanged. Never consulted under `egressTransport`.
    */
   credentialResolver?: CredentialResolver;
+  /**
+   * What `hostFetch` does with a 301/302/303/307/308 from the destination.
+   * `"same-host"` (the default, and what unset means) keeps today's behaviour
+   * byte for byte: a redirect to the SAME hostname is re-issued — on any port
+   * or scheme, with the signed headers — and a different hostname is refused.
+   * `"refuse"` returns the FIRST redirect response as-is (status, headers and
+   * body, so the caller sees the 3xx): no second request is made and the
+   * `Location` is never contacted. Use it for a credential-bearing call to a
+   * peer whose contract says the host never follows redirects, since a
+   * same-hostname hop on another port or scheme would otherwise receive the
+   * bearer token and the body. Applies to every host egress this invocation
+   * makes (the `ctx.fetch` of the action/trigger hook and the in-core
+   * `refresh` arm); it has no effect under `egressTransport`, which owns egress.
+   */
+  redirects?: "same-host" | "refuse";
 }
 
 export interface InvokeResult {
@@ -218,6 +233,7 @@ async function hostFetch(
   allowlist: string[],
   req: SignableRequest,
   timeoutMs = 30_000,
+  redirects?: InvokeOptions["redirects"],
 ): Promise<WireResponse> {
   let host: string;
   try {
@@ -272,7 +288,11 @@ async function hostFetch(
         throw err;
       }
       const location = res.headers.get("location");
-      if (!REDIRECT_STATUSES.has(res.status) || !location) {
+      // `redirects: "refuse"`: the first redirect response is the answer — it
+      // takes the plain-response return below, so nothing is re-issued and the
+      // `Location` is never parsed, let alone contacted.
+      const refused = redirects === "refuse" && REDIRECT_STATUSES.has(res.status);
+      if (refused || !REDIRECT_STATUSES.has(res.status) || !location) {
         const headers: Record<string, string> = {};
         res.headers.forEach((v, k) => (headers[k] = v));
         return {
@@ -416,7 +436,7 @@ export function signingFetch(
     try {
       const res = opts.egressTransport
         ? await opts.egressTransport(signed)
-        : await hostFetch(allowlist, signed, opts.timeoutMs);
+        : await hostFetch(allowlist, signed, opts.timeoutMs, opts.redirects);
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );
@@ -499,6 +519,8 @@ export interface PrepareAuthorizationOptions {
   credentialResolver?: CredentialResolver;
   egressTransport?: InvokeOptions["egressTransport"];
   timeoutMs?: number;
+  /** `InvokeOptions.redirects`, for the in-core `refresh` arm's egress. */
+  redirects?: InvokeOptions["redirects"];
 }
 
 export interface PreparedAuthorization {
@@ -635,7 +657,7 @@ export async function prepareAuthorization(
         selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
         input: { credential: conn.credential },
         timeoutMs: opts.timeoutMs,
-        onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs),
+        onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects),
       });
     } catch (e) {
       throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
@@ -675,6 +697,8 @@ const CREDENTIAL_HOOK_KINDS: readonly CredentialHookKind[] = [
 
 export interface RunAuthHookOptions {
   timeoutMs?: number;
+  /** `InvokeOptions.redirects`, for this hook's `ctx.fetch` egress. */
+  redirects?: InvokeOptions["redirects"];
   onLog?: (level: string, message: string, data?: unknown) => void;
   /**
    * Signed mode (D-A3) for a provider-derived auth: `test`/`afterConnect` run with
@@ -781,10 +805,10 @@ export async function runAuthHook<T = unknown>(
       pickDerivedToken(
         (signing.authorization as Extract<ResolvedAuthorization, { kind: "derived" }>).token,
       ),
-      { timeoutMs: opts.timeoutMs, onLog: opts.onLog },
+      { timeoutMs: opts.timeoutMs, onLog: opts.onLog, redirects: opts.redirects },
       app.netAllowlist,
     )
-    : (req: SignableRequest) => hostFetch(app.netAllowlist, req, opts.timeoutMs);
+    : (req: SignableRequest) => hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects);
   const hookInput: Record<string, unknown> = signing
     ? {
       credential: null,
@@ -857,6 +881,7 @@ export async function invoke(
         credentialResolver: opts.credentialResolver,
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
+        redirects: opts.redirects,
       },
     ));
   } else if (invocation.connection) {
@@ -999,6 +1024,7 @@ export async function invokeTriggerHook(
         credentialResolver: opts.credentialResolver,
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
+        redirects: opts.redirects,
       },
     ));
   }
@@ -1066,6 +1092,7 @@ export async function invokeResolveFields(
         credentialResolver: opts.credentialResolver,
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
+        redirects: opts.redirects,
       },
     ));
   } else if (app.auths.length > 0) {
