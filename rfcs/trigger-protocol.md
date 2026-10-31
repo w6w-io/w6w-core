@@ -243,7 +243,9 @@ Response **200**, a [registration-response](#wire-registration-response). `event
 
 #### List (reconcile)
 
-`GET {baseUrl}/w6w/v1/subscriptions?cursor=&limit=`. Only called if `operations.list` is `true`. Returns the registrations created by the calling credential's tenant, paged by an opaque cursor. Query parameters:
+`GET {baseUrl}/w6w/v1/subscriptions?callbackUrl=&cursor=&limit=`. Only called if `operations.list` is `true`. Returns the registrations created by the calling credential's tenant, paged by an opaque cursor. Query parameters:
+
+Each w6w deployment has its own callbackUrl. Several deployments (local dev, staging, production) may share one partner tenant and credential, so w6w's reconcile deletes or re-registers only within the set this parameter selects and never touches another deployment's registrations.
 
 <a id="wire-list-query"></a>
 <!-- wire: list-query -->
@@ -251,6 +253,7 @@ Response **200**, a [registration-response](#wire-registration-response). `event
 |---|---|---|---|---|
 | `cursor` | `string` | no | Opaque cursor from the previous page's `nextCursor`. Omit for the first page. | `c_Mw` |
 | `limit` | `integer` | no | Page size, 1 to 200. Default 100. | `100` |
+| `callbackUrl` | `string` | yes | The exact `callbackUrl` w6w sent at registration, URL-encoded. Only subscriptions whose stored `callbackUrl` equals it byte for byte are returned; if it is missing, answer `400 invalid_request`. | `https%3A%2F%2Fw6w.example.com%2Ftriggers%2Fprotocol%2Fv1%2Fevents` |
 
 Response **200**:
 
@@ -455,13 +458,13 @@ Limits applied by the host:
 | `clock skew` | 30 s | Tolerance applied both ways. |
 | `duplicate memory` | 7 days | w6w remembers `(subscriptionId, eventId)` at least this long. |
 | `call timeout` | 15 s | w6w gives up on a single call to your endpoints after 15 s and treats it as a retryable failure. |
-| `JWKS cache` | 1 h | w6w caches your JWKS this long, and re-fetches at most once a minute when it sees an unknown `kid`. |
+| `JWKS cache` | 10 min | w6w caches your JWKS this long, and re-fetches at most once a minute when it sees an unknown `kid`. |
 
 ### Signing, partner to host (R-3)
 
 **Decided** (see [Decisions](#decisions)): the scheme below is the v1 scheme.
 
-Every fire is signed by the partner with an **Ed25519** key as a **JWS compact** serialization carried in the `W6W-Signature` header. The partner publishes its public keys as a JWKS at the manifest's `jwksUrl`; rotation is "publish two keys, `kid` selects". w6w stores no per-subscription secret.
+Every fire is signed by the partner with an **Ed25519** key as a **JWS compact** serialization carried in the `W6W-Signature` header. The partner publishes its public keys as a JWKS at the manifest's `jwksUrl`; rotation is "publish two keys, `kid` selects": publish the new key next to the old one, wait at least 20 minutes, start signing with the new `kid`, and remove the old key at least 10 minutes after the last signature with it. To revoke a compromised key, remove it from the JWKS; w6w stops accepting it within 10 minutes, and for an immediate cut-off contact w6w so an operator flushes the cached JWKS. w6w stores no per-subscription secret.
 
 JWKS document served at `jwksUrl` (HTTPS, `Content-Type: application/json`):
 
@@ -519,7 +522,7 @@ Construction:
 Verification (the host), in order; every failure is a uniform 401:
 
 1. Header present; compact form; `alg` is `EdDSA`, `typ` is `w6w-trigger+jwt` (anything else, including `none`, is refused before any key lookup).
-2. Read `iss` only as a lookup hint: it must name an installed global- or tenant-tier app that declares `protocol`; load that app's JWKS from its **manifest** `jwksUrl` (never a URL from the token), cached up to 1 h, re-fetched at most once a minute on an unknown `kid`. If the JWKS cannot be fetched at all the response is 503 (retryable), not 401.
+2. Read `iss` only as a lookup hint: it must name an installed global- or tenant-tier app that declares `protocol`; load that app's JWKS from its **manifest** `jwksUrl` (never a URL from the token), cached up to 10 minutes, re-fetched at most once a minute on an unknown `kid`. If the JWKS cannot be fetched at all the response is 503 (retryable), not 401.
 3. Select the key by `kid` from that JWKS only; verify the signature.
 4. The claim set is exactly the eight claims; `aud` = `w6w-trigger`; `iss` equals the app id; `htm` = the request method; `htu` = the request path; `bodySha256` = base64url SHA-256 of the received raw bytes.
 5. Window (mirrors the control-link request artifact's 60 s lifetime and 30 s skew; see the limits table): `exp - iat` ≤ 300 s; `iat` no more than 30 s in the future; now no more than 60 s past `iat` plus 30 s skew, and no more than 30 s past `exp`.
