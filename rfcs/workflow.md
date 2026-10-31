@@ -422,6 +422,8 @@ control's sub-block (`foreach.body`, `parallel.branches`, an `if` branch block) 
 main-graph edge routing, and an edge touching such a step is already rejected at plan time; a step
 inside a sub-block therefore cannot carry an error edge. A sub-block failure is handled by its
 enclosing control's own failure modes (see the [Engine RFC](./engine.md#canonical-controls)).
+*(2026-10-31: a `foreach` body's own edges — both ends in that body — route inside each iteration,
+error edges included; see the Engine RFC amendment "a `foreach` body may branch".)*
 
 **A success edge and an error edge MAY share a target.** The model permits `{ from: "a", to: "b" }`
 and `{ from: "a", to: "b", when: "error" }` to coexist. The engine keys a skipped edge by
