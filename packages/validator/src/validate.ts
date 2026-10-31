@@ -1,4 +1,9 @@
-import { AUTH_TYPES, CREDENTIAL_CONTRACT_ID_RE, isFormResolvedOptions } from "@w6w/types";
+import {
+  AUTH_TYPES,
+  CREDENTIAL_CONTRACT_ID_RE,
+  isFormResolvedOptions,
+  protocolDeclarationErrors,
+} from "@w6w/types";
 
 /**
  * Spec-rule validation over the logical model (`@w6w/types`). Distinct from the
@@ -819,6 +824,10 @@ export function validateApp(manifest: unknown): ValidationResult {
     ) {
       ctx.err("network.allow", "must be an array of hostname strings");
     }
+  }
+
+  for (const message of protocolDeclarationErrors(manifest, [])) {
+    ctx.err("protocol", message);
   }
 
   if (manifest.modelProvider !== undefined) {

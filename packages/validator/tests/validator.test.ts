@@ -412,3 +412,24 @@ Deno.test("validateAuth: tenantAuth and jit auths validate ok", () => {
     assert(r.ok, JSON.stringify(r.errors));
   }
 });
+
+Deno.test("validateApp reports the protocol block errors; accepts a clean block", () => {
+  const block = {
+    baseUrl: "https://partner.example.test",
+    jwksUrl: "https://partner.example.test/jwks.json",
+    versions: [1],
+  };
+  const net = { allow: ["partner.example.test"] };
+  assert(validateApp({ ...VALID_APP, protocol: block, network: net }).ok);
+  const bad = validateApp({
+    ...VALID_APP,
+    protocol: { ...block, baseUrl: "http://partner.example.test" },
+    network: net,
+  });
+  assertFalse(bad.ok);
+  assert(codes(bad).includes("protocol"));
+  assertFalse(validateApp({ ...VALID_APP, protocol: block }).ok); // host not in network.allow
+  assertFalse(
+    validateApp({ ...VALID_APP, protocol: { ...block, versions: [2] }, network: net }).ok,
+  );
+});

@@ -9,6 +9,7 @@ import type { TriggerDefinition } from "./trigger.ts";
 import type { HealthCheckDefinition } from "./health.ts";
 import type { InterfaceConformance } from "./interface.ts";
 import type { ModelProviderMeta } from "./model-provider.ts";
+import type { ProtocolManifest } from "./trigger-protocol.ts";
 
 export type Maturity = "alpha" | "beta" | "stable" | "deprecated";
 export type Visibility = "private" | "unlisted" | "public";
@@ -98,6 +99,8 @@ export interface AppManifest {
   };
   /** Optional. Designates this App as a model provider. Absent = not designated. */
   modelProvider?: ModelProviderMeta;
+  /** Optional. The partner endpoint for protocol-delivered triggers (rfcs/trigger-protocol.md). */
+  protocol?: ProtocolManifest;
   /** Optional. Default port counts for every Action of this App. */
   ports?: Ports;
 }
