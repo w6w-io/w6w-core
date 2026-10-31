@@ -1,0 +1,21 @@
+{
+  "name": "@w6w-fixtures/trigger-protocol",
+  "version": "1.0.0",
+  "description": "Fixture app declaring two protocol-delivered triggers against a partner endpoint.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "categories": ["developer-tools"],
+  "private": true,
+  "w6w": {
+    "id": "io.w6w.trigger-protocol",
+    "displayName": "Trigger Protocol",
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "network": { "allow": ["partner.example.test"] },
+    "protocol": {
+      "baseUrl": "https://partner.example.test/api",
+      "jwksUrl": "https://partner.example.test/.well-known/w6w-jwks.json",
+      "versions": [1]
+    },
+    "entry": "./index.ts"
+  }
+}

@@ -5,6 +5,7 @@
  */
 import type { Param } from "./param.ts";
 import type { Output } from "./action.ts";
+import type { TriggerProtocol } from "./trigger-protocol.ts";
 import type {
   HandleIngestHook,
   OnSubscribeHook,
@@ -29,11 +30,13 @@ export const TRIGGER_HOOK_KINDS = [
 export type TriggerHookKind = typeof TRIGGER_HOOK_KINDS[number];
 
 /**
- * The two trigger forms. `webhook` triggers register with the third party
+ * The trigger forms. `webhook` triggers register with the third party
  * (`onSubscribe` / `onUnsubscribe`) and receive calls; `poll` triggers are
- * checked by the host on an interval via `poll`.
+ * checked by the host on an interval via `poll`; `protocol` triggers are
+ * registered by the host with the partner's API and fired by signed requests
+ * (rfcs/trigger-protocol.md).
  */
-export type TriggerType = "webhook" | "poll";
+export type TriggerType = "webhook" | "poll" | "protocol";
 
 /**
  * A Trigger's serializable configuration — its metadata minus the hook
@@ -64,6 +67,13 @@ export interface Trigger {
    * value the author wrote.
    */
   type?: TriggerType;
+  /**
+   * Authored. `"w6w-protocol"` marks a trigger delivered by the trigger protocol;
+   * absent means webhook or poll. Unlike `type` the loader preserves it.
+   */
+  delivery?: "w6w-protocol";
+  /** Authored, with `delivery: "w6w-protocol"`: the partner events this trigger delivers. */
+  protocol?: TriggerProtocol;
   /**
    * Vendor floor (ms) for a poll trigger's check interval. The host applies its
    * own floor on top; the larger wins.

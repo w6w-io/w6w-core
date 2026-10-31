@@ -88,7 +88,7 @@ A protocol trigger sets an authored `delivery` and a `protocol` block on the tri
 
 Rules the loader and validator enforce:
 
-1. `baseUrl` and `jwksUrl` MUST be `https`, and both hosts MUST be in the app's `network.allow`.
+1. `baseUrl` and `jwksUrl` MUST be `https`, and both hosts MUST be in the app's `network.allow`. `http` is accepted only for a loopback host (`localhost`, `127.0.0.1`, `[::1]`), for local testing; w6w's egress refuses loopback in production.
 2. A protocol trigger MUST NOT declare `onSubscribe`, `onUnsubscribe` or `poll`; the host is the registration client. An optional output parser (`parseOutput`) stays allowed. `handleIngest` is never invoked for a protocol fire (the envelope `payload` is already the normalized event).
 3. Only an app installed at the **global or tenant tier** (operator-installed) may declare `delivery: "w6w-protocol"`; a user-tier app that does is refused at validation. The manifest names the keys w6w trusts for fires.
 4. `type` for webhook and poll triggers is unchanged. The subscription created for a protocol trigger has `type: "protocol"`.

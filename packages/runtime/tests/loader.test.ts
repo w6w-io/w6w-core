@@ -242,3 +242,119 @@ Deno.test("loadApp carries w6w.modelProvider through to the manifest; absent sta
     },
   );
 });
+
+// ---- trigger protocol declaration (rfcs/trigger-protocol.md) ----
+
+const PROTOCOL_FIXTURE = fromFileUrl(
+  new URL("../../../fixtures/apps/trigger-protocol", import.meta.url),
+);
+
+type ProtocolPkg = {
+  w6w: { protocol?: Record<string, unknown>; network: { allow: string[] } };
+};
+
+async function withProtocolApp(
+  edit: (pkg: ProtocolPkg) => void,
+  index: string | undefined,
+  fn: (dir: string) => Promise<void>,
+): Promise<void> {
+  const dir = await Deno.makeTempDir();
+  try {
+    const pkg = JSON.parse(await Deno.readTextFile(join(PROTOCOL_FIXTURE, "package.json")));
+    edit(pkg);
+    await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+    await Deno.writeTextFile(
+      join(dir, "index.ts"),
+      index ?? await Deno.readTextFile(join(PROTOCOL_FIXTURE, "index.ts")),
+    );
+    await fn(dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+async function assertProtocolRefused(
+  edit: (pkg: ProtocolPkg) => void,
+  index?: string,
+): Promise<string> {
+  let message = "";
+  await withProtocolApp(edit, index, async (dir) => {
+    const err = await assertRejects(() => loadApp(dir), LoadError);
+    assertEquals((err as LoadError).code, "invalid_trigger");
+    message = (err as LoadError).message;
+  });
+  return message;
+}
+
+Deno.test("trigger-protocol fixture loads: type protocol, delivery kept, block carried", async () => {
+  const app = await loadApp(PROTOCOL_FIXTURE);
+  assertEquals(app.manifest.id, "io.w6w.trigger-protocol");
+  assertEquals(app.manifest.protocol, {
+    baseUrl: "https://partner.example.test/api",
+    jwksUrl: "https://partner.example.test/.well-known/w6w-jwks.json",
+    versions: [1],
+  });
+  const t = app.triggers.get("order-placed")!.trigger;
+  assertEquals(t.type, "protocol");
+  assertEquals(t.delivery, "w6w-protocol");
+  assertEquals(t.protocol, { events: ["order.placed"], filters: { versions: [1] } });
+  assertEquals(app.triggers.get("guest-event")!.trigger.protocol!.events.length, 2);
+  // describe() (what an artifact is built from) keeps both
+  const d = describe(app).triggers.find((x) => x.key === "guest-event")!;
+  assertEquals(d.delivery, "w6w-protocol");
+  assertEquals(d.type, "protocol");
+});
+
+Deno.test("an app without the protocol block keeps manifest.protocol absent", async () => {
+  const app = await loadApp(fromFileUrl(new URL("../../../fixtures/apps/hello", import.meta.url)));
+  assertEquals("protocol" in app.manifest, false);
+});
+
+Deno.test("a protocol trigger may not declare onSubscribe / onUnsubscribe / poll", async () => {
+  const src = await Deno.readTextFile(join(PROTOCOL_FIXTURE, "index.ts"));
+  for (
+    const hook of [
+      "onSubscribe() { return {}; }",
+      "onUnsubscribe() {}",
+      "poll() { return { events: [] }; }",
+    ]
+  ) {
+    const withHook = src.replace(
+      `key: "order-placed",`,
+      `key: "order-placed", ${hook},`,
+    );
+    const m = await assertProtocolRefused(() => {}, withHook);
+    assert(m.includes(hook.split("(")[0]), m);
+  }
+});
+
+Deno.test("a two-event protocol trigger without the eventType select is refused", async () => {
+  const src = await Deno.readTextFile(join(PROTOCOL_FIXTURE, "index.ts"));
+  const m = await assertProtocolRefused(
+    () => {},
+    src.replace(`key: "eventType",`, `key: "somethingElse",`),
+  );
+  assert(m.includes("eventType"), m);
+});
+
+Deno.test("loader refuses a protocol trigger with no app block, and a non-https/unlisted URL", async () => {
+  const m1 = await assertProtocolRefused((p) => delete p.w6w.protocol);
+  assert(m1.includes("no `protocol` block"), m1);
+  const m2 = await assertProtocolRefused((p) =>
+    p.w6w.protocol!.baseUrl = "http://partner.example.test"
+  );
+  assert(m2.includes("https"), m2);
+  const m3 = await assertProtocolRefused((p) => p.w6w.network.allow = ["*"]);
+  assert(m3.includes("network.allow"), m3);
+});
+
+Deno.test("the loader derives type protocol from a hand-built delivery, whatever type was authored", async () => {
+  const src = (await Deno.readTextFile(join(PROTOCOL_FIXTURE, "index.ts"))).replace(
+    `key: "order-placed",`,
+    `key: "order-placed", type: "webhook",`,
+  );
+  await withProtocolApp(() => {}, src, async (dir) => {
+    const app = await loadApp(dir);
+    assertEquals(app.triggers.get("order-placed")!.trigger.type, "protocol");
+  });
+});
