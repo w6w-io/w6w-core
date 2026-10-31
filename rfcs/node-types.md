@@ -1096,3 +1096,38 @@ A host that implements `language: "typescript"` MUST:
   shelling out;
 - run the erased body exactly as a `"javascript"` step would run it;
 - report a syntax error naming the line the author wrote, before running any of the code.
+
+## Amendment — 2026-10-31: `vars`, `consts` and `state` in `@w6w/script`
+
+> **Additive.** Extends the [2026-10-30 run-data amendment](#amendment--2026-10-30-run-data-in-w6wscript--input-bindings-literal-code-digest):
+> `input` stays the bound contract; this adds three read-only names the code sees beside it. No
+> `with` key, scope root or marker form is added.
+
+Step code in every language reads, besides `input` and `digest`:
+
+| Name | Holds | Same value as |
+|---|---|---|
+| `vars` | the run's variables, by name | `{{ var.<name> }}` |
+| `consts` | the account's constants, by name (always `account_id`) | `{{ const.<name> }}` |
+| `state` | `{ nodes, trigger, foreach? }` — upstream step records, the trigger, a For each iteration | `{{ nodes.<id>.output }}`, `{{ trigger.event }}`, `{{ foreach.item }}` |
+
+They are a snapshot taken when the step starts, resolved by the host and handed to the sandbox
+with `input`; the sandbox has no path back to the host, a database or a vault for them. Writing to
+them changes nothing outside the step (JavaScript and TypeScript receive them frozen). A script
+whose code declares a name of its own (`const state = …`) shadows the global and still compiles.
+The engine passes the snapshot on the step's invoke request (`InvokeStepRequest.script`); a host
+running a script outside a run (a single-node test, an ad-hoc invoke, a Function adapter pass)
+builds it from the same values its `{{ }}` resolution reads there.
+
+**Secrets never reach these names.** The snapshot is built from an allowlist of roots: `secrets`,
+`documents`, a Function's `inputs`/`output` and credentials are never in it. A host MUST also keep
+sealed secret envelopes out: a var or constant whose value holds one is omitted, and run state that
+holds one fails the step with `sealed_secret_in_state` (phase `resolution`, not retried) before the
+code runs. A script that needs a secret still receives it only through an explicit `input` binding.
+
+### Conformance (additive)
+
+A host that implements `@w6w/script`·`run` MUST give step code `vars`, `consts` and `state` as
+above, in every language it offers, as empty objects (`state.nodes` empty) where no scope exists,
+and MUST apply the sealed-envelope rule. Testably: a step whose code is `return consts.account_id;`
+returns the account id, and a step run with a var whose value is a sealed envelope sees no such key.
