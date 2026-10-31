@@ -18,7 +18,7 @@ import type {
   TriggerHookKind,
   W6WPackageMetadata,
 } from "@w6w/types";
-import { verifySha256 } from "@w6w/types";
+import { isProtocolTrigger, protocolDeclarationErrors, verifySha256 } from "@w6w/types";
 import { LoadError } from "./errors.ts";
 import { resolveSharedRoots } from "./shared.ts";
 import type { DescribedApp } from "./sandbox/protocol.ts";
@@ -205,6 +205,8 @@ export function manifestFromPackageJson(pkg: AppPackageJson): AppManifest {
     capabilities: w.capabilities,
     // Absent stays absent: never emit `modelProvider: undefined`/null/{}.
     ...(w.modelProvider !== undefined ? { modelProvider: w.modelProvider } : {}),
+    // Same for the trigger-protocol block: a block not projected here is dropped silently.
+    ...(w.protocol !== undefined ? { protocol: w.protocol } : {}),
   };
 }
 
@@ -422,8 +424,17 @@ export function assembleLoadedApp(
       );
     }
     // Host-derived: overwrite whatever the author wrote.
-    trigger.type = declared.has("poll") ? "poll" : "webhook";
+    trigger.type = isProtocolTrigger(given)
+      ? "protocol"
+      : declared.has("poll")
+      ? "poll"
+      : "webhook";
     triggers.set(trigger.key, { trigger, hooks: declared });
+  }
+
+  const protocolErrors = protocolDeclarationErrors(manifest, [...triggers.values()]);
+  if (protocolErrors.length > 0) {
+    throw new LoadError("invalid_trigger", `${label}: ${protocolErrors[0]}`);
   }
 
   const netAllowlist = computeAllowlist(manifest, auths);

@@ -11,6 +11,7 @@ export * from "./src/hooks.ts";
 export * from "./src/action.ts";
 export * from "./src/auth.ts";
 export * from "./src/trigger.ts";
+export * from "./src/trigger-protocol.ts";
 export * from "./src/health.ts";
 export * from "./src/interface.ts";
 export * from "./src/app.ts";
