@@ -124,6 +124,7 @@ export interface InvokeOptions {
    * bearer token and the body. Applies to every host egress this invocation
    * makes (the `ctx.fetch` of the action/trigger hook and the in-core
    * `refresh` arm); it has no effect under `egressTransport`, which owns egress.
+   * Fails closed: a value other than unset or `"same-host"` refuses too.
    */
   redirects?: "same-host" | "refuse";
 }
@@ -228,6 +229,11 @@ const MAX_SAME_HOST_REDIRECTS = 5;
  * resolving). The `AbortController`/timer spans the WHOLE redirect loop, not
  * one hop, so the 30s bound stays per request, as it was before redirects
  * were followed here.
+ *
+ * `redirects` (`InvokeOptions.redirects`) selects the policy above:
+ * `undefined` / `"same-host"` is the behaviour described; `"refuse"` returns
+ * the FIRST 301/302/303/307/308 response as-is (status, headers, body) with no
+ * second request. It fails closed: any other value refuses too.
  */
 async function hostFetch(
   allowlist: string[],
@@ -291,7 +297,11 @@ async function hostFetch(
       // `redirects: "refuse"`: the first redirect response is the answer — it
       // takes the plain-response return below, so nothing is re-issued and the
       // `Location` is never parsed, let alone contacted.
-      const refused = redirects === "refuse" && REDIRECT_STATUSES.has(res.status);
+      // Fails CLOSED: only `undefined` and `"same-host"` follow, so a value the
+      // type forbids (`"Refuse"`, `true`, `null`, a typo) refuses rather than
+      // silently re-enabling same-host following on a credential-bearing call.
+      const refused = redirects !== undefined && redirects !== "same-host" &&
+        REDIRECT_STATUSES.has(res.status);
       if (refused || !REDIRECT_STATUSES.has(res.status) || !location) {
         const headers: Record<string, string> = {};
         res.headers.forEach((v, k) => (headers[k] = v));
