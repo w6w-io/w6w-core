@@ -518,4 +518,4 @@ Additive. Stacks after the trigger-node amendment above and changes none of it.
   starts a run at the bound node.
 - **Filters.** The "Filter DSL" Non-Goal above stands for webhook and poll triggers. A protocol trigger
   carries a versioned pass-through `filters` value that the partner MAY evaluate; the host does not
-  evaluate it in v1 (see the RFC's open decisions).
+  evaluate it in v1 (decided; see the RFC's Decisions).

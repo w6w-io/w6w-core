@@ -26,7 +26,7 @@ Prior art for the signing primitive is the control-link and hub-spoke wire (Ed25
 ## Non-Goals
 
 - **Non-workflow subscribers.** A fire still starts a workflow run; the protocol is a source-side delivery kind, not a subscriber class ([trigger.md](./trigger.md) Non-Goals).
-- **Filter evaluation by the host in v1** (Open decision HITL-2). The host passes filters through.
+- **Filter evaluation by the host in v1** (decided, see [Decisions](#decisions)). The host passes filters through.
 - **Per-subscription shared secrets (HMAC-SHA256).** Considered, not v1: the host would store and transmit many secrets and invent its own replay scheme. The asymmetric scheme holds no host secret. It could be added later as an additional `typ`/header without changing the endpoints.
 - **Partner-initiated registration.** The host registers; the partner never creates a subscription on its own.
 - **Streaming and ordering.** Fires are unordered across events; a partner SHOULD send an entity's events in order but the host does not enforce it.
@@ -458,7 +458,7 @@ Limits applied by the host:
 
 ### Signing, partner to host (R-3)
 
-**Open decision HITL-1** (see [Open decisions](#open-decisions)): the scheme below is the v1 default.
+**Decided** (see [Decisions](#decisions)): the scheme below is the v1 scheme.
 
 Every fire is signed by the partner with an **Ed25519** key as a **JWS compact** serialization carried in the `W6W-Signature` header. The partner publishes its public keys as a JWKS at the manifest's `jwksUrl`; rotation is "publish two keys, `kid` selects". w6w stores no per-subscription secret.
 
@@ -533,7 +533,7 @@ eyJhbGciOiJFZERTQSIsInR5cCI6Inc2dy10cmlnZ2VyK2p3dCIsImtpZCI6ImNvaG9zdC0yMDI2LTEw
 
 ### Filters (R-7)
 
-**Open decision HITL-2**: the host does not evaluate filters in v1.
+**Decided** (see [Decisions](#decisions)): the host does not evaluate filters in v1.
 
 Registration carries `filters`. Grammar version 1:
 
@@ -583,7 +583,7 @@ Path-versioned (`/w6w/v1/...` partner side, `/triggers/protocol/v1/...` host sid
 
 ### Observability (R-9)
 
-**Open decision HITL-3**: a fire's record is its run and its trigger event; no invocation row.
+**Decided** (see [Decisions](#decisions)): a fire's record is its run and its trigger event; no invocation row.
 
 - Each fire is a trigger-event record (status `received` → `dispatched`, or `ignored` / `failed`) and the run started at the trigger node, linked by the run id.
 - Registration state per trigger node (`registered` / `failed` / `paused`, last error, last fire time) is visible in Studio.
@@ -617,13 +617,13 @@ A host conforms when:
 
 A partner conforms when it passes the host's checks in the handoff test plan.
 
-## Open decisions
+## Decisions
 
-Each is a genuine product decision; the **default** below is the v1 behaviour everywhere in this RFC until it is answered.
+Three product decisions were settled before v1; each is decided 2026-10-31 by the product owner and is the v1 behaviour everywhere in this RFC.
 
-1. **HITL-1: signing scheme.** Default (A): partner-signed Ed25519 JWS verified from the partner's JWKS. Alternatives: (B) HMAC-SHA256 per subscription, (C) both.
-2. **HITL-2: filter evaluation.** Default: only the partner evaluates filters; w6w passes them through. Alternative: w6w re-checks every event.
-3. **HITL-3: fire record.** Default: a fire is a trigger event plus the run it started; no invocation row. Alternative: also write an invocation row per fire.
+1. **Signing scheme.** Partner-signed Ed25519 JWS verified from the partner's JWKS (decided 2026-10-31 by the product owner). HMAC-SHA256 per subscription was considered and is not v1.
+2. **Filter evaluation.** Only the partner evaluates filters; w6w passes them through (decided 2026-10-31 by the product owner).
+3. **Fire record.** A fire is a trigger event plus the run it started; no invocation row (decided 2026-10-31 by the product owner).
 
 ## Status ladder
 
