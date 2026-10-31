@@ -324,7 +324,8 @@ Partner response codes and what the host does:
 | `404` | delete | success | Already gone. Delete is idempotent. |
 | `404` | update, pause, resume | re-create | The registration is unknown to you (`not_found`). w6w re-creates it. |
 | `409` | create | fail | The `subscriptionId` exists with a different `eventType` (`conflict`). |
-| `422` | create, update | fail | Semantically invalid: `unknown_event_type`, `unsupported_filter_version`, `unsupported_protocol_version` or `invalid_params`. |
+| `422` | create, update | fail | Semantically invalid: `unknown_event_type`, `unsupported_protocol_version` or `invalid_params`. |
+| `422` with `unsupported_filter_version` | create, update | re-register without filters | You do not support `filters.version`. w6w registers again with no filters; this is automatic and is not a failure. |
 | `429` | any | retry | Slow down (`rate_limited`). w6w honours `Retry-After`. |
 | `5xx` | any | retry | Your server failed (`internal_error`, `unavailable`). w6w retries with backoff. |
 
@@ -571,7 +572,7 @@ Subscription states (host-side, visible per trigger node):
 |---|---|
 | `pending` | Created, not yet registered. |
 | `registered` | The partner accepted the registration (`active`). |
-| `failed` | Registration or an update failed; `lastError` has the partner's `code` and `message` (at most 500 characters). When the partner's answer is a `retry` outcome (429, 5xx, no answer) it is retried automatically with backoff, starting at 30 s, factor 2, cap 1 h. A `fail` outcome (for example 403 or 422) is not retried automatically; it is retried on manual retry, on the next publish of the workflow and by the hourly reconcile. |
+| `failed` | Registration or an update failed; `lastError` has the partner's `code` and `message` (at most 500 characters). When the partner's answer is a `retry` outcome (429, 5xx, no answer) it is retried automatically with backoff, starting at 30 s, factor 2, cap 1 h. A `fail` outcome (for example 403 or 422 `invalid_params`) is not retried automatically; it is retried on manual retry, on the next publish of the workflow and by the hourly reconcile. |
 | `paused` | The partner has paused it, or the workflow is disabled. |
 | `destroying` | Delete in progress. The row is removed afterwards regardless of the partner's answer; reconcile is the backstop for a partner that was unreachable. |
 
