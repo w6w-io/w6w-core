@@ -11,8 +11,11 @@
       "properties": {
         "key": { "type": "string", "minLength": 1 },
         "type": { "type": "string", "enum": ["string", "number", "boolean", "object", "array"] },
-        "label": { "type": "string", "minLength": 1 }
-      }
+        "label": { "type": "string", "minLength": 1 },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/outputField" } }
+      },
+      "if": { "required": ["items"] },
+      "then": { "properties": { "type": { "const": "array" } } }
     },
     "output": {
       "oneOf": [
