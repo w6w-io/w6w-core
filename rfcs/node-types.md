@@ -1155,3 +1155,26 @@ Additive; existing definitions are unchanged.
 - **`ui?: { paused?: boolean }`** is authoring presentation, like `position`: the engine never reads
   it. `paused` marks where the editor's ▶ "run from here" stops; the editor sends paused ids as
   `RunSeed.startFrom.stopAt`. A published or triggered run ignores it.
+
+## Amendment — 2026-11-01: Race joins the first arriving path
+
+`@w6w/race` · `race` is a flow-control node with many incoming connections and one outgoing
+connection. It has no configuration fields. The first **live** incoming edge claims it; skipped,
+disabled and inactive trigger paths do not count. It runs once per workflow execution and passes
+the winning source's output through unchanged as its own output. Its recorded input names that
+source (`{ source: "node_id" }`). With no incoming path it fails with `race_no_arrival`.
+
+The common tail starts without waiting for the remaining inputs. Later arrivals cannot run Race
+or that tail again. Other paths continue under the workflow's existing scheduling, cancellation
+and error policies; Race does not cancel them or suppress their failures. It does not deduplicate
+separate workflow runs. An ordinary join still waits for all its incoming paths to settle.
+
+The engine claims and checkpoints the winning source before completing Race, so resuming an
+interrupted run preserves it. A completed Race is reused on resume. Explicit replay retains the
+usual rule: replaying an ancestor reruns its descendants. In a For each body, the claim belongs to
+one iteration and resets for the next; the winning tail runs before the remaining body paths.
+
+Race uses the shared control-node canvas card, a multiple-input handle and one output handle.
+It appears under Controls. Its editor explains the behavior; a standalone action Test is not
+offered because arrival selection requires the workflow graph. The host validates the action via
+the normal internal invocation seam, while the engine owns arrival selection and forwarding.
