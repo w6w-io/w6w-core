@@ -1,24 +1,33 @@
 name: CI
 
 # Every check lives in scripts/verify.sh, which the pre-push hook (w6w-io/w6w
-# .githooks/pre-push) also runs, so a push that passes locally passes here.
+# .githooks/pre-push) also runs, so a push that passes locally passes here. The job id
+# `verify` is the required-check context branch protection names on every w6w-io repo.
 
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: core
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - run: bash scripts/verify.sh
+      - run: bash core/scripts/verify.sh
