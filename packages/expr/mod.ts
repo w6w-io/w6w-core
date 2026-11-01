@@ -23,3 +23,29 @@ export {
 } from "./src/template.ts";
 export { effectiveParam, matchesParamCondition, PARAM_OVERLAY_KEYS } from "./src/param-when.ts";
 export type { ParamCondition, ParamOverlay, ParamWhen } from "./src/param-when.ts";
+export {
+  applyStateOp,
+  computeStateWrites,
+  effectiveStateConfig,
+  foldState,
+  foldStateLog,
+  parseStatePath,
+  STATE_FORBIDDEN_KEYS,
+  STATE_LIMITS,
+  STATE_RESERVED_TOP_KEYS,
+  STATE_SECRET_MASK,
+  statePathsOverlap,
+  staticWritePaths,
+  validateInitialState,
+  validateStateConfig,
+} from "./src/state-tree.ts";
+export type {
+  StateChange,
+  StateConfigIssue,
+  StateLogRow,
+  StateTree,
+  StateWarning,
+  StateWarningCode,
+  StateWriteConfig,
+  StateWriteOp,
+} from "./src/state-tree.ts";

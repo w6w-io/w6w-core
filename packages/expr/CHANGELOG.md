@@ -3,6 +3,16 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- The run state tree: `computeStateWrites`, `applyStateOp`, `foldState`, `foldStateLog`,
+  `validateStateConfig`, `validateInitialState`, `effectiveStateConfig`, `staticWritePaths`,
+  `statePathsOverlap`, `parseStatePath`, the `STATE_LIMITS` / `STATE_FORBIDDEN_KEYS` /
+  `STATE_RESERVED_TOP_KEYS` / `STATE_SECRET_MASK` constants and the `State*` types: the one pure
+  merge/fold the engine, server and editor share for `Node.state` writes.
+
 ## [0.1.1]
 
 ### Added
