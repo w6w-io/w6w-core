@@ -33,7 +33,9 @@ Deno.test("compare: missing nested key under an observed object parent", () => {
 Deno.test("compare: null or absent parent never yields missing", () => {
   const decl = [f("venue.address.city", "string")];
   assertEquals(compareOutputShape(decl, { venue: "null" }).missing, []);
-  assertEquals(compareOutputShape(decl, {}).missing, []);
+  // Round 1: a dotted declaration implies its ancestor `venue`; wholly absent at the root it is
+  // reported missing itself (R1-A3), while the deeper `venue.address.city` stays exempt.
+  assertEquals(compareOutputShape(decl, {}).missing, ["venue"]);
   assertEquals(compareOutputShape(decl, { venue: "object" }).missing, []); // venue.address absent
 });
 
