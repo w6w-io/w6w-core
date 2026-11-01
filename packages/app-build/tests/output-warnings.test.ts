@@ -128,7 +128,7 @@ Deno.test("output warnings: index.json carries no warnings and is byte-identical
   const f = await app(`[${act("a")}, ${act("b")}]`, `[${trg("t")}]`);
   try {
     const r1 = await buildApps([{ path: "app", appDir: f.dir }], join(f.tmp, "o1"));
-    const r2 = await buildApps([{ path: "app", appDir: f.dir }], join(f.tmp, "o2"));
+    await buildApps([{ path: "app", appDir: f.dir }], join(f.tmp, "o2"));
     assert(r1.built[0].result.warnings !== undefined);
     const a = await Deno.readTextFile(join(f.tmp, "o1", "index.json"));
     const b = await Deno.readTextFile(join(f.tmp, "o2", "index.json"));

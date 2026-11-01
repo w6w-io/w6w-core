@@ -66,8 +66,8 @@ paths, so two runs into different out dirs are byte-identical.
 A build also checks each action's and trigger's declared `output` and warns — it **never fails the
 build**, and the exit code is unchanged (`0` on a warnings-only build):
 
-- **no `output`** — the key is absent. `output: []` (deliberately returns nothing) and
-  `{ source }` (a dynamic output) do not warn.
+- **no `output`** — the key is absent. `output: []` (deliberately returns nothing) and `{ source }`
+  (a dynamic output) do not warn.
 - **`items` on a non-array field** — an output field (at any nesting depth) declares `items` while
   its `type` is not `"array"`.
 - **`sample` does not match `output`** — the `sample` lacks a declared key or has a different type
