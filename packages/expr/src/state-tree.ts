@@ -807,8 +807,8 @@ function initialRefIssues(v: unknown, path: string, out: StateConfigIssue[]): vo
     out.push(
       issue(
         "secret_ref",
-        `${at} reads a secret: a secret may never enter the run state tree. Take it in the ` +
-          "`with` param of the step that needs it instead.",
+        `${at} reads a secret, and a secret may never enter the run state tree (take it in ` +
+          "the `with` param of the step that needs it)",
       ),
     );
   }
