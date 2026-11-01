@@ -48,6 +48,22 @@ Deno.test("[A1] intake example: root merge overwrites, key mode nests", () => {
   const b = ap({ foo: "foofoo" }, W(["node-2"], { foo: "bar" }));
   assertEquals(b.tree, { foo: "foofoo", "node-2": { foo: "bar" } });
 });
+Deno.test("[A1] root merge keeps the keys the write does not name", () => {
+  assertEquals(ap({ foo: "foofoo", other: 1 }, W([], { foo: "bar" })).tree, {
+    foo: "bar",
+    other: 1,
+  });
+  assertEquals(ap({ x: { foo: "foofoo", other: 1 } }, W(["x"], { foo: "bar" })).tree, {
+    x: { foo: "bar", other: 1 },
+  });
+  assertEquals(
+    foldState(
+      { foo: "foofoo", other: 1 },
+      computeStateWrites({ mode: "root" }, { foo: "bar" }).ops,
+    ),
+    { foo: "bar", other: 1 },
+  );
+});
 Deno.test("[A1] compute -> fold: root then key, end to end", () => {
   const root = computeStateWrites({ mode: "root" }, { foo: "bar" });
   const key = computeStateWrites({ mode: "key", key: "node-2" }, { foo: "bar" });
