@@ -1023,6 +1023,13 @@ A fire starts the run at the trigger node that fired (`RunSeed.entry`). With `en
 entry node and the nodes reachable from it via edges execute; every other root — trigger-class or
 not — is recorded skipped, and so is every node reachable only from skipped roots; a join reachable
 from the entry still runs. With `entry` absent, every root starts. See the [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1).
+
+**Alternate entries (2026-11-01).** Any step with an entry port may be the target of edges from
+several triggers or several upstream paths — two triggers into one step, or a second path joining
+the first part-way. This qualifies [`ports.in`](#field-reference-stored): only `in: 0` (no entry
+port) binds; `in > 1` is a rendering hint, and an authoring tool must add an inbound edge, never
+replace one. Per run, such a step runs **once**, after its predecessors on the fired path settle;
+predecessors skipped `not_on_path` neither block it nor run it again.
 Subscriptions for app trigger nodes are derived from the saved definition on publish; see the
 [Trigger RFC amendment](./trigger.md#amendment--2026-10-30-trigger-nodes-bind-subscriptions-b-1).
 
