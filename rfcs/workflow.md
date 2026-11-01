@@ -1810,6 +1810,7 @@ warnings.
 - **Size.** `initialChars` measures the **authored** object, not the resolved one. The resolved
   seed is bounded by `runChars` like the rest of the tree.
 - **Resume.** A fresh run resolves `initialState`; the run's first write-log row (`seq` 0) and
-  `RunState.state` carry the resolved seed. A resumed run SHOULD keep the seed the fresh run
-  resolved rather than re-resolve it against documents that may have changed since. The reference
-  engine does not yet: `RunState` carries no copy of the seed, so a resume re-resolves it.
+  `RunState.state` carry the resolved seed. A resumed or replayed run SHOULD keep the seed the
+  fresh run resolved rather than re-resolve it against documents that may have changed since (or
+  that its seed no longer carries). A host does this by handing the engine `RunState.stateSeed`,
+  the `new` of that `seq` 0 row, on load; without one the engine re-resolves.
