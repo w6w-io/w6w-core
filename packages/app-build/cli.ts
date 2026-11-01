@@ -126,6 +126,19 @@ async function main(): Promise<never> {
     Deno.exit(1);
   }
   for (const f of report.index.failures) console.error(`${f.path}: ${f.code}: ${f.message}`);
+  for (const b of report.built) {
+    const c = b.result.outputWarnings;
+    if (b.result.warnings === undefined) continue;
+    console.error(
+      `${b.path}: warnings: ${b.result.warnings.length}` +
+        (c
+          ? `; ${c.actionsWithoutOutput} actions and ${c.triggersWithoutOutput} triggers without output` +
+            `; ${c.sampleMismatches} samples not matching output` +
+            `; ${c.itemsOnNonArray} items on a non-array field`
+          : "") +
+        ` (never fails the build)`,
+    );
+  }
   console.log(`built ${report.index.apps.length}/${report.total} → ${p.out}/index.json`);
   Deno.exit(report.index.failures.length > 0 ? 1 : 0);
 }
