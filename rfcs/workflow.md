@@ -1704,8 +1704,10 @@ tree is data the author chose to keep; `RunState` is the engine's own bookkeepin
 - **Seed layering.** The tree a run starts with is built in this order, a later layer winning a key
   collision: the project variables the host already supplies as `var`; then `Workflow.initialState`;
   then the workflow's and the caller's variable values. `Workflow.initialState` is an optional
-  **literal JSON object** (no `{{ }}` markers are evaluated in it), at most `initialChars` serialized
-  characters, with the same key, depth and forbidden-key rules as a write. A host MUST refuse a
+  JSON object whose values are literals or, under the
+  [addendum below](#addendum--2026-11-01-expressions-in-workflowinitialstate), expressions resolved
+  once at run start; the authored object is at most `initialChars` serialized characters, with the
+  same key, depth and forbidden-key rules as a write. A host MUST refuse a
   document whose `initialState` breaks them, at load time, with the same message an engine's planner
   gives.
 - **`Node.state`.** An optional field on a node that chooses what its output writes to the tree.
@@ -1767,3 +1769,47 @@ cap without failing the run; replace envelopes with `__stored__`; and never let 
 reach an object's prototype. The shared reference is `@w6w/expr`'s `src/state-tree.ts`, and
 `packages/expr/tests/fixtures/state-write-conflicts.json` is the shared table for the concurrent-writer
 warnings.
+
+### Addendum — 2026-11-01: expressions in `Workflow.initialState`
+
+> **Additive, amends the seed-layering bullet above.** Supersedes the earlier wording that
+> `initialState` is a literal object in which no `{{ }}` marker is evaluated. Motivating case: a
+> document (a template) every branch of the workflow uses is referenced once in the starting state,
+> instead of being loaded separately on each route.
+
+- **Shapes.** A value anywhere in `initialState` may take any shape a variable `default` may: a
+  literal; a `{{ }}` template string; an `{ "type": "expr", "parts": [...] }` value; `{ "$": path }`;
+  or `{ "$expr": rule }`. A string is an expression under the
+  [2026-08-14 root-anchored rule](#amendment--2026-08-14-root-anchored-template-strings-in-with-values)
+  exactly as in a `with` value: only when every marker in it names a run-scope root. Any other
+  string (a vendor placeholder such as `"Hello {{name}}"`, or a mix of rooted and unrooted markers)
+  is literal, whole, and `\{{` escapes one of ours.
+- **When.** Resolved **once**, at run start, after the workflow's variables and before the first
+  step, against the run's scope without secrets. The resolved object is the `initialState` layer of
+  the seed; the layering order is unchanged.
+- **Type-preserving.** A string that is exactly one marker yields the value itself:
+  `{ "tpl": "{{ documents.welcome }}" }` seeds `tpl` with the document's value (an object stays an
+  object), not its string form. Surrounding text concatenates to a string. A path that names
+  nothing yields `""`, as it does in a `with` value.
+- **Allowed roots.** `var` / `vars` (project and workflow variables), `const`, `documents`, and
+  `nodes.<id>.meta` (a node's static metadata). Every other root is refused, each because it has no
+  value yet or must never enter the tree: `state` (the tree is what is being built), the run's
+  outputs (`steps`, `nodes.<id>.output` and any other `nodes.<id>` path but `meta`), `trigger`,
+  `foreach`, `inputs` and `output`. A bare root with no name after it (`{{ var }}`) is refused. A
+  JSONLogic `var` operand, a `$` path and a chain operand obey the same list.
+- **Secrets.** A secret reference (`{{ secrets.NAME }}`, a `secret` part, a `$`/`var` path under
+  `secrets`) is refused, because a secret must never enter the tree. A sealed envelope is not a
+  reference and is still replaced by `__stored__` at the read edge.
+- **Refusal at save.** A host MUST refuse, at load and save time, a document whose `initialState`
+  reads a refused root or a secret, with the message an engine's planner gives (it names the
+  `initialState` path and the reference). `@w6w/expr`'s `validateInitialState` reports these as the
+  issue codes `disallowed_root` and `secret_ref`, beside the existing ones.
+- **Failure.** An expression that fails to evaluate at run start (an unknown JSONLogic operator, a
+  value that captures the scope itself) fails the run before any step runs, with a `WorkflowError`
+  naming the `initialState` path.
+- **Size.** `initialChars` measures the **authored** object, not the resolved one. The resolved
+  seed is bounded by `runChars` like the rest of the tree.
+- **Resume.** A fresh run resolves `initialState`; the run's first write-log row (`seq` 0) and
+  `RunState.state` carry the resolved seed. A resumed run SHOULD keep the seed the fresh run
+  resolved rather than re-resolve it against documents that may have changed since. The reference
+  engine does not yet: `RunState` carries no copy of the seed, so a resume re-resolves it.

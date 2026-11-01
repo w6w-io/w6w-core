@@ -699,6 +699,66 @@ Deno.test("[A19] validateInitialState: depth 32 passes, 33 fails; cycles and 10 
   assertEquals(validateInitialState(nested(10_000)).map((i) => i.code), ["too_deep"]);
   assertEquals(validateInitialState({ n: 1n }).map((i) => i.code), ["initial_too_large"]);
 });
-Deno.test("[A19] validateInitialState does not strip or refuse secrets", () => {
+Deno.test("[A19] validateInitialState does not strip or refuse a sealed envelope", () => {
   assertEquals(validateInitialState({ s: secret }), []);
+});
+
+// --- A20: initialState expressions (2026-11-01 seed-expressions addendum) -------------------------
+
+Deno.test("[A20] validateInitialState: allowed roots and literal strings pass", () => {
+  assertEquals(
+    validateInitialState({
+      tpl: "{{ documents.welcome }}",
+      greeting: "Hi {{ var.name }} from {{ const.company }}",
+      app: "{{ nodes.send.meta.app }}",
+      legacy: { "$": "vars.region" },
+      chain: "{{ var.a ?? documents.b }}",
+      expr: { type: "expr", parts: [{ kind: "var", ref: "documents.x" }] },
+      // a vendor placeholder, an unrooted marker beside a rooted one, an escaped marker
+      vendor: "Hello {{name}}",
+      mixed: "{{ name }} and {{ steps.a.output }}",
+      escaped: "\\{{ steps.a.output }}",
+      plain: 3,
+    }),
+    [],
+  );
+});
+
+Deno.test("[A20] validateInitialState: a secret reference is refused, in every spelling", () => {
+  const codes = (v: unknown) => validateInitialState(v).map((i) => i.code);
+  assertEquals(codes({ k: "{{ secrets.API_KEY }}" }), ["secret_ref"]);
+  assertEquals(codes({ a: { b: ["x", "Bearer {{ secrets.T }}"] } }), ["secret_ref"]);
+  assertEquals(codes({ k: { type: "expr", parts: [{ kind: "secret", ref: "T" }] } }), [
+    "secret_ref",
+  ]);
+  assertEquals(codes({ k: { "$": "secrets.T" } }), ["secret_ref"]);
+  const [first] = validateInitialState({ a: { b: ["x", "{{ secrets.T }}"] } });
+  assert(first.message.includes("initialState.a.b[1]"), first.message);
+  // a sealed envelope is not a reference: still passed through (the read edge masks it)
+  assertEquals(codes({ s: secret }), []);
+});
+
+Deno.test("[A20] validateInitialState: a root the seed cannot read yet is refused, naming the path", () => {
+  const codes = (v: unknown) => validateInitialState(v).map((i) => i.code);
+  for (
+    const s of [
+      "{{ state.x }}",
+      "{{ steps.a.output }}",
+      "{{ nodes.a.output }}",
+      "{{ nodes.a }}",
+      "{{ trigger.event }}",
+      "{{ foreach.item }}",
+      "{{ inputs.x }}",
+      "{{ output.x }}",
+      "{{ var }}",
+      '{{ ={"var":"steps.a.output"} }}',
+    ]
+  ) {
+    assertEquals(codes({ k: s }), ["disallowed_root"], s);
+  }
+  assertEquals(codes({ k: { "$": "trigger.event" } }), ["disallowed_root"]);
+  assertEquals(codes({ k: { "$expr": { "var": "steps.a.output" } } }), ["disallowed_root"]);
+  const [only] = validateInitialState({ cfg: { tpl: "{{ steps.load.output }}" } });
+  assert(only.message.includes("initialState.cfg.tpl"), only.message);
+  assert(only.message.includes("steps.load.output"), only.message);
 });

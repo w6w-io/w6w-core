@@ -2,12 +2,18 @@
  * The run state tree: one JSON object a workflow run accumulates through `Node.state` writes,
  * plus the pure merge/fold every consumer (engine, server, editor, embed) shares.
  *
- * Pure and dependency-free (it imports nothing; the secret predicate is injected). Nothing here
- * mutates an input, and `computeStateWrites`, `applyStateOp`, `foldState`, `foldStateLog` and
- * `validateInitialState` never throw, for any input: ops and rows also arrive from persisted
+ * Pure and dependency-free (it imports only this package's own `{{ }}` grammar; the secret
+ * predicate is injected). Nothing here mutates an input, and `computeStateWrites`,
+ * `applyStateOp`, `foldState`, `foldStateLog` and `validateInitialState` never throw, for any input: ops and rows also arrive from persisted
  * rows and hub patches, so the sink guards the same keys and bounds the compute side does.
  * Properties are only ever created as own data properties of keys that passed those guards.
  */
+import {
+  coalesceOperandRefs,
+  hasRefusedChainToken,
+  parseTemplate,
+  type TemplateEscape,
+} from "./template.ts";
 
 export type StateTree = Record<string, unknown>;
 
@@ -684,8 +690,146 @@ export function foldStateLog(rows: readonly StateLogRow[], uptoSeq?: number): St
 // --- starting data ----------------------------------------------------------------------------
 
 /**
+ * The twelve run-scope roots (core/rfcs/workflow.md, the run state tree amendment). A `{{ }}`
+ * marker whose first segment is none of these is a vendor placeholder and stays literal, exactly
+ * as in a `with` value; it is never an expression of ours.
+ */
+const RUN_SCOPE_ROOTS: ReadonlySet<string> = new Set([
+  "var",
+  "vars",
+  "state",
+  "const",
+  "nodes",
+  "steps",
+  "trigger",
+  "secrets",
+  "documents",
+  "inputs",
+  "output",
+  "foreach",
+]);
+
+/** The roots `Workflow.initialState` may read (2026-11-01 seed-expressions addendum). */
+const INITIAL_STATE_ROOTS: ReadonlySet<string> = new Set(["var", "vars", "const", "documents"]);
+
+const rootOf = (ref: string) => ref.split(".")[0];
+
+/** A `{{ }}` part the engine would resolve: the same per-marker rule as a `with` string. */
+function isOurPart(part: { kind: string; ref?: string; expr?: unknown }): boolean {
+  switch (part.kind) {
+    case "secret":
+      return true;
+    case "expr": {
+      const refs = coalesceOperandRefs(part.expr);
+      return refs === null || refs.every((r) => RUN_SCOPE_ROOTS.has(rootOf(r)));
+    }
+    case "var":
+      return !hasRefusedChainToken(part.ref ?? "") && RUN_SCOPE_ROOTS.has(rootOf(part.ref ?? ""));
+    default:
+      return false;
+  }
+}
+
+const OUR_MARKERS: TemplateEscape = { isOurs: isOurPart, backslash: "keep" };
+
+/** Why `ref` may not be read by `initialState`, or `null` when it may. */
+function initialRefProblem(ref: unknown): string | null {
+  if (typeof ref !== "string") return "a computed path";
+  const segs = ref.split(".");
+  if (segs[0] === "secrets") return "secret";
+  if (segs[0] === "nodes") {
+    return segs.length >= 3 && segs[1] !== "" && segs[2] === "meta"
+      ? null
+      : `"${ref}" (only nodes.<id>.meta is static)`;
+  }
+  if (INITIAL_STATE_ROOTS.has(segs[0]) && segs.length >= 2 && segs[1] !== "") return null;
+  return `"${ref}"`;
+}
+
+/** Every JSONLogic `var` operand path in `e` (a non-string path is pushed as-is). */
+function logicRefs(e: unknown, out: unknown[]): void {
+  if (Array.isArray(e)) {
+    for (const x of e) logicRefs(x, out);
+    return;
+  }
+  if (!isPlain(e)) return;
+  for (const k of Object.keys(e)) {
+    if (k === "var") {
+      const a = e[k];
+      out.push(Array.isArray(a) ? a[0] : a);
+      if (Array.isArray(a)) { for (const x of a.slice(1)) logicRefs(x, out); }
+    } else logicRefs(e[k], out);
+  }
+}
+
+/**
+ * The references an `initialState` value would read, walked with the engine's own arms: an
+ * `{ type: "expr", parts }` value, `{ "$": path }`, `{ "$expr": logic }`, and a string every one
+ * of whose `{{ }}` markers names a run-scope root (any other string is literal, whole). A sealed
+ * envelope is a leaf. Only called on a value the bounded scan accepted (no cycle, depth <= 32).
+ */
+function initialRefIssues(v: unknown, path: string, out: StateConfigIssue[]): void {
+  const refs: unknown[] = [];
+  let secret = false;
+  const takeParts = (parts: readonly { kind: string; ref?: string; expr?: unknown }[]) => {
+    for (const p of parts) {
+      if (p.kind === "secret") secret = true;
+      else if (p.kind === "var") refs.push(p.ref ?? "");
+      else if (p.kind === "expr") logicRefs(p.expr, refs);
+    }
+  };
+  if (Array.isArray(v)) {
+    v.forEach((x, i) => initialRefIssues(x, `${path}[${i}]`, out));
+    return;
+  }
+  if (isPlain(v)) {
+    const keys = Object.keys(v);
+    if (v.type === "secret" && typeof v.ciphertext === "string" && typeof v.iv === "string") return;
+    if (v.type === "expr" && Array.isArray(v.parts)) {
+      takeParts(v.parts.filter(isPlain) as { kind: string }[]);
+    } else if (keys.length === 1 && keys[0] === "$") {
+      refs.push(v.$);
+    } else if (keys.length === 1 && keys[0] === "$expr") {
+      logicRefs(v.$expr, refs);
+    } else {
+      for (const k of keys) initialRefIssues(v[k], path ? `${path}.${k}` : k, out);
+      return;
+    }
+  } else if (typeof v === "string" && v.includes("{{")) {
+    const parts = parseTemplate(v, "editor", OUR_MARKERS);
+    if (parts.some((p) => p.kind !== "text" && !isOurPart(p))) return; // literal, whole
+    takeParts(parts);
+  } else {
+    return;
+  }
+  const at = `initialState.${path}`;
+  if (secret || refs.some((r) => initialRefProblem(r) === "secret")) {
+    out.push(
+      issue(
+        "secret_ref",
+        `${at} reads a secret: a secret may never enter the run state tree. Take it in the ` +
+          "`with` param of the step that needs it instead.",
+      ),
+    );
+  }
+  for (const r of refs) {
+    const problem = initialRefProblem(r);
+    if (problem === null || problem === "secret") continue;
+    out.push(
+      issue(
+        "disallowed_root",
+        `${at} reads ${problem}: initialState is resolved once before the first step, so it may ` +
+          "read only var, vars, const, documents and nodes.<id>.meta",
+      ),
+    );
+  }
+}
+
+/**
  * Validates `Workflow.initialState` with the same bounded walker the write path uses, so the
- * engine and the server refuse exactly the same set. It does not strip secrets (the read edge does).
+ * engine and the server refuse exactly the same set. It does not strip sealed envelopes (the read
+ * edge does). A `{{ }}` expression in it (2026-11-01 seed-expressions addendum) may read only
+ * `var`/`vars`, `const`, `documents` and `nodes.<id>.meta`; a secret reference is refused.
  */
 export function validateInitialState(v: unknown): StateConfigIssue[] {
   if (!isPlain(v)) return [issue("not_object", "initialState must be a JSON object")];
@@ -721,6 +865,9 @@ export function validateInitialState(v: unknown): StateConfigIssue[] {
       out.push(
         issue("initial_too_large", `initialState exceeds ${STATE_LIMITS.initialChars} characters`),
       );
+    }
+    if (!tooDeep && s.forbidden === undefined) {
+      for (const k of Object.keys(v)) initialRefIssues(v[k], k, out);
     }
   } catch {
     out.push(issue("initial_too_large", "initialState could not be read"));
