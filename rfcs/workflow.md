@@ -1616,3 +1616,57 @@ before. Set: only that trigger and the nodes reachable from it execute, and ever
 [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1). A host that
 persists run state persists `entry` with it (`RunState.entry`, `RunStatePatch.entry`) so resume and
 replay start the same way. `normalizeWorkflow` preserves `uses.trigger`.
+
+## Amendment — 2026-11-01: shared workflow connections
+
+A workflow can declare a top-level `connections` map. Each entry contains an app ID and a
+vault connection ID; it never contains the credential itself. App and app-trigger nodes use
+`uses.connectionRef` to name an entry:
+
+```json
+{
+  "connections": {
+    "eventbrite": {
+      "app": "io.w6w.eventbrite",
+      "connection": "conn_account"
+    }
+  },
+  "nodes": [
+    {
+      "id": "find_webhook",
+      "uses": {
+        "app": "io.w6w.eventbrite",
+        "action": "list-webhooks",
+        "connectionRef": "eventbrite"
+      }
+    },
+    {
+      "id": "create_webhook",
+      "uses": {
+        "app": "io.w6w.eventbrite",
+        "action": "create-webhook",
+        "connectionRef": "eventbrite"
+      }
+    }
+  ]
+}
+```
+
+This is additive to manifest version 2. Legacy `uses.connection` IDs remain valid. A node
+must not specify both forms. A reference must name an existing entry for the same app;
+missing references and app mismatches fail validation. An entry's `connection: null` means
+unbound, as with an imported inline connection. Function-reference nodes do not accept
+`connectionRef`.
+
+Bindings resolve from the effective workflow definition before invocation, including node
+tests, trigger registration and remote execution authorization. They do not depend on a
+source node's execution, outputs or location in the graph. Renaming or deleting a node does
+not delete the map entry or break its other consumers. Replays use their workflow snapshot.
+Portable export/import handles each map entry once, preserving its consumers' references.
+
+The editor lifts inline IDs into this map on save without implicitly sharing independent
+selections. Its existing connection picker offers same-app nodes with configured accounts;
+choosing one reuses that node's map entry. An ordinary account selection affects only the
+selected node, allocating an independent entry when necessary. **Change shared connection…**
+is an explicit group edit: replacing that entry's account updates every referencing node.
+The same group update can be made by editing the top-level map in JSON.
