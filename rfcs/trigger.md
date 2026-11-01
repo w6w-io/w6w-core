@@ -519,3 +519,14 @@ Additive. Stacks after the trigger-node amendment above and changes none of it.
 - **Filters.** The "Filter DSL" Non-Goal above stands for webhook and poll triggers. A protocol trigger
   carries a versioned pass-through `filters` value that the partner MAY evaluate; the host does not
   evaluate it in v1 (decided; see the RFC's Decisions).
+
+## Amendment — 2026-11-01: array item fields and the demo event
+
+> Additive. It applies to this RFC's `output` and `sample` rows, which stand unedited.
+
+- **`output` inherits `items`.** A trigger's `output` reuses Action's `OutputField`, so an `array`
+  field may carry `items` describing one element, exactly as defined in the
+  [Action RFC amendment](./action.md#amendment--2026-11-01-array-item-fields-and-the-demo-output).
+- **`sample` is the demo event.** It is the example normalized event the editor shows before any
+  event has arrived, layered below a real event and a persisted test shape for values; keys merge and
+  are never hidden, per the same amendment. It should match `output`.

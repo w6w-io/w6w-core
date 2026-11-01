@@ -17,6 +17,11 @@ export interface OutputField {
   key: string;
   type: "string" | "number" | "boolean" | "object" | "array" | "file";
   label: string;
+  /**
+   * The fields of ONE element. Valid only when `type` is `"array"`. Keys inside
+   * use dot notation relative to the element (`id`, `owner.name`), not the array.
+   */
+  items?: OutputField[];
 }
 
 /** Output shape declared by a hook when it depends on configuration. */

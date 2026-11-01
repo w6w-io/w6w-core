@@ -228,7 +228,8 @@ Deno.test("refuse: fields_hook_invalid — refreshOn names a param that is not i
 
 Deno.test("fields_hook_invalid: a valid hook builds, the manifest action carries resolveFields: true", async () => {
   const f = await fixture({
-    "index.ts": `export default { actions: [{ key: "a", title: "A", params: [${FORM_PARAM}],
+    "index.ts":
+      `export default { actions: [{ key: "a", title: "A", output: [], params: [${FORM_PARAM}],
       execute() { return {}; }, resolveFields() { return { fields: {} }; } }] };\n`,
   });
   try {
@@ -243,7 +244,7 @@ Deno.test("fields_hook_invalid: a valid hook builds, the manifest action carries
 
 Deno.test("fields_hook_invalid: a hook no param opts in to builds with a warning", async () => {
   const f = await fixture({
-    "index.ts": `export default { actions: [{ key: "a", title: "A",
+    "index.ts": `export default { actions: [{ key: "a", title: "A", output: [],
       execute() { return {}; }, resolveFields() { return { fields: {} }; } }] };\n`,
   });
   try {

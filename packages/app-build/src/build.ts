@@ -12,7 +12,10 @@ import {
 import { checkFormResolvedFields } from "@w6w/validator";
 import {
   type AppArtifactManifest,
+  compareOutputShape,
   digestDescriptionVersioned,
+  observedShapeOfValue,
+  type OutputField,
   parseAppArtifactManifest,
   sha256HexBytes,
 } from "@w6w/types";
@@ -52,6 +55,74 @@ export interface BuildResult {
   outDir: string;
   /** Non-fatal build findings. The key is absent when there are none. */
   warnings?: string[];
+  /**
+   * Counts behind the output-contract warnings (absent when all are zero). Not part of
+   * `index.json`; the CLI reads it to print one summary line per app.
+   */
+  outputWarnings?: OutputWarningCounts;
+}
+
+export interface OutputWarningCounts {
+  actionsWithoutOutput: number;
+  triggersWithoutOutput: number;
+  /** Entries whose `sample` disagrees with their declared `output`. */
+  sampleMismatches: number;
+  /** Output fields declaring `items` while not `type: "array"`. */
+  itemsOnNonArray: number;
+}
+
+/** `items` on a field that is not an array, at any depth. Returns the offending field keys. */
+function itemsOnNonArray(fields: readonly OutputField[], prefix = ""): string[] {
+  const bad: string[] = [];
+  for (const f of fields) {
+    if (f === null || typeof f !== "object") continue;
+    const at = `${prefix}${f.key}`;
+    if (f.items !== undefined && f.type !== "array") bad.push(at);
+    if (Array.isArray(f.items)) bad.push(...itemsOnNonArray(f.items, `${at}[].`));
+  }
+  return bad;
+}
+
+/**
+ * Warn (never fail) about one action/trigger's output contract: no `output` key, `items` on a
+ * non-array field, `sample` not matching `output`. `output: []` and `{ source }` are deliberate.
+ */
+function outputWarnings(
+  kind: "actions" | "triggers",
+  entry: { key?: unknown; output?: unknown; sample?: unknown },
+  warnings: string[],
+  counts: OutputWarningCounts,
+): void {
+  const at = `${kind}[${entry.key}]`;
+  if (!Object.hasOwn(entry, "output") || entry.output === undefined) {
+    warnings.push(`${at}: declares no output`);
+    if (kind === "actions") counts.actionsWithoutOutput++;
+    else counts.triggersWithoutOutput++;
+    return;
+  }
+  if (!Array.isArray(entry.output)) return;
+  const fields = entry.output as OutputField[];
+  for (const k of itemsOnNonArray(fields)) {
+    warnings.push(`${at}: output field "${k}" declares items but its type is not "array"`);
+    counts.itemsOnNonArray++;
+  }
+  if (entry.sample === undefined) return;
+  const diff = compareOutputShape(fields, observedShapeOfValue(entry.sample));
+  // An implied ancestor (`venue` for `venue.name`) is noise next to a listed descendant.
+  const missing = diff.missing.filter((m) => !diff.missing.some((o) => o.startsWith(`${m}.`)));
+  const parts: string[] = [];
+  if (missing.length > 0) parts.push(`missing ${missing.join(", ")}`);
+  if (diff.typeMismatch.length > 0) {
+    parts.push(
+      "type mismatch " +
+        diff.typeMismatch.map((t) => `${t.key} (declared ${t.declared}, sample ${t.observed})`)
+          .join(", "),
+    );
+  }
+  if (parts.length > 0) {
+    warnings.push(`${at}: sample does not match output: ${parts.join("; ")}`);
+    counts.sampleMismatches++;
+  }
 }
 
 const ID_RE = /^[a-z0-9]+(\.[a-z0-9-]+)+$/;
@@ -227,12 +298,22 @@ export async function buildApp(
 
     // ---- form-resolved fields: the wiring rule only, not full validateAction ----
     const warnings: string[] = [];
+    const counts: OutputWarningCounts = {
+      actionsWithoutOutput: 0,
+      triggersWithoutOutput: 0,
+      sampleMismatches: 0,
+      itemsOnNonArray: 0,
+    };
     const wiringErrors: string[] = [];
     for (const a of described.actions) {
       const at = `actions[${(a as { key?: unknown }).key}]`;
       const found = checkFormResolvedFields(a, at);
       for (const e of found.errors) wiringErrors.push(`${e.path}: ${e.message}`);
       for (const w of found.warnings) warnings.push(`${w.path}: ${w.message}`);
+      outputWarnings("actions", a as { key?: unknown }, warnings, counts);
+    }
+    for (const t of described.triggers) {
+      outputWarnings("triggers", t.trigger as { key?: unknown }, warnings, counts);
     }
     if (wiringErrors.length > 0) {
       return fail("fields_hook_invalid", wiringErrors.join("; "));
@@ -319,6 +400,7 @@ export async function buildApp(
       outDir,
     };
     if (warnings.length > 0) result.warnings = warnings;
+    if (Object.values(counts).some((n) => n > 0)) result.outputWarnings = counts;
     return result;
   } finally {
     await Deno.remove(tmp, { recursive: true }).catch(() => {});

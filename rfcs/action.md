@@ -453,3 +453,62 @@ matching `when` entry's `set.required` (see the
 [Param amendment](param.md#amendment--2026-10-29-conditional-overlay-when)). Invocation enforces
 that effective value against the supplied `params`; previously `required` was unconditional.
 `showIf` is still not evaluated at invocation.
+
+## Amendment — 2026-11-01: array item fields and the demo output
+
+> This section is **additive**. It amends every `OutputField` / `Output` / `sample` reference in the
+> RFC set and leaves the text of each **standing unedited**: action.md's field table (the `output`
+> and `sample` rows) and `### OutputField`; trigger.md's `output` and `sample` rows (see its
+> amendment of the same date); function.md's `output` row; and interface.md's `Output` import and
+> `output` row (both reuse `Output` verbatim, so they inherit `items`). Where the two differ, this
+> section governs; no existing manifest changes meaning.
+
+### `items` — the fields of one array element
+
+`OutputField` gains one optional member, `items?: OutputField[]`. It is valid **only** when
+`type` is `"array"` and describes **one element** of that array; the keys inside `items` use the same
+dot notation as any `OutputField`, relative to the element. The JSON schema admits `items` and
+requires `type: "array"` whenever it is present. A field without `items` is unchanged: an array stays
+a leaf.
+
+```json
+"output": [
+  {
+    "key": "webhooks", "type": "array", "label": "Webhooks",
+    "items": [
+      { "key": "id", "type": "string", "label": "Webhook ID" },
+      { "key": "endpoint_url", "type": "string", "label": "Endpoint URL" },
+      { "key": "actions", "type": "array", "label": "Subscribed actions" }
+    ]
+  }
+]
+```
+
+An element field is referenced as `webhooks.0.id`: the array key, the element index segment `0`
+(standing for "an element"), then the item key. The rejected alternative is a `[]` segment inside
+dotted keys (`webhooks[].id`), which needs string parsing in every consumer and is ambiguous with
+literal key characters. Only one level is read: an item's own `items` is not descended by the
+shared comparator.
+
+The `@w6w/types` helpers `observedShapeOfValue` and `compareOutputShape` compare a declaration with
+an observed value by keys and type names only (values never appear in a result): a declared key
+absent from the observation is `missing`, an observed key the declaration does not cover is `extra`,
+and differing types are a `typeMismatch`. An observed `null`/`unknown` is never a mismatch, a
+declared `file` never mismatches, and an absent or null parent object (or an empty array) never
+yields `missing`.
+
+### `sample` — the app's demo output
+
+`sample` (on an Action and, per trigger.md, a Trigger) is the app's **demo output**: what the
+action returns for a representative call. This supersedes the field table's "Not used for
+validation" only in that editors now use it before any run; it is still never enforced at runtime.
+Editors layer it as follows:
+
+- **Values:** a fresh run's output, then a persisted test shape, then `sample` (fresh > persisted >
+  sample).
+- **Keys merge, never hide:** when a real shape exists, all its keys are shown; keys only the
+  declaration (`output`, else the keys of `sample`) names are added, marked as declared by the app.
+  `output` drives keys alone only when no real shape exists, and `sample`'s keys alone only when no
+  `output` exists either. A mismatch never removes a key.
+
+A `sample` should match `output`; `w6w-app-build` warns (never fails) when it does not.
