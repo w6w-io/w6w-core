@@ -172,3 +172,38 @@ Deno.test("observed: no input value appears in the serialized result", () => {
   assertEquals(out.includes(secret), false);
   assertEquals(out.includes("424242"), false);
 });
+
+const venueName = [f("venue.name", "string")];
+const empty = { missing: [], extra: [], typeMismatch: [] };
+
+Deno.test("compare: dotted declaration does not report its parent as extra (R1-A1)", () => {
+  assertEquals(
+    compareOutputShape(venueName, observedShapeOfValue({ venue: { name: "x" } })),
+    empty,
+  );
+});
+
+Deno.test("compare: dotted declaration still reports an undeclared sibling (R1-A2)", () => {
+  const d = compareOutputShape(
+    venueName,
+    observedShapeOfValue({ venue: { name: "x", city: "y" } }),
+  );
+  assertEquals(d.extra, ["venue.city"]);
+});
+
+Deno.test("compare: dotted declaration with absent parent reports the parent missing (R1-A3)", () => {
+  assertEquals(compareOutputShape(venueName, observedShapeOfValue({})).missing, ["venue"]);
+});
+
+Deno.test("compare: dotted key inside items implies its ancestor (R1-A4)", () => {
+  const d = compareOutputShape(
+    [f("webhooks", "array", [f("venue.id", "string")])],
+    observedShapeOfValue({ webhooks: [{ venue: { id: "1" } }] }),
+  );
+  assertEquals(d, empty);
+  const e = compareOutputShape(
+    [f("webhooks", "array", [f("venue.id", "string")])],
+    observedShapeOfValue({ webhooks: [{ venue: { id: "1", x: 1 } }] }),
+  );
+  assertEquals(e.extra, ["webhooks.0.venue.x"]);
+});

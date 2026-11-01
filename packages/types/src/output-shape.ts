@@ -89,6 +89,12 @@ export function compareOutputShape(
       for (const it of f.items) decl.set(`${f.key}.0.${it.key}`, it.type);
     }
   }
+  // A dotted declaration (`venue.name`) implies its ancestors are objects.
+  for (const p of [...decl.keys()]) {
+    for (let a = parentOf(p); a !== undefined; a = parentOf(a)) {
+      if (!decl.has(a)) decl.set(a, "object");
+    }
+  }
   const hasChild = new Set<string>();
   for (const p of decl.keys()) {
     const par = parentOf(p);
