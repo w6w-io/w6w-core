@@ -36,7 +36,7 @@ Deno.test("compare: null or absent parent never yields missing", () => {
   // Round 1: a dotted declaration implies its ancestor `venue`; wholly absent at the root it is
   // reported missing itself (R1-A3), while the deeper `venue.address.city` stays exempt.
   assertEquals(compareOutputShape(decl, {}).missing, ["venue"]);
-  assertEquals(compareOutputShape(decl, { venue: "object" }).missing, []); // venue.address absent
+  assertEquals(compareOutputShape(decl, { venue: "object" }).missing, ["venue.address"]); // implicit ancestor absent; its child exempt
 });
 
 Deno.test("compare: empty array never yields missing for item keys", () => {
