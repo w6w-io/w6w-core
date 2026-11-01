@@ -49,6 +49,21 @@ async function run(label: string, args: string[]): Promise<boolean> {
   return code === 0;
 }
 
+// `deno bundle` installs its esbuild binary into DENO_DIR on first use. On a cold cache (every CI
+// runner) the app-build test files bundling in parallel race that install and fail with "failed to
+// copy esbuild binary". One bundle here, before either track, installs it once.
+const warm = await Deno.makeTempDir({ prefix: "w6w-bundle-warm-" });
+await Deno.writeTextFile(`${warm}/entry.ts`, "export const x = 1;\n");
+const warmed = await new Deno.Command(Deno.execPath(), {
+  args: ["bundle", "-q", "--no-lock", "-o", `${warm}/out.js`, `${warm}/entry.ts`],
+  cwd: warm,
+}).output();
+await Deno.remove(warm, { recursive: true });
+if (!warmed.success) {
+  console.error(`esbuild warm-up failed:\n${new TextDecoder().decode(warmed.stderr)}`);
+  Deno.exit(1);
+}
+
 const parallelOk = await run(`parallel (${serial.length} global-state files deferred)`, [
   "--parallel",
   ...(serial.length ? [`--ignore=${serial.join(",")}`] : []),
