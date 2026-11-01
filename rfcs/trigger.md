@@ -30,7 +30,7 @@ Zapier and n8n both implement this pattern with per-transport coupling and per-c
 ## Non-Goals
 
 - **Filter DSL.** Per-subscription filtering is a workflow concern — users add a filter step at the top of the graph. If pre-filter perf becomes an issue, extend `Subscription` with an optional `predicate?` field later (additive).
-- **Non-workflow subscribers.** v1 delivers only to workflows. Partner HTTP callbacks, arbitrary consumers, and event-store fan-out are deferred.
+- **Non-workflow subscribers.** v1 delivers only to workflows. Partner HTTP callbacks are specified by the [Trigger Protocol RFC](./trigger-protocol.md) as a source-side delivery kind (the subscriber is still a workflow; see the [2026-10-30 protocol amendment](#amendment--2026-10-30-the-w6w-trigger-protocol-fourth-delivery-kind)). Arbitrary consumers and event-store fan-out are deferred.
 - **Transport specifics.** HTTPS request framing, Kafka consumer-group semantics, cron scheduler internals — all host implementation. This RFC pins only the app + manager contracts.
 - **Ordering across subscriptions.** Within a subscription: FIFO by `receivedAt` among events that are due (see [Ordering](#ordering)). Across subscriptions: unordered.
 - **Exactly-once semantics.** Achieving exactly-once at the platform level adds cost without user value; every event carries an `event.id` and subscribers dedupe if they need to.
@@ -469,3 +469,64 @@ A stored call is immutable: its subscription, raw call, normalized event and rec
 - `Review` — proposal is feature-complete; soliciting feedback before freeze.
 - `Final` — frozen for `manifestVersion: "1"`. Breaking changes require a new RFC and a `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-10-30: trigger nodes bind subscriptions (B-1)
+
+Additive. A workflow's app triggers are now **nodes** in its definition (`uses.trigger: true`;
+[Node Types RFC amendment](./node-types.md#amendment--2026-10-30-app-trigger-nodes-b-1)).
+
+- **Binding.** A `Subscription` MAY be bound to a trigger node of its workflow by that node's id
+  (`nodeId`). A subscription with no `nodeId` behaves exactly as before (it targets the
+  workflow's single trigger; `WorkflowTrigger` `{ type: "event", subscriptionId }` is unchanged).
+- **Derived on publish.** For each app trigger node in a published definition the host derives the
+  subscription (trigger key from `uses.action`, params from `with`, connection from
+  `uses.connection`), creating, updating or removing it to match the definition. Draft saves do
+  not subscribe — a subscription is dormant until publish. The client does not create a
+  subscription for a trigger node itself.
+- **A fire starts at that node.** A delivery on a node-bound subscription starts the run with
+  `RunSeed.entry` set to the bound `nodeId`; the engine then runs the nodes wired to that trigger
+  and skips every other root and the nodes reachable only from them
+  ([Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1)).
+- **No interval in v1.** The poll interval is not part of the trigger node (planner ruling P-1).
+- Per-workflow multiple schedule/webhook keying is not defined here (deferred).
+
+## Amendment — 2026-10-30: the W6W Trigger Protocol, fourth delivery kind
+
+Additive. Stacks after the trigger-node amendment above and changes none of it.
+
+- **A fourth delivery kind, `w6w-protocol`.** Alongside the webhook and poll forms, a trigger may be
+  delivered by a partner that implements the [Trigger Protocol](./trigger-protocol.md): the host
+  registers a subscription with the partner's API and the partner pushes signed, batched fires to one
+  host endpoint (`POST /triggers/protocol/v1/events`). The Non-Goal "Partner HTTP callbacks" is
+  therefore no longer deferred: it is specified in that RFC as a **source-side delivery kind**. The
+  subscriber is still a workflow; this does not add a subscriber class.
+- **Declaration.** A protocol trigger carries an authored, loader-preserved `delivery: "w6w-protocol"`
+  and a `protocol: { events, filters? }` block; the partner endpoint is declared once per app as
+  `protocol: { baseUrl, jwksUrl, versions }`. This is separate from the host-derived `type`
+  (`"webhook" | "poll"`), which the loader still overwrites and which is unchanged. The subscription
+  created for a protocol trigger has `type: "protocol"`. Only apps installed at the global or tenant
+  tier may declare it.
+- **No sandbox hooks.** A protocol trigger MUST NOT declare `onSubscribe`, `onUnsubscribe` or `poll`
+  (the table in "Two forms" above does not apply to it); the host is the registration client. An
+  optional `parseOutput` stays allowed; `handleIngest` is never invoked for a protocol fire.
+- **Subscription.** A protocol subscription is always node-bound (`nodeId` set; created only by
+  publish reconcile) and gains the partner-side `partnerSubscriptionId` and a `paused` state alongside
+  `pending | registered | failed | destroying`. It cannot be fired through the bearer-in-URL
+  `POST /triggers/webhooks/:subscriptionId` route.
+- **Delivery.** A fire is authenticated by an Ed25519 JWS (`W6W-Signature`), deduplicated on
+  `(subscriptionId, eventId)`, persisted as a trigger event (persist-then-dispatch is unchanged) and
+  starts a run at the bound node.
+- **Filters.** The "Filter DSL" Non-Goal above stands for webhook and poll triggers. A protocol trigger
+  carries a versioned pass-through `filters` value that the partner MAY evaluate; the host does not
+  evaluate it in v1 (decided; see the RFC's Decisions).
+
+## Amendment — 2026-11-01: array item fields and the demo event
+
+> Additive. It applies to this RFC's `output` and `sample` rows, which stand unedited.
+
+- **`output` inherits `items`.** A trigger's `output` reuses Action's `OutputField`, so an `array`
+  field may carry `items` describing one element, exactly as defined in the
+  [Action RFC amendment](./action.md#amendment--2026-11-01-array-item-fields-and-the-demo-output).
+- **`sample` is the demo event.** It is the example normalized event the editor shows before any
+  event has arrived, layered below a real event and a persisted test shape for values; keys merge and
+  are never hidden, per the same amendment. It should match `output`.

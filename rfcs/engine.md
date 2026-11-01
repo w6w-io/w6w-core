@@ -438,3 +438,119 @@ iterations count as complete on resume (Open question 2) stays open.
 it: the hub's `runStatePatch` inspects only `status` and deliberately does not inspect any other
 key. A mixed-version pair therefore loses per-iteration records, not the run. The earlier
 sentences "`RunStatePatch` is unchanged" (here and in `workflow.md`) read as of their own dates.
+
+## Amendment — 2026-10-30: trigger-entry run start (B-1)
+
+Additive. `RunSeed` gains `entry?: string` (a node id) and `RunState`/`RunStatePatch` gain
+`entry?: string`.
+
+- **`entry` absent** — unchanged: every root starts.
+- **`entry` set** — only the entry node and the nodes reachable from it via edges execute. Every
+  other root — trigger-class or not (a floating non-trigger node included) — is **not executed**: it
+  is recorded `skipped`, and so is every node reachable only from skipped roots (its outgoing edges
+  are marked skipped and the ordinary edge-skip rule propagates). A join reachable from the entry
+  still runs under the existing join semantics. A non-root node follows ordinary edge-skip.
+- **Invalid `entry`** — an `entry` naming a node that is not in the workflow, or a node that is not
+  a trigger node, is a `PlanError` raised before any node runs and before any checkpoint.
+- **Both schedulers** (sequential and ready-set) obey the rule identically.
+- **Persistence.** `entry` is written with the run's first checkpoint and read back by resume and
+  replay (as `event` is), so a resumed run keeps the other triggers skipped.
+
+### Conformance (additive)
+
+An engine MUST, for T1→A→J, T2→B→J plus a floating non-trigger root F: with `entry: "T1"` run
+T1, A and J and skip T2, B and F; with `entry: "T2"` the mirror image; with no `entry` run all six.
+The reference fixtures are the three `trigger-entry` entries in `@w6w/engine-conformance`.
+
+## Amendment — 2026-10-31: partial runs from one node (`startFrom`) and disabled nodes
+
+Additive. `RunSeed` gains `startFrom?: { node: string; stopAt?: string[]; nodes?: Record<string, {
+output?, meta? }> }`, and `RunState`/`RunStatePatch` gain the same `startFrom`. It is what an
+editor's ▶ "run from this node" sends: a real run with the normal executor, not a second one.
+
+- **Reach.** `node` and every main-graph node reachable from it along edges execute, routing as in a
+  full run (If true/false routes, Router routes, error edges, For each bodies, joins). A `node` owned
+  by a control's sub-block starts at its outermost owning control, since its block needs the loop
+  item. The start node runs even when no inbound edge is live.
+- **Outside the reach.** A node with an entry in `nodes` is recorded `succeeded` with that output
+  (its success edges stay live, its error edges are skipped), so downstream expressions resolve as
+  after a real run. Every other node is recorded `skipped` with all outgoing edges skipped.
+- **Stop points.** A node in `stopAt` (other than the start node) is recorded `skipped` and its
+  outgoing edges are skipped, so each path stops before it; inside a sub-block it skips the rest of
+  that block. `stopAt` comes from the editor's paused nodes (`Node.ui.paused`, see the Node Types
+  RFC); published and triggered runs never carry one.
+- **Invalid `node`.** A `node` not in the workflow is a `PlanError` before anything runs.
+- **Persistence.** `startFrom` is written with the first checkpoint and read back on resume and
+  replay, like `entry`.
+
+**Disabled nodes** (`Node.disabled: true`, Node Types RFC) are recorded `skipped` in every run, with
+every outgoing edge skipped, so a node reached only through one skips too and a join with another
+live inbound edge still runs. Inside a sub-block a disabled step skips the rest of its block. Both
+schedulers obey both rules identically.
+
+### Conformance (additive)
+
+For T1→A→B→C→D plus T2→E and A→J, E→J: `startFrom: { node: "A", stopAt: ["C"], nodes: { T1 } }`
+executes A, B and J, records T1 `succeeded` with the supplied output and skips C, D, T2 and E. With
+`B.disabled` and no `startFrom`, B, C and D are skipped and J still runs. Reference tests:
+`w6w-workflow` `tests/start_from_test.ts`.
+
+## Amendment — 2026-10-31: a `foreach` body may branch
+
+> Realises the `body` row's "contiguous DAG rooted at the first id, with edges internal to the
+> sub-block", and qualifies the 2026-10-30 amendment's (e) **Body shape** ("the engine runs it as an
+> ordered list") and the **Scope** sentence of failure-conditioned edges above ("a main-graph edge
+> touching one is already rejected"), with its twin in `workflow.md`.
+
+- **Body edges.** An edge whose `from` and `to` are both in the same `foreach`'s `body` is a body
+  edge. It is not a main-graph edge: it never enters the main topological order, and the 2026-10-07
+  scheduler never sees it. Every other edge touching a sub-block step is still a `PlanError` — no
+  edge enters a body from outside, leaves one, or links the `foreach` to its own body; `if`
+  `then`/`else` and `parallel` `branches` blocks still take no edges.
+- **Shape.** A body with body edges MUST be a DAG rooted at `body[0]`: `body[0]` has no inbound body
+  edge and every other body step has at least one. Violations are `PlanError`s at load time.
+- **Execution.** A body with no body edges runs as the ordered list it was. A body with any runs per
+  item as a graph, in topological order (ties by `body` order), under the same per-iteration scope:
+  an edge-mode `if` takes its branch (`route: "false"` for false, unrouted or `"true"` for true), a
+  `@w6w/router` takes its matched route, a failed step with a `when: "error"` body edge routes down
+  it (otherwise the iteration fails, as before), and a step whose inbound body edges are all skipped
+  is `skipped`. Branches may end separately; joins are allowed. The iteration's output is the
+  output of the last step that succeeded, in that order. Skips never carry into the next item.
+- **Unchanged.** A Stop workflow in any branch ends the loop and the run; a disabled step or a
+  `startFrom.stopAt` point is `skipped` and skips what depends on it; per-iteration records (the
+  2026-10-30 amendment) cover every body step, skipped ones included.
+- **Router placement.** A `@w6w/router` may sit in a `foreach` body that has body edges, or last in
+  one that has none; anywhere else in a sub-block it is a `PlanError` (it needs edges to route).
+
+### Conformance (additive)
+
+`foreach` over `[1, 2, 3]` with body `[gate, even, odd, join]` and body edges `gate→even`,
+`gate→odd (route "false")`, `even→join`, `odd→join`, where `gate` is `if item is even`: items 1 and 3
+run `odd` then `join`, item 2 runs `even` then `join`, and each iteration records the untaken step
+`skipped`. Reference tests: `w6w-workflow` `tests/foreach_branching_body_test.ts`.
+
+## Amendment — 2026-11-01: a `foreach`'s ports as edge routes
+
+> Qualifies the 2026-10-31 amendment's **Body edges** sentence ("no edge … links the `foreach` to
+> its own body"). An editor draws a `foreach` with two exits, **Each item** and **Done**; an edge
+> that leaves one without naming it cannot be told apart from the other by any reader.
+
+- **`route: "each"`.** An edge from a `foreach` to `body[0]` with `route: "each"` names the Each item
+  port. It restates `with.body[0]` and is not a main-graph edge: it never enters the topological
+  order. An `"each"` edge to any other step, or with `when: "error"`, is a `PlanError`. `with.body`
+  stays the authority on what the body is; the edge is optional.
+- **`route: "done"`.** A main-graph success edge from a `foreach` with `route: "done"` names the Done
+  port: its target runs once, after every iteration has finished. An unrouted success edge from a
+  `foreach`, the shape saved before this amendment, is read as Done too. Any other `route` on an edge
+  leaving a `foreach` is a `PlanError`.
+- **Unchanged.** A Stop workflow in the body ends the loop and the run: no later item runs and
+  nothing on Done runs, and the run's output is `{ stopped: true }`. In a body with no body edges, a
+  false `if` skips the rest of the body for that item.
+
+### Conformance (additive)
+
+A `foreach` over `[1, 2, 3]` with body `[gate, count, stop]` (`gate` is `if item = 2`, `stop` an
+unconditional Stop workflow) and a `"done"` edge to `after`: item 1 skips `count` and `stop`, item 2
+runs `count` and then stops the run, item 3 never runs, and `after` is `skipped`. Over `[1, 3, 5]`,
+`after` runs exactly once, after the third item, whether its edge is `"done"` or unrouted.
+Reference tests: `w6w-workflow` `tests/foreach_ports_test.ts`.

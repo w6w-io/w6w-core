@@ -9,8 +9,11 @@
  * Runs host-side (full Deno perms) — never sandboxed.
  */
 import {
+  authClassOf,
+  classSegment,
   type ResolveOptions,
   type Resolver,
+  type SourceAuth,
   SourceError,
   splitFragment,
   splitRef,
@@ -56,8 +59,14 @@ export function bitbucketTarballUrl({ owner, repo, ref }: BitbucketRef): string 
 }
 
 /** Headers for a Bitbucket fetch (Basic auth when user + token are set). */
-export function bitbucketAuthHeaders(): HeadersInit {
+export function bitbucketAuthHeaders(auth?: SourceAuth): HeadersInit {
   const headers: Record<string, string> = { "User-Agent": "w6w-sources" };
+  if (auth?.mode === "anonymous") return headers;
+  if (auth?.mode === "token") {
+    // An explicit token is a Bitbucket access token: Bearer, never env Basic.
+    if (auth.token) headers["Authorization"] = `Bearer ${auth.token}`;
+    return headers;
+  }
   const user = Deno.env.get("W6W_BITBUCKET_USER");
   const token = Deno.env.get("W6W_BITBUCKET_TOKEN");
   if (user && token) headers["Authorization"] = `Basic ${btoa(`${user}:${token}`)}`;
@@ -74,11 +83,13 @@ export const bitbucketResolver: Resolver = {
   resolve(ref: string, opts: ResolveOptions = {}): Promise<string> {
     const { subpath } = splitFragment(ref);
     const bb = parseBitbucketRef(ref);
+    const cls = authClassOf(opts.auth);
     return resolveViaTarball(
       {
-        cacheKey: ["bitbucket", bb.owner, bb.repo, bb.ref],
+        cacheKey: [classSegment("bitbucket", cls), bb.owner, bb.repo, bb.ref],
         url: bitbucketTarballUrl(bb),
-        headers: bitbucketAuthHeaders(),
+        headers: bitbucketAuthHeaders(opts.auth),
+        authClass: cls,
         label: "Bitbucket",
         subpath,
       },

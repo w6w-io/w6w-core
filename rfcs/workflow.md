@@ -422,6 +422,8 @@ control's sub-block (`foreach.body`, `parallel.branches`, an `if` branch block) 
 main-graph edge routing, and an edge touching such a step is already rejected at plan time; a step
 inside a sub-block therefore cannot carry an error edge. A sub-block failure is handled by its
 enclosing control's own failure modes (see the [Engine RFC](./engine.md#canonical-controls)).
+*(2026-10-31: a `foreach` body's own edges — both ends in that body — route inside each iteration,
+error edges included; see the Engine RFC amendment "a `foreach` body may branch".)*
 
 **A success edge and an error edge MAY share a target.** The model permits `{ from: "a", to: "b" }`
 and `{ from: "a", to: "b", when: "error" }` to coexist. The engine keys a skipped edge by
@@ -1599,3 +1601,72 @@ content) has no escape: its grammar is unchanged.
 Conformance (additive): a host MUST resolve a single-marker string to the typed value per the
 table above, MUST apply the escape rule above to `with` strings, and SHOULD write template strings
 rather than the structured forms.
+
+## Amendment — 2026-10-30: `uses.trigger` and `RunSeed.entry` (B-1)
+
+Additive; the `uses` table above is not edited. Read it with two further rows.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `uses.trigger` | `true` | ⬜ | On an app `{ app, action }` Action only: marks the node an **app trigger node** — `action` is the app's trigger key, `with` its params, `connection` its connection. Absent means a plain Action. A workflow may hold several trigger nodes. See [Node Types RFC amendment](./node-types.md#amendment--2026-10-30-app-trigger-nodes-b-1). The poll interval is not part of the node in v1. |
+
+`RunSeed.entry?: string` — the id of the trigger node that fired. Absent: every root starts, as
+before. Set: only that trigger and the nodes reachable from it execute, and every other root
+(trigger-class or not) and the nodes reachable only from skipped roots are recorded skipped; see the
+[Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1). A host that
+persists run state persists `entry` with it (`RunState.entry`, `RunStatePatch.entry`) so resume and
+replay start the same way. `normalizeWorkflow` preserves `uses.trigger`.
+
+## Amendment — 2026-11-01: shared workflow connections
+
+A workflow can declare a top-level `connections` map. Each entry contains an app ID and a
+vault connection ID; it never contains the credential itself. App and app-trigger nodes use
+`uses.connectionRef` to name an entry:
+
+```json
+{
+  "connections": {
+    "eventbrite": {
+      "app": "io.w6w.eventbrite",
+      "connection": "conn_account"
+    }
+  },
+  "nodes": [
+    {
+      "id": "find_webhook",
+      "uses": {
+        "app": "io.w6w.eventbrite",
+        "action": "list-webhooks",
+        "connectionRef": "eventbrite"
+      }
+    },
+    {
+      "id": "create_webhook",
+      "uses": {
+        "app": "io.w6w.eventbrite",
+        "action": "create-webhook",
+        "connectionRef": "eventbrite"
+      }
+    }
+  ]
+}
+```
+
+This is additive to manifest version 2. Legacy `uses.connection` IDs remain valid. A node
+must not specify both forms. A reference must name an existing entry for the same app;
+missing references and app mismatches fail validation. An entry's `connection: null` means
+unbound, as with an imported inline connection. Function-reference nodes do not accept
+`connectionRef`.
+
+Bindings resolve from the effective workflow definition before invocation, including node
+tests, trigger registration and remote execution authorization. They do not depend on a
+source node's execution, outputs or location in the graph. Renaming or deleting a node does
+not delete the map entry or break its other consumers. Replays use their workflow snapshot.
+Portable export/import handles each map entry once, preserving its consumers' references.
+
+The editor lifts inline IDs into this map on save without implicitly sharing independent
+selections. Its existing connection picker offers same-app nodes with configured accounts;
+choosing one reuses that node's map entry. An ordinary account selection affects only the
+selected node, allocating an independent entry when necessary. **Change shared connection…**
+is an explicit group edit: replacing that entry's account updates every referencing node.
+The same group update can be made by editing the top-level map in JSON.

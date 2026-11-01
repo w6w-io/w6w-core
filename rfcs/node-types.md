@@ -867,6 +867,172 @@ A host that implements `@w6w/model` MUST:
   **host-only** (`HOST_INTERNAL_APPS`), refusing it on a spoke with an error whose message starts
   `model_unavailable:`, and refusing to ship a workflow containing it to a spoke (`model_step`).
 
+## Amendment — 2026-10-30: the `@w6w/store` host node (F-2)
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change and edits none of the following, which **stand unedited**,
+> superseded in reading by this amendment — identified by link and location rather than reproduced:
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table, which this amendment
+>   extends with one more id;
+> - the [Node kinds](#node-kinds) table's `internal` row, whose examples this amendment extends;
+> - the paragraph under [Non-echo classification](#non-echo-classification) in the 2026-10-24
+>   `@w6w/model` amendment, whose list of apps subject to the secret-echo refusal now also includes
+>   `@w6w/store`.
+>
+> Like the [2026-10-24 `@w6w/model` amendment](#amendment--2026-10-24-the-w6wmodel-host-node-f-3),
+> it has no companion amendment in [`invocation.md`](./invocation.md): the host performs the work.
+
+`@w6w/store` is a new **internal host node**: an `@w6w/*` pseudo-app the platform executes itself to
+read and write **persistent data stores** that outlive a run — key/value entries, documents and table
+rows. Its params are ordinary expression-capable `with` values. Like `@w6w/control`, `@w6w/script`,
+`@w6w/data`, `@w6w/trigger`, `@w6w/call`, `@w6w/document`, `@w6w/template` and `@w6w/model`, it is a
+**host** node with host capabilities — **not** a sandboxed `packages/apps` app. No registered app id
+may begin with `@w6w/`, so `@w6w/store` can never collide with a catalog app.
+
+### Kind & routing
+
+`@w6w/store` slots into the existing tables as an **internal** kind that routes through the one invoke
+seam — there is no parallel code path:
+
+| Kind       | `uses.app`   | Executed by                 | Examples                          |
+| ---------- | ------------ | --------------------------- | --------------------------------- |
+| `internal` | `@w6w/store` | the **host's internal API** | read or write a persistent entry  |
+
+Routing is unchanged: `isInternalApp("@w6w/store")` is `true` (the reserved `@w6w/` prefix), so the
+invoke seam dispatches it to the **host's internal node processor** rather than to the registry.
+
+### Reserved internal pseudo-app
+
+`store` = store NAME in the run's account+project (never an id, never another scope). Ignored if
+present: `scope`, `account`, `project`, `tenant`, `subject`, `input`. Class: **secret-echo** (R-1) — a
+step whose raw `with` reads a vault secret is refused before invoke.
+
+| action | type | params | output |
+|---|---|---|---|
+| `get` | read | `store`*, `key`*, `required` (boolean, default false) | `{ found: true, key, value, version, expiresAt }` · miss: `{ found: false, key }`; miss + `required` ⇒ node error |
+| `set` | perform | `store`*, `key`*, `value`* (json), `ifVersion`, `ttlSeconds` | `{ key, value, version, expiresAt }` (echoes `value`) |
+| `delete` | perform | `store`*, `key`* | `{ key, deleted: boolean }` |
+| `increment` | perform | `store`*, `key`*, `by` (number, default 1) | `{ key, value, version }` |
+| `list` | read | `store`*, `prefix`, `cursor`, `limit` (≤200, default 50) | `{ items: Entry[], nextCursor? }` |
+| `query` | read | `store`*, `where` (json object), `order` (`col`/`-col`), `limit` | `{ items: Entry[] }` |
+| `insert` | perform | `store`*, `row`* (json), `ttlSeconds` | `{ key, value, version }` |
+
+A `*` marks a required param. `Entry` = `{ key, value, version, sizeBytes, expiresAt, createdAt,
+updatedAt }`. `query` and `insert` address **table** stores; `increment` addresses a **kv** store whose
+value type is `number` or `integer`. Node errors are `InternalNodeError` whose message starts with the
+store error code (`data_store_not_found: …`).
+
+### Scope, archive and expiry
+
+- **Scope.** A store belongs to the run's own **account and project**, and is shared by every member
+  and service account of that account — there is no per-subject or per-creator privacy. The host
+  binds the scope; no param moves it, and a host MUST NOT fall back to a default project when the
+  run's project is unavailable.
+- **Archive.** Deleting a store archives it. Its name is free again, and an archived store is not
+  found: a step naming it fails with `data_store_not_found:`. Because a step names a store by NAME,
+  archiving a store and creating a new one under the same name rebinds the step to the new store.
+  Deleting an **entry** (`delete`) is a real delete.
+- **Expiry.** `ttlSeconds` sets an entry's expiry. An entry that has expired is absent to `get`,
+  `list` and `query`, and a write to it restarts at version 1. Expired entries are reclaimed lazily
+  on later writes; there is no background sweep.
+
+### Echo classification
+
+Unlike `@w6w/model`, `@w6w/store` **does copy its parameters into data a run can read back**:
+`set` and `insert` persist their params where every account member can read them, and `get` returns
+them into later step outputs. It is therefore a **secret-echo** app: it is listed in the engine's
+`SECRET_ECHO_APPS` ([Engine RFC](./engine.md)) and is **absent** from the host's
+`NON_ECHO_INTERNAL_APPS`. A step whose raw `with` reads a vault secret is refused before invoke
+(code `param_invalid`, phase `resolution`), exactly as for `@w6w/data`, `@w6w/template` and
+`@w6w/trigger`.
+
+### Spoke refusal
+
+A store needs the host's database, which a **spoke** does not hold. So `@w6w/store` is a **host-only**
+node:
+
+- A host MUST classify the id in `HOST_INTERNAL_APPS` and refuse it on a spoke: a `@w6w/store` step
+  executed on a spoke **fails the step** — never a success carrying an empty or `null` output.
+- A workflow containing a `@w6w/store` step is **not spoke-eligible**: the eligibility report names
+  the reason `store_step`, so the refusal above is the defence in depth, not the normal path.
+
+### Open/closed seam
+
+`@w6w/store` sits on the same open/closed boundary as `@w6w/model`, `@w6w/document` and
+`ctx.invoke` (STRATEGY §5.1). The **contract** — the `@w6w/store` node kind and its reserved id
+constant `STORE_APP` — is declared in the open `@w6w/workflow-types`; the **implementation** (store
+resolution, scope binding, limits and persistence) is provided by the **closed server host**. The
+engine holds only the reserved id and routes to the host.
+
+### Conformance (additive)
+
+A host that implements `@w6w/store` MUST:
+
+- Classify a node whose `uses.app === "@w6w/store"` as an **internal** kind, route it through the one
+  invoke seam to the host's internal node processor, and accept no other execution path.
+- Support exactly the seven actions `get`, `set`, `delete`, `increment`, `list`, `query`,
+  `insert`, and **reject any other** action under this id.
+- Resolve `store` by name within the **run's own account and project**, ignoring any caller-supplied
+  `scope`, `account`, `project`, `tenant`, `subject` or `input`.
+- Treat an archived store as not found (`data_store_not_found:`), and apply expiry as above.
+- Classify the id as **secret-echo** (`SECRET_ECHO_APPS`, absent from `NON_ECHO_INTERNAL_APPS`) and as
+  **host-only** (`HOST_INTERNAL_APPS`), failing the step on a spoke and refusing to ship a workflow
+  containing it to a spoke (`store_step`).
+
+## Amendment — 2026-10-30: app trigger nodes (B-1)
+
+> **Governs where it disagrees.** This amendment supersedes three statements above, and where
+> they disagree this amendment governs; nothing else in this document is edited.
+>
+> 1. Non-Goals, "App-declared triggers and subscription delivery — see `trigger.md`. This RFC adds
+>    only **system** triggers (manual)." — an _app_ trigger is now also expressible as a node
+>    (below). Subscription delivery itself stays in `trigger.md`.
+> 2. "Triggers as nodes", "`Workflow.trigger` field and the trigger node are two views of the same
+>    fact; the field is authoritative for _how a run is launched_ …, the node is its position in
+>    the DAG." — for an **app** trigger node there is no `Workflow.trigger` field to be a second
+>    view: the node IS the trigger, and a workflow may hold several.
+> 3. "Only **manual** is defined here. `schedule` and `event` remain as in `trigger.md`;
+>    app-declared triggers are out of scope." — app-declared triggers are in scope as nodes, per
+>    this amendment.
+
+### Grammar (D-5)
+
+An **app trigger node** is an ordinary app-Action node with one additive marker:
+
+```json
+{ "id": "updated", "uses": { "app": "eventbrite", "action": "event-updated",
+                             "connection": "conn_1", "trigger": true },
+  "with": { "event_id": "123" } }
+```
+
+- `uses.trigger: true` (absent means a plain app Action node). `uses.action` is the **trigger key**
+  the app declares; `with` carries the trigger's params; `uses.connection` is the connection the
+  trigger authenticates with. The `{ function }` arm has no such marker.
+- `classifyNode` yields `"trigger"` for it (before the reserved-`@w6w/` arm), in addition to
+  `@w6w/trigger`. `isTriggerNode` is true for `@w6w/trigger`, `@w6w/webhook`, `@w6w/scheduler`
+  and any `uses.trigger: true` node.
+- Executing it is a **pass-through of the fired event payload** (like `@w6w/webhook`); the host
+  does not invoke the vendor action.
+- **Multiple triggers.** A workflow may hold several trigger nodes of any of these grammars.
+- The **poll interval is not part of the node in v1** (planner ruling P-1): the host's polling
+  cadence is its own concern, not a param of the definition.
+
+### Run start (D-6)
+
+A fire starts the run at the trigger node that fired (`RunSeed.entry`). With `entry` set, only the
+entry node and the nodes reachable from it via edges execute; every other root — trigger-class or
+not — is recorded skipped, and so is every node reachable only from skipped roots; a join reachable
+from the entry still runs. With `entry` absent, every root starts. See the [Engine RFC amendment](./engine.md#amendment--2026-10-30-trigger-entry-run-start-b-1).
+
+**Alternate entries (2026-11-01).** Any step with an entry port may be the target of edges from
+several triggers or several upstream paths — two triggers into one step, or a second path joining
+the first part-way. This qualifies [`ports.in`](#field-reference-stored): only `in: 0` (no entry
+port) binds; `in > 1` is a rendering hint, and an authoring tool must add an inbound edge, never
+replace one. Per run, such a step runs **once**, after its predecessors on the fired path settle;
+predecessors skipped `not_on_path` neither block it nor run it again.
+Subscriptions for app trigger nodes are derived from the saved definition on publish; see the
+[Trigger RFC amendment](./trigger.md#amendment--2026-10-30-trigger-nodes-bind-subscriptions-b-1).
+
 ## Amendment — 2026-10-30: run data in `@w6w/script` — `input` bindings, literal `code`, `digest`
 
 > **Additive.** Qualifies the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table's
@@ -937,3 +1103,78 @@ A host that implements `language: "typescript"` MUST:
   shelling out;
 - run the erased body exactly as a `"javascript"` step would run it;
 - report a syntax error naming the line the author wrote, before running any of the code.
+
+## Amendment — 2026-10-31: `vars`, `consts` and `state` in `@w6w/script`
+
+> **Additive.** Extends the [2026-10-30 run-data amendment](#amendment--2026-10-30-run-data-in-w6wscript--input-bindings-literal-code-digest):
+> `input` stays the bound contract; this adds three read-only names the code sees beside it. No
+> `with` key, scope root or marker form is added.
+
+Step code in every language reads, besides `input` and `digest`:
+
+| Name | Holds | Same value as |
+|---|---|---|
+| `vars` | the run's variables, by name | `{{ var.<name> }}` |
+| `consts` | the account's constants, by name (always `account_id`) | `{{ const.<name> }}` |
+| `state` | `{ nodes, trigger, foreach? }` — upstream step records, the trigger, a For each iteration | `{{ nodes.<id>.output }}`, `{{ trigger.event }}`, `{{ foreach.item }}` |
+
+They are a snapshot taken when the step starts, resolved by the host and handed to the sandbox
+with `input`; the sandbox has no path back to the host, a database or a vault for them. Writing to
+them changes nothing outside the step (JavaScript and TypeScript receive them frozen). A script
+whose code declares a name of its own (`const state = …`) shadows the global and still compiles.
+The engine passes the snapshot on the step's invoke request (`InvokeStepRequest.script`); a host
+running a script outside a run (a single-node test, an ad-hoc invoke, a Function adapter pass)
+builds it from the same values its `{{ }}` resolution reads there.
+
+**An empty Input means `input` is `state`.** When a `run` step's Input binding is empty (no `with.input`,
+or an empty one), the code's `input` is the same `state` snapshot, so a script with no binding still
+reads the upstream records and the trigger. A non-empty binding is unchanged: `input` is exactly what
+it resolves to.
+
+**Secrets never reach these names.** The snapshot is built from an allowlist of roots: `secrets`,
+`documents`, a Function's `inputs`/`output` and credentials are never in it. A host MUST also keep
+sealed secret envelopes out: a var or constant whose value holds one is omitted, and run state that
+holds one fails the step with `sealed_secret_in_state` (phase `resolution`, not retried) before the
+code runs. A script that needs a secret still receives it only through an explicit `input` binding.
+
+### Conformance (additive)
+
+A host that implements `@w6w/script`·`run` MUST give step code `vars`, `consts` and `state` as
+above, in every language it offers, as empty objects (`state.nodes` empty) where no scope exists,
+and MUST apply the sealed-envelope rule. Testably: a step whose code is `return consts.account_id;`
+returns the account id, and a step run with a var whose value is a sealed envelope sees no such key.
+
+## Amendment — 2026-10-31: `disabled` and editor-only `ui` on a node
+
+Additive; existing definitions are unchanged.
+
+- **`disabled?: boolean`** is engine semantics, stored in the definition: `true` means the node never
+  executes in any run (published, triggered, manual or partial). It is recorded `skipped` and its
+  outgoing edges are skipped, so what depends only on it does not run (Engine RFC, 2026-10-31).
+  Absent or `false` runs as before. An editor writes the key only when it is `true`.
+- **`ui?: { paused?: boolean }`** is authoring presentation, like `position`: the engine never reads
+  it. `paused` marks where the editor's ▶ "run from here" stops; the editor sends paused ids as
+  `RunSeed.startFrom.stopAt`. A published or triggered run ignores it.
+
+## Amendment — 2026-11-01: Race joins the first arriving path
+
+`@w6w/race` · `race` is a flow-control node with many incoming connections and one outgoing
+connection. It has no configuration fields. The first **live** incoming edge claims it; skipped,
+disabled and inactive trigger paths do not count. It runs once per workflow execution and passes
+the winning source's output through unchanged as its own output. Its recorded input names that
+source (`{ source: "node_id" }`). With no incoming path it fails with `race_no_arrival`.
+
+The common tail starts without waiting for the remaining inputs. Later arrivals cannot run Race
+or that tail again. Other paths continue under the workflow's existing scheduling, cancellation
+and error policies; Race does not cancel them or suppress their failures. It does not deduplicate
+separate workflow runs. An ordinary join still waits for all its incoming paths to settle.
+
+The engine claims and checkpoints the winning source before completing Race, so resuming an
+interrupted run preserves it. A completed Race is reused on resume. Explicit replay retains the
+usual rule: replaying an ancestor reruns its descendants. In a For each body, the claim belongs to
+one iteration and resets for the next; the winning tail runs before the remaining body paths.
+
+Race uses the shared control-node canvas card, a multiple-input handle and one output handle.
+It appears under Controls. Its editor explains the behavior; a standalone action Test is not
+offered because arrival selection requires the workflow graph. The host validates the action via
+the normal internal invocation seam, while the engine owns arrival selection and forwarding.

@@ -1,64 +1,33 @@
 name: CI
 
+# Every check lives in scripts/verify.sh, which the pre-push hook (w6w-io/w6w
+# .githooks/pre-push) also runs, so a push that passes locally passes here. The job id
+# `verify` is the required-check context branch protection names on every w6w-io repo.
+
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Every packages/*/ holding both manifests must carry one version; a drift
-      # fails publish-types.yml's release verify job only after the tag is cut.
-      - name: package.json and deno.json versions agree
-        run: |
-          rc=0
-          for d in packages/*/; do
-            if [ ! -f "$d/package.json" ] || [ ! -f "$d/deno.json" ]; then
-              continue
-            fi
-            p=$(jq -r .version "$d/package.json")
-            n=$(jq -r .version "$d/deno.json")
-            if [ "$p" != "$n" ]; then
-              echo "::error::$d package.json $p != deno.json $n"
-              rc=1
-            else
-              echo "ok $d $p"
-            fi
-          done
-          exit $rc
+        with:
+          path: core
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      # `npm test` runs the root package.json test script (deno test).
-      - run: npm test
-
-  # publish-expr.yml's build + tarball smoke, on every push and PR. Its file list is checked
-  # against what the build emits, so a new source module that the list misses fails here
-  # instead of failing the publish after the expr-v… release is cut.
-  expr-pack:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/expr
-    steps:
-      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - run: npm run build
-      - name: Pack smoke (tarball contents + ESM/require from a scratch consumer)
-        run: bash scripts/pack-smoke.sh
-      # npm refuses even a dry run over a version it already has, so skip once it is published.
-      - name: Dry-run publish
-        run: |
-          VER="$(node -p "require('./package.json').version")"
-          if npm view "@w6w/expr@$VER" version >/dev/null 2>&1; then
-            echo "::notice::@w6w/expr@$VER is already on npm — dry-run publish skipped"
-          else
-            npm publish --dry-run
-          fi
+      - run: bash core/scripts/verify.sh
