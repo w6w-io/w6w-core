@@ -24,6 +24,8 @@ dist/src/jsonlogic.d.ts
 dist/src/jsonlogic.js
 dist/src/param-when.d.ts
 dist/src/param-when.js
+dist/src/state-tree.d.ts
+dist/src/state-tree.js
 dist/src/template.d.ts
 dist/src/template.js
 package.json"

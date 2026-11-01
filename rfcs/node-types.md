@@ -1178,3 +1178,50 @@ Race uses the shared control-node canvas card, a multiple-input handle and one o
 It appears under Controls. Its editor explains the behavior; a standalone action Test is not
 offered because arrival selection requires the workflow graph. The host validates the action via
 the normal internal invocation seam, while the engine owns arrival selection and forwarding.
+
+## Amendment — 2026-11-01: `run` and `state` in `@w6w/script`
+
+> **Additive.** Refines the [2026-10-31 amendment](#amendment--2026-10-31-vars-consts-and-state-in-w6wscript)
+> for the run state tree of the [Workflow RFC amendment of this date](./workflow.md#amendment--2026-11-01-the-run-state-tree-workflowinitialstate-nodestate).
+> The name `state` there held `{ nodes, trigger, foreach? }`; that object keeps its contents under a
+> new name, and `state` now holds the tree. No sentence of that amendment is edited. Where this section
+> and it disagree, this one governs, namely its `state` row and its empty-Input sentence.
+
+Step code in every language reads these names, besides `input` and `digest`:
+
+| Name | Holds | Same value as |
+|---|---|---|
+| `run` | `{ nodes, trigger, foreach? }`: upstream step records, the trigger, a For each iteration (the object `state` held before) | `{{ nodes.<id>.output }}`, `{{ trigger.event }}`, `{{ foreach.item }}` |
+| `state` | the run state tree | `{{ state.<path> }}` |
+| `vars` | the same tree view as `state` | `{{ var.<name> }}` |
+
+- **`state` and `vars` are one view.** They are the same object, a snapshot of the run state tree as
+  the step reads it (its ancestors' writes folded over the seed), taken when the step starts and
+  frozen for JavaScript and TypeScript. Writing to them changes nothing outside the step; a step
+  writes to the tree only through its own `Node.state`.
+- **A deprecated read alias for one release.** `state.nodes`, `state.trigger` and `state.foreach` read
+  `run.nodes`, `run.trigger` and `run.foreach`, **only where the tree has no own key of that name**
+  (the tree wins). The alias is deprecated: new code reads `run.*`, and editors do not offer the alias.
+  A static write to a top-level `nodes`, `trigger` or `foreach` key draws a plan-time warning because
+  of it.
+- **An empty Input means `input` is `run`.** When a `run` step's Input binding is empty, the code's
+  `input` is the same `run` snapshot, so a script with no binding still reads the upstream records and
+  the trigger. This supersedes the 2026-10-31 amendment's sentence "An empty Input means `input` is
+  `state`", which the earlier text keeps for the object it then called `state`. A non-empty binding is
+  unchanged.
+- **Sealed envelopes.** A sealed secret envelope anywhere in `run` refuses the step with
+  `sealed_secret_in_state` (phase `resolution`, not retried) before the code runs. The tree holds none
+  (the engine writes `__stored__` in its place), but a tree a host seeded from elsewhere might: in
+  the tree exposed as `vars`/`state`, sealed keys are **dropped**, not refused. That preserves the
+  2026-10-31 conformance line that a step run with a var whose value is a sealed envelope sees no
+  such key.
+
+### Conformance (additive)
+
+A host that implements `@w6w/script`·`run` MUST give step code `run`, `state` and `vars` as above, in
+every language it offers, as empty objects where no scope exists. Testably: a step whose code is
+`return run.nodes.a.output;` returns step `a`'s output; a step with an empty Input and the code
+`return input.trigger;` returns the trigger; `return state.nodes` returns `run.nodes` when the tree
+has no `nodes` key and the tree's own value when it has one; a step run with a var whose value is a
+sealed envelope sees no such key in `vars` or `state`, while a sealed envelope inside `run` fails the
+step with `sealed_secret_in_state`.
