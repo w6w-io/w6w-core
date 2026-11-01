@@ -554,3 +554,69 @@ unconditional Stop workflow) and a `"done"` edge to `after`: item 1 skips `count
 runs `count` and then stops the run, item 3 never runs, and `after` is `skipped`. Over `[1, 3, 5]`,
 `after` runs exactly once, after the third item, whether its edge is `"done"` or unrouted.
 Reference tests: `w6w-workflow` `tests/foreach_ports_test.ts`.
+
+## Amendment — 2026-11-01: applying writes to the run state tree
+
+> **Additive.** Specifies when and in what order the engine applies `Node.state` writes to the run
+> state tree defined in the [Workflow RFC amendment of this date](./workflow.md#amendment--2026-11-01-the-run-state-tree-workflowinitialstate-nodestate),
+> what a node reads, and what is persisted. It supersedes Conformance item 6's root list ("`vars`,
+> `steps`, and `trigger`") by reference: item 6 is read as also populating `state`, see
+> [Conformance](#conformance). No earlier sentence is edited.
+
+- **Order is the plan's, never the clock's.** A node's writes are applied in the order of its rank,
+  its index in `plan.order`; within a node, in op order (the mode's row order). The same writes land in
+  the same order whatever the completion timing of concurrent branches. Ties in rank do not exist: the
+  order is total.
+- **A node's read view.** What `{{ state.x }}` (and `var`, `vars`) returns inside a node is the seed
+  tree with the writes of that node's **succeeded ancestors** folded in, in rank order. A write by a
+  node that is not an ancestor (a concurrent sibling, a later node) is invisible to it.
+- **Race.** A `@w6w/race` node's read view is the winning (first-arriving) input's ancestors' writes,
+  and the nodes after it read the same view plus the Race's own record. Paths that lost the race
+  contribute nothing to what the tail reads, even though their own writes still land in the final
+  tree.
+- **`foreach`.** A body step's ops are hoisted onto the `foreach` node's record, ordered by item index
+  and then by body order (the body's topological order when it has body edges), and are recorded **only
+  when the `foreach` succeeds**. Within an iteration a body step reads the tree plus the writes of
+  earlier items and earlier steps of its own item. A retried body step writes once.
+- **Parallel control.** For a `@w6w/control` `parallel`, branch ops apply in branch declaration order,
+  then step order within a branch, whatever order the branches finish in.
+- **Concurrency is a plan-time warning.** Two writers are concurrent iff neither is an ancestor of the
+  other and they sit on different outgoing edges below one `fanOut: "parallel"` node, or in different
+  `branches` of one `parallel` (or race) control. The engine reports a `state_parallel_write` warning
+  naming both nodes and the shorter of the two overlapping paths, and `state_reserved_key` for a static
+  write to `nodes`, `trigger` or `foreach` at the top level. Distinct entry triggers, and converging
+  trigger paths, never warn, and a plan with no parallel fan-out is sequential. The warnings do not
+  fail the plan. `packages/expr/tests/fixtures/state-write-conflicts.json` is the shared table.
+- **Who writes.** A failed node, a skipped node and a node whose output is `undefined` write nothing; a
+  node that fails and takes an error edge writes nothing. A retried node writes once, from its
+  successful attempt. In a [partial run](#amendment--2026-10-31-partial-runs-from-one-node-startfrom-and-disabled-nodes),
+  the stand-in outputs for the nodes upstream of `startFrom` (recorded or pinned sample outputs) write
+  to the tree exactly as real outputs do, in rank order, so the run starts from the state the full run
+  would have reached.
+- **Persistence.** Each `NodeExecution.stateWrites` holds the node's computed ops after the secret strip
+  and the caps, warn ops (a skipped write and its warning code) included. `RunStatePatch.state` carries
+  the folded tree and `RunStatePatch.stateLog` the write log (one row per change or warning, from a
+  base row `seq: 0` that holds the seed, capped by `logRows` and `logChars`) on every checkpoint whose
+  node added ops and at a terminal or suspended status. The seed keys that came from project
+  variables and that no write touched are **not** persisted, which keeps the persisted tree to what
+  the run itself chose. `RunState.state` is persisted only when the workflow has `initialState` or at
+  least one node whose effective state config is not `off`; otherwise no `state` is persisted or
+  returned.
+- **Resume.** A resumed run rebuilds the tree, and every read view, from the persisted
+  `stateWrites` of its succeeded nodes, in rank order. It ignores the persisted `state` snapshot (that
+  is for readers), so a node that is re-run after a crash never writes twice.
+
+### Conformance (additive)
+
+**Determinism.** For a workflow and a set of node outputs, the final tree and the write log are the
+same whatever order concurrent branches finish in. Testably: a parallel fan-out whose two children
+write the same key leaves the key the later child's value in `plan.order`, in 100 runs with random
+branch latencies.
+
+**Replay equivalence.** The tree a resumed run rebuilds from `stateWrites` equals the tree the live
+run had folded at that point. Testably: interrupt a run after each node in turn, resume it, and compare
+the final tree and log with an uninterrupted run; no `append` is applied twice.
+
+An engine that populates `state` beside `vars`, `steps` and `trigger` as Conformance item 6 and the
+[Workflow RFC amendment](./workflow.md#amendment--2026-11-01-the-run-state-tree-workflowinitialstate-nodestate)
+describe conforms; the root list of item 6 is read as ending with `state`.

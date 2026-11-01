@@ -1670,3 +1670,100 @@ choosing one reuses that node's map entry. An ordinary account selection affects
 selected node, allocating an independent entry when necessary. **Change shared connection…**
 is an explicit group edit: replacing that entry's account updates every referencing node.
 The same group update can be made by editing the top-level map in JSON.
+
+## Amendment — 2026-11-01: the run state tree (`Workflow.initialState`, `Node.state`)
+
+> **Additive.** Adds one run-scoped JSON object that steps write to and every later step reads, and
+> makes its name, `state`, a twelfth expression root. Every site that enumerates or counts the
+> closed root list is read under this amendment as also holding `state`; **none of them is
+> edited**: [Goals](#goals) ("a shared **run scope** (`vars`, `steps`, `trigger`)"), the `RunScope`
+> block under [Expression markers](#expression-markers), the [Conformance](#conformance)
+> *Expression scope* bullet, [Run-scope roots](#run-scope-roots) with its closing sentence, the
+> [2026-08-14 rule](#amendment--2026-08-14-root-anchored-template-strings-in-with-values) (item 3's
+> list, and every "eight" that counts it: items 3 and 4, the resolution clause and the closed-set
+> clause of its conformance list), the 2026-08-20 sentence "one of the eight run-scope roots" and its
+> chain-operand twin, the closed-set bullet of the 2026-10-29 `var`/`const` amendment, and
+> `engine.md` Conformance item 6. Each is read as incomplete rather than exhaustive, extended by
+> this section, which governs where they disagree.
+
+**One name.** "The run state tree" (or "the tree") is the only name for the new object. It is not the
+`state` global a `@w6w/script` step used to see (that was `{ nodes, trigger, foreach? }`, now `run`;
+see the `node-types.md` amendment of this date), not `startState`/`endState` (a control node's
+position hints), and not the `RunState` run record (the checkpointed record of a run's steps). The
+tree is data the author chose to keep; `RunState` is the engine's own bookkeeping.
+
+- **The twelfth root.** The closed root set is the eleven names of the 2026-10-29 amendment plus
+  `state`: `var`, `vars`, `state`, `const`, `nodes`, `steps`, `trigger`, `secrets`, `documents`,
+  `inputs`, `output` and `foreach`. A `{{ state.x }}` string in a `with` value that was a vendor
+  placeholder left literal before this amendment now resolves, exactly as `{{ var.x }}` does;
+  `{{ state }}` with nothing after the root, and an unrooted `{{ x }}`, are unchanged.
+- **`var`, `vars` and `state` are one object.** All three names read the same tree, so
+  `{{ state.x }}` and `{{ var.x }}` return the same value at the same moment. Nothing writes to it by
+  naming a root: the only writer is `Node.state`. `RunState.variables` keeps the values the caller
+  supplied, unchanged, and is not the tree.
+- **Seed layering.** The tree a run starts with is built in this order, a later layer winning a key
+  collision: the project variables the host already supplies as `var`; then `Workflow.initialState`;
+  then the workflow's and the caller's variable values. `Workflow.initialState` is an optional
+  **literal JSON object** (no `{{ }}` markers are evaluated in it), at most `initialChars` serialized
+  characters, with the same key, depth and forbidden-key rules as a write. A host MUST refuse a
+  document whose `initialState` breaks them, at load time, with the same message an engine's planner
+  gives.
+- **`Node.state`.** An optional field on a node that chooses what its output writes to the tree.
+  `mode` is one of five, with a wire name and an editor label:
+
+  | `mode` | Editor label | Writes |
+  |---|---|---|
+  | `off` | Off | nothing |
+  | `root` | Merge at root | the output, which must be an object, merged into the tree |
+  | `key` | Under a key | the whole output at the dotted path `key` (`"order.id"` is `order` then `id`) |
+  | `pick` | Pick fields | each `map` row `{ from, to }` in order: the value at dotted path `from` (`""` is the whole output; a number indexes an array) at dotted path `to` |
+  | `append` | Append | the value at `from` (default the whole output) added to the array at dotted path `path` |
+
+  An absent `Node.state` means `off`, **except** that an `@w6w/data` `set` step with no `state`
+  behaves as `root`; an explicit `{ "mode": "off" }` turns that off. A path segment in a write is
+  always an object key, never an array index. A `from` reads own properties only.
+- **Merge rules.** Writing an object to a path whose current value is an object merges one level:
+  each key of the written object replaces that key, a nested object replaces the whole old value, and
+  arrays replace. A key whose written value is `null` is deleted, and writing `null` to a path
+  deletes the path, so **a literal `null` cannot be stored**. Merging at the root a value that is not
+  an object, or appending to a path that holds a non-array, writes nothing and records a warning.
+  Example: tree `{"foo":"foofoo"}` then a `root` write of `{"foo":"bar"}` gives `{"foo":"bar"}`;
+  from the same start, an `Under a key` write of `{"foo":"bar"}` at `node-2` gives
+  `{"foo":"foofoo","node-2":{"foo":"bar"}}`.
+- **Limits.** Fixed constants, measured as `JSON.stringify` length in UTF-16 units, with no operator
+  or environment setting. They are exported as `STATE_LIMITS` by `@w6w/expr`:
+
+  | `STATE_LIMITS` key | Value | Bounds |
+  |---|---|---|
+  | `writeChars` | 65536 | one write |
+  | `runChars` | 1048576 | the whole tree |
+  | `initialChars` | 65536 | `Workflow.initialState` |
+  | `depth` | 32 | a written path's segments plus the value's nesting |
+  | `keyLength` | 128 | any object key or path segment |
+  | `logRows` | 1000 | rows in the run's write log |
+  | `logChars` | 4194304 | cumulative serialized size of those rows |
+
+  A write over a cap is **skipped**, a warning is recorded on the step, and the run continues. The
+  log stops at `logRows` or `logChars`, whichever comes first, with one final truncation marker.
+- **Secrets.** A sealed secret envelope in a value that would enter the tree is replaced by the
+  string `__stored__` (the redaction marker the run log already uses) before the caps are applied; the
+  tree never holds one. A whole output that is an envelope is therefore a string, and `root` refuses it.
+- **Refused keys.** `__proto__`, `constructor` and `prototype` are refused as a key at any depth of a
+  written value and as a path segment. The write is skipped with a warning. A reader of the tree MUST
+  create properties as own data properties.
+- **Reserved names are warnings.** A static write to a top-level key named `nodes`, `trigger` or
+  `foreach` is accepted but draws a plan-time warning, because the Script `state` alias reads those
+  names from the run record unless the tree has its own.
+- **Concurrent writers are warnings.** A host SHOULD warn when two steps that can run concurrently
+  write overlapping paths (see `engine.md`); the later write in the engine's fixed order wins and the
+  document is still valid.
+
+### Conformance (additive)
+
+A host that implements this section MUST: accept `state` as the twelfth root, resolving to the same
+object `var` does; apply the five modes and the merge rules above, so the first example gives
+`{"foo":"bar"}` and `{"foo":"foofoo","node-2":{"foo":"bar"}}`; refuse a write over any `STATE_LIMITS`
+cap without failing the run; replace envelopes with `__stored__`; and never let a `__proto__` key
+reach an object's prototype. The shared reference is `@w6w/expr`'s `src/state-tree.ts`, and
+`packages/expr/tests/fixtures/state-write-conflicts.json` is the shared table for the concurrent-writer
+warnings.

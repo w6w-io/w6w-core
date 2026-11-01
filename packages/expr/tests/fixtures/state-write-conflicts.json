@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "C1 sequential chain, both write key x",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c1",
+        "name": "c1",
+        "nodes": [
+          {
+            "id": "a",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }]
+      },
+      "expect": []
+    },
+    {
+      "name": "C2 two triggers converging, both write key order",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c2",
+        "name": "c2",
+        "nodes": [
+          {
+            "id": "t1",
+            "uses": { "app": "eventbrite", "action": "event-updated", "trigger": true }
+          },
+          {
+            "id": "t2",
+            "uses": { "app": "eventbrite", "action": "event-updated", "trigger": true }
+          },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "order" }
+          }
+        ],
+        "edges": [{ "from": "t1", "to": "b" }, { "from": "t2", "to": "b" }]
+      },
+      "expect": []
+    },
+    {
+      "name": "C3 parallel fan-out, both children write key x",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c3",
+        "name": "c3",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": [{ "code": "state_parallel_write", "nodes": ["b", "c"], "path": ["x"] }]
+    },
+    {
+      "name": "C4 parallel fan-out, children write x and y",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c4",
+        "name": "c4",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "y" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": []
+    },
+    {
+      "name": "C5 parallel fan-out, key order vs pick to order.id",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c5",
+        "name": "c5",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "order" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "pick", "map": [{ "from": "id", "to": "order.id" }] }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": [{ "code": "state_parallel_write", "nodes": ["b", "c"], "path": ["order"] }]
+    },
+    {
+      "name": "C6 parallel fan-out, root vs key",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c6",
+        "name": "c6",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          { "id": "b", "uses": { "app": "acme", "action": "run" }, "state": { "mode": "root" } },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": [{ "code": "state_parallel_write", "nodes": ["b", "c"], "path": [] }]
+    },
+    {
+      "name": "C7 control parallel branches both write key x",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c7",
+        "name": "c7",
+        "nodes": [
+          {
+            "id": "a",
+            "uses": { "app": "@w6w/control", "action": "parallel" },
+            "with": { "branches": [["b"], ["c"]] }
+          },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          }
+        ],
+        "edges": []
+      },
+      "expect": [{ "code": "state_parallel_write", "nodes": ["b", "c"], "path": ["x"] }]
+    },
+    {
+      "name": "C8 parallel children where c descends from b",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c8",
+        "name": "c8",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" },
+            "ports": { "in": "many" }
+          }
+        ],
+        "edges": [
+          { "from": "a", "to": "b" },
+          { "from": "a", "to": "c" },
+          { "from": "b", "to": "c" }
+        ]
+      },
+      "expect": []
+    },
+    {
+      "name": "C9 static key nodes is reserved",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c9",
+        "name": "c9",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          {
+            "id": "b",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "nodes" }
+          },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "y" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": [{ "code": "state_reserved_key", "nodes": ["b"], "path": ["nodes"] }]
+    },
+    {
+      "name": "C10 data set defaults to root, parallel to a key writer",
+      "workflow": {
+        "manifestVersion": "2",
+        "id": "c10",
+        "name": "c10",
+        "nodes": [
+          { "id": "a", "uses": { "app": "acme", "action": "run" }, "fanOut": "parallel" },
+          { "id": "b", "uses": { "app": "@w6w/data", "action": "set" } },
+          {
+            "id": "c",
+            "uses": { "app": "acme", "action": "run" },
+            "state": { "mode": "key", "key": "x" }
+          }
+        ],
+        "edges": [{ "from": "a", "to": "b" }, { "from": "a", "to": "c" }]
+      },
+      "expect": [{ "code": "state_parallel_write", "nodes": ["b", "c"], "path": [] }]
+    }
+  ]
+}
