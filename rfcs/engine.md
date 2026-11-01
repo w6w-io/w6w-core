@@ -528,3 +528,29 @@ executes A, B and J, records T1 `succeeded` with the supplied output and skips C
 `gate→odd (route "false")`, `even→join`, `odd→join`, where `gate` is `if item is even`: items 1 and 3
 run `odd` then `join`, item 2 runs `even` then `join`, and each iteration records the untaken step
 `skipped`. Reference tests: `w6w-workflow` `tests/foreach_branching_body_test.ts`.
+
+## Amendment — 2026-11-01: a `foreach`'s ports as edge routes
+
+> Qualifies the 2026-10-31 amendment's **Body edges** sentence ("no edge … links the `foreach` to
+> its own body"). An editor draws a `foreach` with two exits, **Each item** and **Done**; an edge
+> that leaves one without naming it cannot be told apart from the other by any reader.
+
+- **`route: "each"`.** An edge from a `foreach` to `body[0]` with `route: "each"` names the Each item
+  port. It restates `with.body[0]` and is not a main-graph edge: it never enters the topological
+  order. An `"each"` edge to any other step, or with `when: "error"`, is a `PlanError`. `with.body`
+  stays the authority on what the body is; the edge is optional.
+- **`route: "done"`.** A main-graph success edge from a `foreach` with `route: "done"` names the Done
+  port: its target runs once, after every iteration has finished. An unrouted success edge from a
+  `foreach`, the shape saved before this amendment, is read as Done too. Any other `route` on an edge
+  leaving a `foreach` is a `PlanError`.
+- **Unchanged.** A Stop workflow in the body ends the loop and the run: no later item runs and
+  nothing on Done runs, and the run's output is `{ stopped: true }`. In a body with no body edges, a
+  false `if` skips the rest of the body for that item.
+
+### Conformance (additive)
+
+A `foreach` over `[1, 2, 3]` with body `[gate, count, stop]` (`gate` is `if item = 2`, `stop` an
+unconditional Stop workflow) and a `"done"` edge to `after`: item 1 skips `count` and `stop`, item 2
+runs `count` and then stops the run, item 3 never runs, and `after` is `skipped`. Over `[1, 3, 5]`,
+`after` runs exactly once, after the third item, whether its edge is `"done"` or unrouted.
+Reference tests: `w6w-workflow` `tests/foreach_ports_test.ts`.
