@@ -61,10 +61,28 @@ retain their existing digest format. Source map paths remain relative to the app
 Written in both modes; `apps` sorted by id then version, `failures` by path. It holds no absolute
 paths, so two runs into different out dirs are byte-identical.
 
+## Output warnings
+
+A build also checks each action's and trigger's declared `output` and warns — it **never fails the
+build**, and the exit code is unchanged (`0` on a warnings-only build):
+
+- **no `output`** — the key is absent. `output: []` (deliberately returns nothing) and
+  `{ source }` (a dynamic output) do not warn.
+- **`items` on a non-array field** — an output field (at any nesting depth) declares `items` while
+  its `type` is not `"array"`.
+- **`sample` does not match `output`** — the `sample` lacks a declared key or has a different type
+  (compared with `compareOutputShape` from `@w6w/types`; one level of `items`). Extra sample keys
+  and an absent `sample` do not warn.
+
+`buildApp` returns them in `warnings` (absent when there are none). The CLI prints exactly one
+stderr line per app with warnings, giving the app path and the counts of actions and triggers
+without output, of samples not matching their output and of `items` on a non-array field.
+`index.json` carries no warnings.
+
 ## Exit codes
 
 `0` all built · `1` any build failure (one stderr line per failure: `<path>: <code>: <message>`; the
-other apps still build) · `2` usage error.
+other apps still build; warnings never change it) · `2` usage error.
 
 ## Refusal codes
 
