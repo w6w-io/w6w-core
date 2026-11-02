@@ -25,6 +25,24 @@ Deno.test("boolean and/or short-circuit to the deciding value", () => {
   assertEquals(evaluate({ "!!": [""] }), false);
 });
 
+Deno.test("xor is true when exactly one argument is truthy (0/1/2/3 true)", () => {
+  assertEquals(evaluate({ xor: [false, 0, ""] }), false);
+  assertEquals(evaluate({ xor: [false, "x", 0] }), true);
+  assertEquals(evaluate({ xor: [1, "x", false] }), false);
+  assertEquals(evaluate({ xor: [1, "x", true] }), false);
+  assertEquals(evaluate({ xor: [[], [1]] }), true); // JSONLogic truthiness
+  // Comparisons as rows, the shape the condition builder writes.
+  const rows = {
+    xor: [{ "==": [{ var: "a" }, 1] }, { "==": [{ var: "b" }, 1] }, { "==": [{ var: "c" }, 1] }],
+  };
+  assertEquals(evaluate(rows, { a: 0, b: 0, c: 0 }), false);
+  assertEquals(evaluate(rows, { a: 0, b: 1, c: 0 }), true);
+  assertEquals(evaluate(rows, { a: 1, b: 1, c: 0 }), false);
+  assertEquals(evaluate(rows, { a: 1, b: 1, c: 1 }), false);
+  assertEquals(showIf({ xor: [true] }), true);
+  assertEquals(showIf({ xor: [] }), false);
+});
+
 Deno.test("?? coalesces only null/undefined — never isTruthy, unlike or", () => {
   // The wrong-thing-tree-A fixture: `??` implemented with isTruthy would keep 0's fallback
   // ("10"); the correct predicate keeps 0 itself.
