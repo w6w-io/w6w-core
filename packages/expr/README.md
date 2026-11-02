@@ -36,7 +36,9 @@ showIf({ "!": { var: "advanced" } }, { advanced: false }); // true
 
 `var`, `missing` · `==` `===` `!=` `!==` · `<` `<=` `>` `>=` (with the chained "between" form, e.g.
 `{ "<": [1, x, 10] }`) · `and` `or` `!` `!!` · `if` / `?:` (elseif chains) · `in` (string or array)
-· `+` `-` `*` `/` `%` · `??` — absent-coalescing (`null`/absent only — `0`, `""`, `false` are kept).
+· `+` `-` `*` `/` `%` · `??` — absent-coalescing (`null`/absent only — `0`, `""`, `false` are kept)
+· `xor` — exactly one argument truthy (not in JSONLogic; always a boolean, every argument
+evaluated).
 
 Unknown operators throw `ExprError`. JSONLogic truthiness applies (an empty array is falsy). `??` is
 the one exception: it never uses truthiness, only a `null`/`undefined` check.

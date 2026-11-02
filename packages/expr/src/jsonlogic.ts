@@ -7,6 +7,10 @@
  * (in)equality + ordering comparisons (with chained "between" form), boolean
  * and/or/!/!! , if/elseif, in, and basic arithmetic. Unknown operators throw.
  *
+ * One operator is ours, not JSONLogic's: `xor` — true when EXACTLY ONE argument is truthy
+ * (JSONLogic has no exclusive or). It is what the condition builder's "Exactly one of"
+ * compiles to.
+ *
  * Reference: https://jsonlogic.com/operations.html
  */
 
@@ -110,6 +114,13 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
         if (isTruthy(cur)) return cur;
       }
       return cur;
+    }
+    case "xor": {
+      // Exactly one truthy argument. Every argument is evaluated (no short-circuit): the
+      // answer depends on all of them. Always a boolean, unlike and/or.
+      let truthy = 0;
+      for (const a of args) if (isTruthy(evaluate(a, data))) truthy++;
+      return truthy === 1;
     }
     case "??": {
       // Mirrors "or" verbatim except the predicate: keeps 0/""/false/[] — only null/undefined
