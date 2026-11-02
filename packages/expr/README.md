@@ -1,8 +1,8 @@
 # @w6w/expr
 
-The platform's **expression engine** — a [JSONLogic](https://jsonlogic.com) evaluator. Used for
-Param `showIf` visibility (and, later, output→input mapping in workflows). JSONLogic was chosen over
-a bespoke mini-language in the ROADMAP.
+The platform's **expression engine** — a [JSONLogic](https://jsonlogic.com) evaluator used for Param
+`showIf` visibility and workflow expressions. Editors can compile readable conditions into JSONLogic
+with the authoring helpers below.
 
 Part of the [`core`](https://github.com/w6w-io/w6w-core#readme) workspace.
 
@@ -64,6 +64,25 @@ any operand begins `secrets.`; see
 amendment for the full grammar.
 
 ## API
+
+Editors can accept readable conditions and compile them to the existing JSONLogic format:
+
+```ts
+import { formatReadableExpression, parseReadableExpression } from "@w6w/expr";
+
+const rule = parseReadableExpression('state.source == "eventbrite" && state.enabled');
+evaluate(rule, { state: { source: "eventbrite", enabled: true } }); // true
+formatReadableExpression(rule); // '(state.source == "eventbrite") && state.enabled'
+```
+
+The authoring syntax supports `==`, `!=`, `===`, `!==`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `??`, `!`,
+parentheses, dotted field paths and quoted strings/numbers/booleans/null. It does not execute
+JavaScript or allow function calls. An optional reference resolver expands an editor's short field
+names. Invalid input throws `ReadableExpressionError` with a character position. The formatter
+returns `null` for legacy JSONLogic outside this subset.
+
+This is an editor compiler; workflow manifests still store JSONLogic expressions or their
+`{{ =<jsonlogic> }}` template form. The runtime template grammar remains unchanged.
 
 | Export                  | Purpose                                                     |
 | ----------------------- | ----------------------------------------------------------- |
