@@ -7,6 +7,9 @@ All notable changes to `@w6w/expr` are documented here. The format follows
 
 ### Added
 
+- `includes`, `include-any`, and `include-all` membership operators for condition builders and
+  workflow expressions. `in` retains its existing behavior.
+
 - The run state tree: `computeStateWrites`, `applyStateOp`, `foldState`, `foldStateLog`,
   `validateStateConfig`, `validateInitialState`, `effectiveStateConfig`, `staticWritePaths`,
   `statePathsOverlap`, `parseStatePath`, the `STATE_LIMITS` / `STATE_FORBIDDEN_KEYS` /

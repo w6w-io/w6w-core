@@ -1814,3 +1814,22 @@ warnings.
   fresh run resolved rather than re-resolve it against documents that may have changed since (or
   that its seed no longer carries). A host does this by handing the engine `RunState.stateSeed`,
   the `new` of that `seq` 0 row, on load; without one the engine re-resolves.
+
+## Amendment — 2026-11-02: JSON parameter customization
+
+An Action's `with` may contain a reserved `$merge` entry: an authored JSON object or an
+expression that resolves to an object. Resolve the ordinary form parameters first, then resolve
+`$merge` once and shallow-merge its keys over them. The overlay adds absent parameters and replaces
+present ones, including `false`, `0`, empty strings and `null`. Nested objects and arrays replace
+whole values; this is not a deep merge. Normal action parameter validation still applies.
+
+For example, `with: { currency: "USD", $merge: "{{ state.event }}" }` reuses the same state object
+in multiple steps while retaining per-step form parameters. Form values remain authored separately
+so removing the customization restores them. `$merge` is consumed before invoking the action and
+cannot itself be supplied by the overlay. A non-object result is an error, not an empty overlay.
+
+References inside an authored overlay resolve normally; the contents of an object obtained from
+a reference remain data and are never interpreted a second time. Literal source parameters (such
+as Run script's `code`) retain their literal semantics. Recorded parameters reflect the merged
+result, with the existing secret redaction rules. Editors must indicate active customization even
+when the ordinary parameter form is selected.

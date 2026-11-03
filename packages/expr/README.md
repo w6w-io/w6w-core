@@ -37,11 +37,27 @@ showIf({ "!": { var: "advanced" } }, { advanced: false }); // true
 `var`, `missing` · `==` `===` `!=` `!==` · `<` `<=` `>` `>=` (with the chained "between" form, e.g.
 `{ "<": [1, x, 10] }`) · `and` `or` `!` `!!` · `if` / `?:` (elseif chains) · `in` (string or array)
 · `+` `-` `*` `/` `%` · `??` — absent-coalescing (`null`/absent only — `0`, `""`, `false` are kept)
-· `xor` — exactly one argument truthy (not in JSONLogic; always a boolean, every argument
-evaluated).
+· `xor` — exactly one argument truthy (not in JSONLogic; always a boolean, every argument evaluated)
+· `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons).
 
 Unknown operators throw `ExprError`. JSONLogic truthiness applies (an empty array is falsy). `??` is
 the one exception: it never uses truthiness, only a `null`/`undefined` check.
+
+### Membership and array comparisons
+
+| Operator      | Meaning                                                 | Example that returns `true`                                   |
+| ------------- | ------------------------------------------------------- | ------------------------------------------------------------- |
+| `in`          | The right array contains the left value.                | `{ "in": ["email", ["name", "email"]] }`                      |
+| `includes`    | The left array contains the right value.                | `{ "includes": [["name", "email"], "email"] }`                |
+| `include-any` | The arrays share at least one value.                    | `{ "include-any": [["name", "email"], ["email", "status"]] }` |
+| `include-all` | The left array contains every value in the right array. | `{ "include-all": [["name", "email"], ["email"]] }`           |
+
+Both operands can be expressions, such as `{ "var": "trigger.event.changedFields" }`. Array
+membership uses JavaScript `includes` equality, without type coercion (`1` differs from `"1"`);
+objects compare by identity. Order and duplicate values do not affect array containment. An empty
+right array makes `include-all` true and `include-any` false. Both return false when either operand
+is not an array. `in` and `includes` also support substring checks on strings. The three new
+operators are platform extensions to JSONLogic.
 
 ## The `{{ }}` template grammar's infix fallback chain
 

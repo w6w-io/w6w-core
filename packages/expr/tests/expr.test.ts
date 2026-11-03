@@ -133,3 +133,45 @@ Deno.test("var: an own property named like a prototype member still reads", () =
   assertEquals(evaluate({ var: "constructor" }, { constructor: 1 }), 1);
   assertEquals(evaluate({ var: "a.toString" }, { a: { toString: "t" } }), "t");
 });
+
+Deno.test("includes reverses in without coercing array member types", () => {
+  for (
+    const [haystack, needle, expected] of [
+      [["a", "b"], "b", true],
+      [["a", "b"], "c", false],
+      [[1], "1", false],
+      [[false, null, 0], false, true],
+      [[], "a", false],
+      [null, "a", false],
+      ["hello", "ell", true],
+    ] as const
+  ) {
+    assertEquals(evaluate({ includes: [haystack, needle] }), expected);
+    assertEquals(evaluate({ in: [needle, haystack] }), expected);
+  }
+});
+
+Deno.test("array overlap and containment resolve both operands with strict membership", () => {
+  for (
+    const [left, right, any, all] of [
+      [["a", "b"], ["b", "c"], true, false],
+      [["a", "b"], ["b", "a"], true, true],
+      [["a"], ["b"], false, false],
+      [[1], ["1"], false, false],
+      [[false, null, 0], [null, 0], true, true],
+      [["a"], ["a", "a"], true, true],
+      [["a"], [], false, true],
+      [[], [], false, true],
+      [[], ["a"], false, false],
+      [null, [], false, false],
+      [["a"], "a", false, false],
+      ["a", ["a"], false, false],
+    ] as const
+  ) {
+    const data = { trigger: { event: { changedFields: left } }, wanted: right };
+    const operands = [{ var: "trigger.event.changedFields" }, { var: "wanted" }];
+    assertEquals(evaluate({ "include-any": operands }, data), any);
+    assertEquals(evaluate({ "include-all": operands }, data), all);
+  }
+  assertEquals(evaluate({ "include-all": [["a"], { var: "missing" }] }), false);
+});

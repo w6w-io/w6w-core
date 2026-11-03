@@ -5,9 +5,11 @@
  *
  * Implements the operators `showIf` realistically needs: var/missing, the
  * (in)equality + ordering comparisons (with chained "between" form), boolean
- * and/or/!/!! , if/elseif, in, and basic arithmetic. Unknown operators throw.
+ * and/or/!/!! , if/elseif, membership and array comparisons, and basic arithmetic.
+ * Unknown operators throw.
  *
- * One operator is ours, not JSONLogic's: `xor` — true when EXACTLY ONE argument is truthy
+ * Extensions include `includes` (reverse `in`), `include-any` / `include-all` (array
+ * overlap / containment), and `xor` — true when EXACTLY ONE argument is truthy
  * (JSONLogic has no exclusive or). It is what the condition builder's "Exactly one of"
  * compiles to.
  *
@@ -141,12 +143,24 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
       return args.length % 2 ? evaluate(args[args.length - 1], data) : null;
     }
 
-    case "in": {
-      const needle = evaluate(args[0], data);
-      const hay = evaluate(args[1], data);
+    case "in":
+    case "includes": {
+      const left = evaluate(args[0], data);
+      const right = evaluate(args[1], data);
+      const needle = op === "in" ? left : right;
+      const hay = op === "in" ? right : left;
       if (typeof hay === "string") return hay.includes(String(needle));
       if (Array.isArray(hay)) return hay.includes(needle);
       return false;
+    }
+
+    case "include-any":
+    case "include-all": {
+      const left = evaluate(args[0], data);
+      const right = evaluate(args[1], data);
+      if (!Array.isArray(left) || !Array.isArray(right)) return false;
+      const contains = (value: unknown) => left.includes(value);
+      return op === "include-any" ? right.some(contains) : right.every(contains);
     }
 
     case "+":
