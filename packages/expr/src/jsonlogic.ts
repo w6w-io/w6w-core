@@ -5,7 +5,13 @@
  *
  * Implements the operators `showIf` realistically needs: var/missing, the
  * (in)equality + ordering comparisons (with chained "between" form), boolean
- * and/or/!/!! , if/elseif, in, and basic arithmetic. Unknown operators throw.
+ * and/or/!/!! , if/elseif, membership and array comparisons, and basic arithmetic.
+ * Unknown operators throw.
+ *
+ * Extensions include `includes` (reverse `in`), `include-any` / `include-all` (array
+ * overlap / containment), and `xor` — true when EXACTLY ONE argument is truthy
+ * (JSONLogic has no exclusive or). It is what the condition builder's "Exactly one of"
+ * compiles to.
  *
  * Reference: https://jsonlogic.com/operations.html
  */
@@ -111,6 +117,13 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
       }
       return cur;
     }
+    case "xor": {
+      // Exactly one truthy argument. Every argument is evaluated (no short-circuit): the
+      // answer depends on all of them. Always a boolean, unlike and/or.
+      let truthy = 0;
+      for (const a of args) if (isTruthy(evaluate(a, data))) truthy++;
+      return truthy === 1;
+    }
     case "??": {
       // Mirrors "or" verbatim except the predicate: keeps 0/""/false/[] — only null/undefined
       // are treated as absent. Never isTruthy.
@@ -130,12 +143,24 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
       return args.length % 2 ? evaluate(args[args.length - 1], data) : null;
     }
 
-    case "in": {
-      const needle = evaluate(args[0], data);
-      const hay = evaluate(args[1], data);
+    case "in":
+    case "includes": {
+      const left = evaluate(args[0], data);
+      const right = evaluate(args[1], data);
+      const needle = op === "in" ? left : right;
+      const hay = op === "in" ? right : left;
       if (typeof hay === "string") return hay.includes(String(needle));
       if (Array.isArray(hay)) return hay.includes(needle);
       return false;
+    }
+
+    case "include-any":
+    case "include-all": {
+      const left = evaluate(args[0], data);
+      const right = evaluate(args[1], data);
+      if (!Array.isArray(left) || !Array.isArray(right)) return false;
+      const contains = (value: unknown) => left.includes(value);
+      return op === "include-any" ? right.some(contains) : right.every(contains);
     }
 
     case "+":

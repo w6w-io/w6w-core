@@ -25,6 +25,24 @@ Deno.test("boolean and/or short-circuit to the deciding value", () => {
   assertEquals(evaluate({ "!!": [""] }), false);
 });
 
+Deno.test("xor is true when exactly one argument is truthy (0/1/2/3 true)", () => {
+  assertEquals(evaluate({ xor: [false, 0, ""] }), false);
+  assertEquals(evaluate({ xor: [false, "x", 0] }), true);
+  assertEquals(evaluate({ xor: [1, "x", false] }), false);
+  assertEquals(evaluate({ xor: [1, "x", true] }), false);
+  assertEquals(evaluate({ xor: [[], [1]] }), true); // JSONLogic truthiness
+  // Comparisons as rows, the shape the condition builder writes.
+  const rows = {
+    xor: [{ "==": [{ var: "a" }, 1] }, { "==": [{ var: "b" }, 1] }, { "==": [{ var: "c" }, 1] }],
+  };
+  assertEquals(evaluate(rows, { a: 0, b: 0, c: 0 }), false);
+  assertEquals(evaluate(rows, { a: 0, b: 1, c: 0 }), true);
+  assertEquals(evaluate(rows, { a: 1, b: 1, c: 0 }), false);
+  assertEquals(evaluate(rows, { a: 1, b: 1, c: 1 }), false);
+  assertEquals(showIf({ xor: [true] }), true);
+  assertEquals(showIf({ xor: [] }), false);
+});
+
 Deno.test("?? coalesces only null/undefined — never isTruthy, unlike or", () => {
   // The wrong-thing-tree-A fixture: `??` implemented with isTruthy would keep 0's fallback
   // ("10"); the correct predicate keeps 0 itself.
@@ -114,4 +132,46 @@ Deno.test("var: prototype members are refused like a missing key", () => {
 Deno.test("var: an own property named like a prototype member still reads", () => {
   assertEquals(evaluate({ var: "constructor" }, { constructor: 1 }), 1);
   assertEquals(evaluate({ var: "a.toString" }, { a: { toString: "t" } }), "t");
+});
+
+Deno.test("includes reverses in without coercing array member types", () => {
+  for (
+    const [haystack, needle, expected] of [
+      [["a", "b"], "b", true],
+      [["a", "b"], "c", false],
+      [[1], "1", false],
+      [[false, null, 0], false, true],
+      [[], "a", false],
+      [null, "a", false],
+      ["hello", "ell", true],
+    ] as const
+  ) {
+    assertEquals(evaluate({ includes: [haystack, needle] }), expected);
+    assertEquals(evaluate({ in: [needle, haystack] }), expected);
+  }
+});
+
+Deno.test("array overlap and containment resolve both operands with strict membership", () => {
+  for (
+    const [left, right, any, all] of [
+      [["a", "b"], ["b", "c"], true, false],
+      [["a", "b"], ["b", "a"], true, true],
+      [["a"], ["b"], false, false],
+      [[1], ["1"], false, false],
+      [[false, null, 0], [null, 0], true, true],
+      [["a"], ["a", "a"], true, true],
+      [["a"], [], false, true],
+      [[], [], false, true],
+      [[], ["a"], false, false],
+      [null, [], false, false],
+      [["a"], "a", false, false],
+      ["a", ["a"], false, false],
+    ] as const
+  ) {
+    const data = { trigger: { event: { changedFields: left } }, wanted: right };
+    const operands = [{ var: "trigger.event.changedFields" }, { var: "wanted" }];
+    assertEquals(evaluate({ "include-any": operands }, data), any);
+    assertEquals(evaluate({ "include-all": operands }, data), all);
+  }
+  assertEquals(evaluate({ "include-all": [["a"], { var: "missing" }] }), false);
 });

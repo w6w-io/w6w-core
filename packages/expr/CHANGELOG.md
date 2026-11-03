@@ -3,9 +3,12 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.2]
 
 ### Added
+
+- `includes`, `include-any`, and `include-all` membership operators for condition builders and
+  workflow expressions. `in` retains its existing behavior.
 
 - The run state tree: `computeStateWrites`, `applyStateOp`, `foldState`, `foldStateLog`,
   `validateStateConfig`, `validateInitialState`, `effectiveStateConfig`, `staticWritePaths`,

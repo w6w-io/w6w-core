@@ -1225,3 +1225,18 @@ every language it offers, as empty objects where no scope exists. Testably: a st
 has no `nodes` key and the tree's own value when it has one; a step run with a var whose value is a
 sealed envelope sees no such key in `vars` or `state`, while a sealed envelope inside `run` fails the
 step with `sealed_secret_in_state`.
+
+## Amendment — 2026-11-02: Data / Update object
+
+`@w6w/data` action `update` accepts `object` (required JSON object) and `vars` (an object of
+changes or the same typed key/value rows as Data / Set). It returns a copy of the starting object
+with the specified fields added or replaced; the original object is unchanged. Row values are
+resolved before execution, as with Set.
+
+Field names may be dot paths, such as `address.city`. Missing or null intermediate objects are
+created. Traversing a scalar or array, an empty path segment, or `__proto__`, `prototype` or
+`constructor` is an error. Set an array as a whole field to replace it. Values including `null`,
+`false` and zero are preserved. Unmentioned fields remain intact.
+
+The updated object is the step output. Unlike Set's legacy default, Update does not automatically
+write to the state root; the existing **Write to state** setting can store it at a chosen state key.
