@@ -530,3 +530,72 @@ Additive. Stacks after the trigger-node amendment above and changes none of it.
 - **`sample` is the demo event.** It is the example normalized event the editor shows before any
   event has arrived, layered below a real event and a persisted test shape for values; keys merge and
   are never hidden, per the same amendment. It should match `output`.
+
+## Amendment — 2026-11-09: raw body and challenge replies
+
+> Additive. This amendment widens the `handleIngest` result. Every place above that says
+> `handleIngest` returns an array of events now also admits the object form
+> `{ events, response? }` defined below; a plain array keeps its meaning unchanged:
+>
+> - "Converts raw input into zero or more normalized events." (the `handleIngest` bullet under "Concept", line 47)
+> - "`ingest` calls the trigger's `handleIngest`, which returns 0..N normalized events." (Concept step 3, line 55)
+> - "Called by the transport adapter with raw input. Returns normalized events." (the `handleIngest` row, line 131)
+> - `}) => Promise<Event[]>;                  // 0..N normalized events` and "Returning `[]` means …" (`### handleIngest`, lines 243 and 246)
+> - "`handleIngest` returns 0..N events; the adapter commits the offset only after `ingest` commits." (Kafka, line 338)
+> - "the trigger's `handleIngest` typically returns `[{ firedAt }]` unchanged." (Cron, line 343)
+> - `) => E[] | Promise<E[]>;` (`HandleIngestHook`, under "Signatures", line 429)
+>
+> The HTTPS adapter's "Response: 200 on successful commit" is likewise widened: when `response` is
+> returned and valid, the listener answers with it instead of `{ ok, eventIds }`.
+
+### Raw body
+
+`TriggerCall` gains `rawBody?: string`: the request body text as the host read it, before
+any JSON parse, so a signature over the vendor's bytes can be verified (re-serialising `body`
+does not reproduce them). It is the **UTF-8 text decode** of the received bytes, not the bytes
+themselves: a leading byte-order mark is stripped and each invalid byte sequence becomes U+FFFD.
+For a well-formed UTF-8 body without a BOM it is character-for-character what was sent; for any
+other body a signature computed over the original bytes will not match, so verification fails
+closed. It is set on the **unmasked** call handed to `handleIngest`, for any
+method other than GET and HEAD. It is **absent** from the stored, masked copy (`trigger_events.raw`,
+the run's `trigger.event`): the body is already stored once, as `body`.
+
+### Challenge reply
+
+```ts
+type IngestResponse = {
+  status?: number;                  // default 200
+  headers?: Record<string, string>;
+  body?: string;
+};
+type HandleIngestResult<E> = E[] | { events: E[]; response?: IngestResponse };
+```
+
+`events` is persisted exactly as an array result would be. When `response` is present the HTTPS
+listener answers the delivery with it instead of `{ ok, eventIds }`; this is what a vendor
+challenge handshake needs (a Slack `url_verification` echo, a `hub.challenge` GET reply, an echoed
+`X-Hook-Secret`). The reply is attacker-reachable on the public API host, so the host honours it
+only inside an allow-list:
+
+- `status`: absent (`undefined`), or an integer from 200 to 299 other than 204 and 205. Those two
+  are null-body statuses the listener cannot send, so they are refused rather than approximated.
+  An explicit `null`, or any non-number, is refused; only absence selects the default.
+- Header names: `content-type`, or a name matching `^x-[a-z0-9-]{1,64}$`, matched
+  case-insensitively and sent lower-cased. No other header (never `set-cookie`, `location`,
+  `content-length` and the like). A name given twice (after lower-casing) is refused, and at most
+  16 headers are allowed. Within `x-*`, names that steer the proxy in front of the API are
+  refused: `x-accel-*`, `x-sendfile`, `x-lighttpd-*`, `x-envoy-*`, `x-forwarded-*` and
+  `x-real-ip`. A `content-type` value is `text/plain` or `application/json`, optionally followed
+  by `; charset=utf-8`. `headers` must be a plain object (absent, or `undefined`, for none).
+- Header values: strings of at most 1024 characters made of tab, printable ASCII and Latin-1
+  (U+0080 to U+00FF); no CR, LF, NUL or other control character.
+- `body`: a string of at most 4096 UTF-8 bytes (absent for none; `null` is refused).
+- `response` itself: a plain object with only the keys `status`, `headers` and `body`; any other
+  key is refused.
+
+The reply always carries `x-content-type-options: nosniff`, and `content-type` defaults to
+`text/plain; charset=utf-8`. A `response` that breaks any rule is handled like a parser throw: one
+`failed` row is recorded and the listener answers the default `{ ok, eventIds }` acknowledgement.
+It is never partially honoured. A hook that wants to reject a delivery still throws.
+
+State writes from `handleIngest` are not part of this amendment: `nextState` is a `poll` result only.

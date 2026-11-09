@@ -28,6 +28,22 @@ const wh: TriggerDefinition = {
   },
 };
 
+/** Challenge form: the object result `{ events, response }` and `rawBody`, crossing the sandbox. */
+const ch: TriggerDefinition = {
+  key: "ch",
+  title: "Challenge",
+  handleIngest({ raw }) {
+    return {
+      events: [],
+      response: {
+        status: 200,
+        headers: { "x-hook-secret": raw.query.challenge ?? "none" },
+        body: raw.rawBody ?? "",
+      },
+    };
+  },
+};
+
 /** Poll form: a counter cursor the host persists between checks. */
 const pl: TriggerDefinition = {
   key: "pl",
@@ -42,4 +58,4 @@ const pl: TriggerDefinition = {
   },
 };
 
-export default { triggers: [wh, pl] } satisfies AppDefinition;
+export default { triggers: [wh, ch, pl] } satisfies AppDefinition;
