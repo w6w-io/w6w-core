@@ -291,19 +291,44 @@ export type TriggerCall = {
   query: Record<string, string>;
   headers: Record<string, string>;
   body: unknown;
+  /**
+   * The request body text exactly as the host read it (before any JSON parse), so a signature
+   * over the vendor's bytes can be verified. Present ONLY on the unmasked call handed to
+   * `handleIngest`, and only for a method other than GET/HEAD; never on the stored, masked copy.
+   */
+  rawBody?: string;
 };
+
+/**
+ * What `handleIngest` may ask the host to answer the delivery with, instead of the default
+ * `{ ok, eventIds }` acknowledgement — for a vendor challenge handshake (Slack `url_verification`,
+ * `hub.challenge`, an echoed `X-Hook-Secret`). The host honours it only inside a fixed allow-list:
+ * `status` absent or an integer 200-299; header names `content-type` (`text/plain` or
+ * `application/json`, optional `; charset=utf-8`) or `x-*`, values at most 1024 chars with no
+ * CR/LF; `body` a string of at most 4096 UTF-8 bytes. Anything else is treated as a parser throw
+ * (one `failed` row, the default acknowledgement) — never partially honoured.
+ */
+export type IngestResponse = {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
+/** A plain event array (today's behaviour) or events plus a reply for the delivery. */
+export type HandleIngestResult<E = unknown> = E[] | { events: E[]; response?: IngestResponse };
 
 /**
  * Trigger `handleIngest` — the ingest parser. Converts the whole inbound call
  * (method, path, query, headers, body) into zero or more normalized events the
  * host persists and dispatches to subscribed workflows. Returning `[]`
  * acknowledges the delivery but produces nothing to dispatch — the right choice
- * for pings and duplicates. Optional: without it the call body is the event.
+ * for pings and duplicates. Optional: without it the call body is the event. May instead return
+ * `{ events, response }` to answer the delivery itself (see `IngestResponse`).
  */
 export type HandleIngestHook<P = Record<string, unknown>, S = unknown, E = unknown> = (
   input: { raw: TriggerCall; params: P; state: S; subscriptionId: string },
   ctx: HookContext,
-) => E[] | Promise<E[]>;
+) => HandleIngestResult<E> | Promise<HandleIngestResult<E>>;
 
 /**
  * Trigger `poll` — one check of a poll trigger. Returns the new events and,
