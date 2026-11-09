@@ -127,6 +127,27 @@ Deno.test("(g) handleIngest on wh: array body fans out, query.fail rejects", asy
   assertEquals(masked[0].sawAuth, false);
 });
 
+Deno.test("(g2) handleIngest may return { events, response } and see rawBody; it crosses intact", async () => {
+  const app = await loadApp(FIXTURE);
+  const raw: TriggerCall = {
+    method: "POST",
+    path: "/triggers/webhooks/s",
+    query: { challenge: "zz" },
+    headers: {},
+    body: { a: 1 },
+    rawBody: '{ "a" :1 }',
+  };
+  const out = await invokeTriggerHook(app, {
+    triggerKey: "ch",
+    hook: "handleIngest",
+    input: { raw, params: {}, state: null, subscriptionId: "s" },
+  });
+  assertEquals(out, {
+    events: [],
+    response: { status: 200, headers: { "x-hook-secret": "zz" }, body: '{ "a" :1 }' },
+  });
+});
+
 Deno.test("(h) types: handleIngest raw is a TriggerCall; poll needs no handleIngest", () => {
   const ingest: HandleIngestHook = ({ raw }) => [raw.method];
   const def: TriggerDefinition = {
@@ -134,7 +155,8 @@ Deno.test("(h) types: handleIngest raw is a TriggerCall; poll needs no handleIng
     title: "P",
     poll: () => ({ events: [] }),
   };
-  assert(typeof ingest === "function");
+  const withReply: HandleIngestHook = () => ({ events: [], response: { body: "ok" } });
+  assert(typeof ingest === "function" && typeof withReply === "function");
   assertEquals(def.handleIngest, undefined);
   assertEquals([...TRIGGER_HOOK_KINDS], [
     "onSubscribe",

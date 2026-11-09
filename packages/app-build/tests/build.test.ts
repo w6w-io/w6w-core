@@ -5,7 +5,7 @@
  */
 import { assert, assertEquals, assertNotEquals } from "jsr:@std/assert@^1.0.0";
 import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
-import { describeApp, describeExec } from "@w6w/runtime";
+import { describeApp, describeExec, resolveSharedRoots } from "@w6w/runtime";
 import { type ModelProviderMeta, parseAppArtifactManifest, verifySha256 } from "@w6w/types";
 import { buildApp, computeSourceDigest } from "../mod.ts";
 
@@ -62,7 +62,14 @@ for (const name of SIX) {
 
         const code = new TextDecoder().decode(js);
         const fromExec = await describeExec(code);
-        const fromSource = await describeApp(join(appDir, "index.ts"), appDir);
+        // Same scope the loader grants: the app dir plus its declared shared roots. Shared roots
+        // come back realpath'd, so describe through the realpath'd app dir too (APPS may be a symlink).
+        const realDir = await Deno.realPath(appDir);
+        const shared = await resolveSharedRoots(realDir);
+        const fromSource = await describeApp(
+          join(realDir, "index.ts"),
+          shared.length ? [realDir, ...shared] : realDir,
+        );
         assertEquals(fromExec, fromSource);
 
         assertEquals(r.digestVersion, 2);
