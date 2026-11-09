@@ -16,6 +16,7 @@ export {
   parseReadableExpression,
   ReadableExpressionError,
 } from "./src/readable.ts";
+export { normalizeRefPath } from "./src/ref-path.ts";
 export {
   type CoalesceChain,
   coalesceOperandRefs,

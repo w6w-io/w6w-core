@@ -3,6 +3,15 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3]
+
+### Added
+
+- `normalizeRefPath`: a reference path may write an array item or key in brackets —
+  `messages[0].id`, `user["name"]`, `user['name']` — and reads as the dot form (`messages.0.id`).
+  `{{ }}` markers, `||`/`??` fallback chains and JSONLogic `var` all accept it, and a parsed
+  template serializes back in dot form. A quoted key holding `.`, `{` or `}` is left as written.
+
 ## [0.1.2]
 
 ### Added

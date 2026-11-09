@@ -36,6 +36,8 @@
  * `w6w-core` tree present, so it silently breaks every other consumer.
  */
 
+import { normalizeRefPath } from "./ref-path.ts";
+
 interface ExprPart {
   kind: "text" | "var" | "secret" | "expr" | "render";
   value?: string;
@@ -150,7 +152,7 @@ function chainOperandValue(trimmed: string): unknown {
       // Malformed despite looking primitive (e.g. an unterminated quote) — treat as a path.
     }
   }
-  return { var: trimmed };
+  return { var: normalizeRefPath(trimmed) };
 }
 
 /**
@@ -206,7 +208,7 @@ function innerToPart(inner: string, mode: TemplateMode): ExprPart {
   if (mode === "editor" && inner.startsWith(SECRET_PREFIX)) {
     return { kind: "secret", ref: inner.slice(SECRET_PREFIX.length) };
   }
-  return { kind: "var", ref: inner };
+  return { kind: "var", ref: normalizeRefPath(inner) };
 }
 
 /** `true` if, skipping leading whitespace from `start`, the next char is `=` — the expr arm. */
