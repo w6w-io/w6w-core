@@ -16,6 +16,8 @@
  * Reference: https://jsonlogic.com/operations.html
  */
 
+import { normalizeRefPath } from "./ref-path.ts";
+
 export class ExprError extends Error {
   constructor(message: string) {
     super(message);
@@ -31,7 +33,7 @@ export function isTruthy(v: unknown): boolean {
 
 function getVar(data: unknown, path: unknown, fallback: unknown): unknown {
   if (path === "" || path === null || path === undefined) return data;
-  const parts = String(path).split(".");
+  const parts = normalizeRefPath(String(path)).split(".");
   let cur: unknown = data;
   for (const part of parts) {
     if (cur === null || cur === undefined) return fallback ?? null;

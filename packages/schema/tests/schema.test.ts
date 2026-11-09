@@ -51,6 +51,7 @@ const AUTH_KEYS: Record<keyof Auth, true> = {
   description: true,
   connectionLabel: true,
   fields: true,
+  setup: true,
   oauth2: true,
   apiKey: true,
   tenantAuth: true,

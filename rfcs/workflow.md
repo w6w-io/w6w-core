@@ -251,6 +251,8 @@ Values in a step's `with` block, and by extension anywhere the model accepts exp
 
 The two-marker form keeps a literal object unambiguous from an expression — the engine never has to guess whether `{ "==": [...] }` is data or logic.
 
+A path is `.`-separated, and an array item is a numeric segment (`items.0.title`). A `{{ }}` marker or a JSONLogic `var` may also write a segment in brackets — `items[0].title`, `user["name"]` — which reads as the dot form (and the editor saves it that way). A quoted key that itself holds `.`, `{` or `}` has no dot form and stays unaddressable by path.
+
 The **run scope** is:
 
 ```ts

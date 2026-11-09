@@ -26,6 +26,8 @@ dist/src/param-when.d.ts
 dist/src/param-when.js
 dist/src/readable.d.ts
 dist/src/readable.js
+dist/src/ref-path.d.ts
+dist/src/ref-path.js
 dist/src/state-tree.d.ts
 dist/src/state-tree.js
 dist/src/template.d.ts

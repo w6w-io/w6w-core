@@ -152,6 +152,15 @@ export interface ServiceAccountConfig {
  * they're code, a Connection references its method by `key`. Backport to the
  * Auth RFC.
  */
+/**
+ * One step of "where do I get this?" shown above an auth's form: plain text, and optionally the
+ * vendor page where the user does it. `url` is https only.
+ */
+export interface AuthSetupStep {
+  text: string;
+  url?: string;
+}
+
 export interface Auth {
   /** Machine name. Unique within the App. Referenced by `Connection.auth`. */
   key: string;
@@ -162,6 +171,8 @@ export interface Auth {
   connectionLabel?: string;
   /** Inputs collected from the user at connect time. */
   fields?: Param[];
+  /** Where the user gets what `fields` ask for, in order — e.g. the vendor's key page. */
+  setup?: AuthSetupStep[];
   oauth2?: OAuth2Config;
   apiKey?: ApiKeyConfig;
   tenantAuth?: TenantAuthConfig;
