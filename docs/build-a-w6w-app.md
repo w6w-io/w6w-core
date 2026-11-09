@@ -239,14 +239,8 @@ const serviceAccount: AuthDefinition = {
   type: "serviceAccount",
   displayName: "Service account",
   fields: [ // the credential-source input: by convention exactly one field
-    {
-      key: "serviceAccountKey",
-      label: "Service account key",
-      type: "json",
-      secret: true,
-      required: true,
-      ui: "textarea",
-    },
+    { key: "serviceAccountKey", label: "Service account key", type: "json", secret: true,
+      required: true, ui: "textarea" },
   ],
   serviceAccount: {
     accepts: ["google-service-account.v1"], // the contract ids you take
@@ -270,10 +264,10 @@ const serviceAccount: AuthDefinition = {
 export default serviceAccount;
 ```
 
-`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the
-Connection's non-secret `binding` and `credentialDisplay` (such as the service-account email), never
-key material. A host that supplies no credential resolver refuses a `serviceAccount` auth with
-`provider_unsupported`. See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
+`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the Connection's
+non-secret `binding` and `credentialDisplay` (such as the service-account email), never key material.
+A host that supplies no credential resolver refuses a `serviceAccount` auth with `provider_unsupported`.
+See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
 [`fixtures/apps/service-account`](../fixtures/apps/service-account/).
 
 ## `HookContext` (`ctx`) — the ambient API
@@ -353,31 +347,33 @@ Commands (from the template):
 
 ## Health checks
 
-An App may declare probes a host runs to answer "is this working?": vendor status, credential
-liveness, quota headroom. `Auth.test` already covers the credential case and is derived into that
-surface automatically, so **nothing is required of you today** — adding a `service` or `quota` check
-is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
+An App may declare probes a host runs to answer "is this working?": vendor status,
+credential liveness, quota headroom. `Auth.test` already covers the credential case and is
+derived into that surface automatically, so **nothing is required of you today** — adding a
+`service` or `quota` check is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
 
 Four things to know:
 
-- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs a scope
-  the credential may legitimately lack reports a working App as broken. Prefer a dedicated ping
-  (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the cheapest read available.
-- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must not be
-  added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook allowlist via
-  `network.allow`, honoured only for an unsigned posture.
-- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no hook is
-  a first-class answer, and a better one than a silent gap. Give it `severity: "informational"`, or
-  the permanent `unknown` it reports will pin your App's verdict there forever.
-- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it with
-  `feed` and the host fetches and parses it for you:
+- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
+  a scope the credential may legitimately lack reports a working App as broken. Prefer a
+  dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
+  cheapest read available.
+- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
+  not be added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook
+  allowlist via `network.allow`, honoured only for an unsigned posture.
+- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no
+  hook is a first-class answer, and a better one than a silent gap. Give it
+  `severity: "informational"`, or the permanent `unknown` it reports will pin your App's
+  verdict there forever.
+- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it
+  with `feed` and the host fetches and parses it for you:
 
   ```ts
   const service: HealthCheckDefinition = {
     key: "service",
     title: "Platform status",
     kind: "service",
-    feed: { url: "https://status.example.com/feed.rss" }, // host fetches + parses
+    feed: { url: "https://status.example.com/feed.rss" },   // host fetches + parses
 
     check({ feed }, _ctx) {
       if (feed?.error) return { state: "unknown", message: feed.error };
@@ -389,11 +385,11 @@ Four things to know:
   };
   ```
 
-  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current state**:
-  most vendors emit one entry per _update_, so the newest entry for a resolved incident still
-  carries that incident's original title, and judging by it reports an outage that ended days ago.
-  `latest` is the host's fold to one entry per incident. The feed's host is allowlisted implicitly,
-  so do not restate it in `network.allow`.
+  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current
+  state**: most vendors emit one entry per *update*, so the newest entry for a resolved
+  incident still carries that incident's original title, and judging by it reports an
+  outage that ended days ago. `latest` is the host's fold to one entry per incident.
+  The feed's host is allowlisted implicitly, so do not restate it in `network.allow`.
 
 ## Triggers
 
@@ -411,12 +407,13 @@ forms, and the loader derives which (`type`) from the hooks you declare:
 
 Either form may add `parseOutput`, which reshapes a stored event into the run's `trigger.event`.
 That is five hooks in all: `onSubscribe`, `onUnsubscribe`, `handleIngest`, `poll`, `parseOutput`.
+
 **Ship triggers.** When the vendor exposes events (webhooks) or a newest-first list, the app ships
 triggers; the only exception is a vendor with neither, and then the README records why. Read
 [`rfcs/trigger.md`](../rfcs/trigger.md) first. (The starter templates carry no trigger; add yours.)
 
 - **Poll** — use the poll kit at `apps/_shared/poll/mod.ts`: `pollFromListAction` turns an existing
-  list/search action into a "New <record>" trigger, `pollSnapshot` diffs a table-like source
+  list/search action into a `New <record>` trigger, `pollSnapshot` diffs a table-like source
   (added/updated/removed), and `pollToken` follows a vendor change token or cursor. They own the
   versioned cursor `state`, first-check seeding (no events on the first tick) and dedupe.
 - **Webhook** — use the webhook kit at `apps/_shared/webhook/` (signature verification) and mirror
@@ -446,9 +443,8 @@ triggers; the only exception is a vendor with neither, and then the README recor
 - RFCs: [app](../rfcs/app.md) · [action](../rfcs/action.md) · [auth](../rfcs/auth.md) ·
   [param](../rfcs/param.md) · [connection](../rfcs/connection.md) ·
   [invocation](../rfcs/invocation.md) · [hook-runtime](../rfcs/hook-runtime.md) ·
-  [credential](../rfcs/credential.md) · [categories](../rfcs/categories.md) ·
-  [trigger](../rfcs/trigger.md)
+  [credential](../rfcs/credential.md) ·
+  [categories](../rfcs/categories.md) · [trigger](../rfcs/trigger.md)
 - Working examples: [`fixtures/apps/hello`](../fixtures/apps/hello/) (no-auth) ·
   [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign) ·
-  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived
-  token)
+  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived token)
