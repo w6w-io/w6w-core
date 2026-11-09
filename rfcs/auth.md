@@ -289,6 +289,7 @@ Hooks make these first-class instead of workarounds.
 | `description`     | string                | ⬜       | Short explanation for the connect screen.                                                       |
 | `connectionLabel` | string (template)     | ⬜       | Template rendered with variables set by `afterConnect` to label saved connections.              |
 | `fields`          | [Param](./param.md)[] | ⬜       | Inputs collected from the user at connect time.                                                 |
+| `setup`           | object[]              | ⬜       | Where to get what `fields` ask for: ordered `{ text, url? }` steps, `url` https only. Display-only. |
 | `hooks`           | object                | ⬜       | Lifecycle hooks (see Lifecycle table). `test` is required within this block.                    |
 
 > **Amended 2026-10-27:** the `type` enum has eight members, adding `serviceAccount`, and the `serviceAccount` block is defined in the amendment — see [§Amendment — 2026-10-27](#amendment--2026-10-27-serviceaccount-strict-auth-keys-and-refined-opacity).

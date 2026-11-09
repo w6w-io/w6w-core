@@ -47,7 +47,10 @@ const MESSAGES = {
   no_scopes: "No approved scopes for this authorization.",
   egress_failed: "Token exchange could not reach the token endpoint.",
   upstream_transient: "Token exchange failed upstream; retry later.",
-  delegation: "Delegation was rejected for the requested user.",
+  delegation:
+    "Google refused domain-wide delegation for this service account. In the Google Admin console, open Security → API controls → Domain-wide delegation and check that this key's Client ID is listed with exactly the scopes shown here. A new or edited entry can take a few minutes to apply.",
+  delegated_user:
+    "Google does not recognise the user to act as. Use an email address of an active user in your Google Workspace domain.",
   rejected: "Token exchange was rejected.",
   malformed: "Token exchange returned an invalid response.",
 } as const;
@@ -205,8 +208,11 @@ async function deriveAuthorization(i: {
     const err = isObject(body) ? body.error : undefined;
     const details: CredentialErrorDetails = { retryable: false, status };
     if (typeof err === "string" && OAUTH_ERRORS.has(err)) details.oauthError = err;
-    if (sent && status >= 400 && (err === "unauthorized_client" || err === "invalid_grant")) {
+    if (sent && status >= 400 && err === "unauthorized_client") {
       return fail("delegation_rejected", "delegation", details);
+    }
+    if (sent && status >= 400 && err === "invalid_grant") {
+      return fail("delegation_rejected", "delegated_user", details);
     }
     return fail("credential_invalid", "rejected", details);
   }
