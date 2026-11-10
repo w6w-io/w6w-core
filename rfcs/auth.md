@@ -167,6 +167,8 @@ manifests are standalone files. There is no `id`; the App references Auth files 
 }
 ```
 
+> **Amended 2026-11-10:** a `bearer` auth like this one (one secret field), an `apiKey` auth with one secret field, and a `basic` auth whose two fields carry `credentialRole` accept a shared credential of a static contract; the host derives that as `accepts` — see [§Amendment — 2026-11-10](#amendment--2026-11-10-host-derived-accepts).
+
 ### Tenant Auth
 
 ```json
@@ -442,6 +444,8 @@ provider's contract, never to the app. `Auth.fields` remain the **credential-sou
 `required: true`, `ui: "textarea"`). `bindingFields` are collected per Connection and stored on the
 binding, never with the source.
 
+> **Amended 2026-11-10:** only `serviceAccount` auths *declare* `accepts`. A `bearer`, `apiKey` or `basic` auth also takes a managed credential, with `accepts` derived by the host — see [§Amendment — 2026-11-10](#amendment--2026-11-10-host-derived-accepts).
+
 **The type list.** `Auth.type` is one of the eight members of `AUTH_TYPES` (`@w6w/types`), in
 canonical order: `oauth2`, `apiKey`, `basic`, `bearer`, `custom`, `tenantAuth`, `jit`,
 `serviceAccount`. The Concept's list of seven and the Field reference `type` enum are read as these
@@ -459,3 +463,29 @@ A runtime that is given **no credential resolver** MUST fail a `serviceAccount` 
 `provider_unsupported`, for preparation, for every auth hook it would run, and for health: the
 stored source must never reach `sign`. That is why the in-core refresh path never serves a
 `serviceAccount` auth (see [Credential RFC §Resolution](./credential.md#resolution)).
+
+## Amendment — 2026-11-10: host-derived `accepts`
+
+> **Additive.** It qualifies the Amendment 2026-10-27 statements that a credential is managed only for
+> a `serviceAccount` auth and that an auth names its contracts in `serviceAccount.accepts`. Neither
+> is edited: a `serviceAccount` auth still declares `accepts`, and the other types still use the
+> legacy hook path unless a shared credential is attached.
+
+A `bearer`, `apiKey` or `basic` auth takes a shared credential of a static contract
+([Credential RFC](./credential.md#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility))
+when its shape fits:
+
+- `bearer` or `apiKey`: exactly one field and it is secret (`type: "secret"` or `secret: true`) —
+  accepts `bearer.v1` / `api-key.v1`;
+- `basic`: exactly two fields, one with `credentialRole: "username"` and one with `"password"`
+  ([Param RFC](./param.md#amendment--2026-11-10-credentialrole)) — accepts `basic.v1`. Names are never
+  consulted.
+
+Any other shape (extra fields, `oauth2`, `custom`, `tenantAuth`, `jit`) accepts nothing and keeps the
+legacy path.
+
+**`accepts` is host-derived.** A host emits `accepts` (an array of contract ids; empty or omitted when
+none) on each auth in its auth listing, computed from the auth type and fields. It is not authored: a
+manifest cannot declare a top-level `accepts` on an auth, and a host strips one when it appears in
+inbound data, so a manifest cannot widen what a credential may be attached to. The `serviceAccount`
+block's own `serviceAccount.accepts` is unchanged and is the only authored list.
