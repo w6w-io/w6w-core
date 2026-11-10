@@ -1195,6 +1195,13 @@ Step code in every language reads these names, besides `input` and `digest`:
 | `state` | the run state tree | `{{ state.<path> }}` |
 | `vars` | the same tree view as `state` | `{{ var.<name> }}` |
 
+- **For each nests.** A For each may sit in another For each's body. `foreach.item` and
+  `foreach.index` always name the INNERMOST loop; `foreach.loops.<foreachStepId>.item` and
+  `.index` name every enclosing loop's current item and index, the innermost included (so
+  `{{ foreach.loops.outer.item }}` reads the outer item from the inner body). A single loop's body
+  gains the `loops` key additively; no other root is added. A body step's recorded inputs are its
+  resolved params, so a step that does not read `foreach.loops` records exactly what it did before.
+
 - **`state` and `vars` are one view.** They are the same object, a snapshot of the run state tree as
   the step reads it (its ancestors' writes folded over the seed), taken when the step starts and
   frozen for JavaScript and TypeScript. Writing to them changes nothing outside the step; a step

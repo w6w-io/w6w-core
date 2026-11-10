@@ -424,8 +424,13 @@ index plus every failed iteration. `?wait=true` does not carry iterations.
 implemented: the first failed iteration aborts the loop, and later items are not invoked. The
 Failure-modes sentence describing per-iteration continuation is not realised by the reference.
 
-**(d) Scope.** Only a `foreach` run from the main graph records iterations. `if` and `parallel`
-sub-blocks, and a `foreach` nested inside a sub-block, record none; Open question 1 stays open.
+**(d) Scope.** A `foreach` records iterations, whether it runs from the main graph or inside
+another `foreach`'s body. `if` and `parallel` sub-blocks record none themselves. A body step of a
+nested `foreach` is recorded under the INNER `foreach`'s id and index, and its
+`RunStatePatch.iteration` gains `outer?: number[]`, the enclosing loops' indexes, outermost
+first (absent for a top-level loop, so its patches are unchanged). `RunState.iterations` has no
+slot for `outer`: how a host stores nested records is host-encoded. Nested `foreach` is supported
+(Open question 1 is settled for `foreach`-in-`foreach`).
 
 **(e) Body shape.** The editor authors `body` as a linear list and the engine runs it as an
 ordered list. The editor manifest declares `body` `required: false` (canvas-owned, `hidden`, see
