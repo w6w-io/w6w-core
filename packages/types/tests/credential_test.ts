@@ -350,3 +350,50 @@ Deno.test("mapGenericSource: null on contract mismatch, incompatible auth, or ba
     basic: "basic.v1",
   });
 });
+
+// apps/gocanvas/auth/basic.ts — basic, two secret fields keyed `username`/`password`, NO roles.
+// The names alone must never decide: a name heuristic would map a secret into a username slot (R-2).
+const gocanvasBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    secretField("username", { row: "creds" }),
+    secretField("password", { row: "creds" }),
+  ],
+};
+// apps/wordpress/auth/basic.ts — siteUrl + username + password (3 fields), here with both roles.
+const wordpressBasicTagged: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    { key: "siteUrl", label: "WordPress Site URL", type: "string", required: true },
+    {
+      key: "username",
+      label: "Username",
+      type: "string",
+      required: true,
+      credentialRole: "username",
+    },
+    secretField("password", { credentialRole: "password" }),
+  ],
+};
+
+Deno.test("untagged basic with username/password KEYS is not basic.v1 (no name heuristic)", () => {
+  assertEquals(genericContractFor(gocanvasBasic), null);
+  assertEquals(acceptedContractsFor(gocanvasBasic), []);
+  assertEquals(mapGenericSource(gocanvasBasic, "basic.v1", { username: "u", password: "p" }), null);
+});
+
+Deno.test("basic.v1 needs exactly 2 fields: wordpress shape with both roles is refused", () => {
+  assertEquals(wordpressBasicTagged.fields!.length, 3);
+  // Same three fields with the roled pair first: a "at least 2" check would pass this one.
+  const reordered = {
+    type: "basic" as const,
+    fields: [...wordpressBasicTagged.fields!.slice(1), wordpressBasicTagged.fields![0]],
+  };
+  assertEquals(genericContractFor(reordered), null);
+  assertEquals(genericContractFor(wordpressBasicTagged), null);
+  assertEquals(acceptedContractsFor(wordpressBasicTagged), []);
+  assertEquals(
+    mapGenericSource(wordpressBasicTagged, "basic.v1", { username: "u", password: "p" }),
+    null,
+  );
+});

@@ -80,3 +80,22 @@ Deno.test("mod.ts exports every BRIEFS I-3 runtime name", () => {
     ]
   ) assert(k in mod, k);
 });
+
+Deno.test("google descriptor and capabilities are the SEAM-2 values", () => {
+  assertEquals(googleServiceAccountV1.descriptor, {
+    label: "Google service account",
+    fields: [
+      {
+        key: "serviceAccountKey",
+        label: "Service account key (JSON)",
+        secret: true,
+        multiline: true,
+      },
+    ],
+  });
+  assertEquals(googleServiceAccountV1.capabilities, {
+    handoffable: false,
+    crossConnectionTokenReuse: false,
+    delegation: true,
+  });
+});

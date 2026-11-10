@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
 import { W6WError } from "@w6w/runtime";
+import type { CredentialProvider } from "@w6w/types";
 import { apiKeyV1, basicV1, bearerV1, defaultCredentialProviders } from "../mod.ts";
 
 const SECRET = "Zq9xK2mWvT7pLrN4sHb8";
@@ -59,6 +60,11 @@ Deno.test("static validateSource: refusals, with no secret in any message or det
     [bearerV1, { token: SECRET, extra: SECRET }],
     [bearerV1, { key: SECRET }],
     [bearerV1, { token: 123 }],
+    [bearerV1, { token: [SECRET] }],
+    [bearerV1, { token: { v: SECRET } }],
+    [apiKeyV1, { key: [SECRET, SECRET] }],
+    [basicV1, { username: "bob", password: { v: SECRET } }],
+    [basicV1, { username: { v: SECRET }, password: "x" }],
     [bearerV1, { token: "   " }],
     [bearerV1, { token: `${SECRET}\n` }],
     [bearerV1, { token: `a\rb${SECRET}` }],
@@ -66,6 +72,10 @@ Deno.test("static validateSource: refusals, with no secret in any message or det
     [apiKeyV1, { key: "" }],
     [apiKeyV1, { key: SECRET, token: SECRET }],
     [basicV1, { username: "bob" }],
+    [basicV1, { username: "a\nb", password: "x" }],
+    [basicV1, { username: "a\rb", password: "x" }],
+    [basicV1, { username: "a\0b", password: "x" }],
+    [basicV1, { username: "a\nb", password: SECRET }],
     [basicV1, { username: `bo:b${SECRET}`, password: SECRET }],
     [basicV1, { username: "bob", password: `${SECRET}\n` }],
     [basicV1, { username: "bob", password: "", x: SECRET }],
@@ -99,4 +109,14 @@ Deno.test("static displayOf: never carries a secret, any 4-char slice included",
     assert(!leaks(JSON.stringify(out), SECRET));
   }
   assertEquals(bearerV1.displayOf(null), {});
+});
+
+Deno.test("static providers: a deriveAuthorization on a static provider fails the type check", () => {
+  const bad: CredentialProvider = {
+    ...bearerV1,
+    kind: "static",
+    // @ts-expect-error the static arm declares deriveAuthorization?: never
+    deriveAuthorization: () => Promise.resolve({}),
+  };
+  assert(bad);
 });
