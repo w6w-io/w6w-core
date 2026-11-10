@@ -373,6 +373,8 @@ credential shape" non-goal stands for publisher manifests: an app still declares
 stored credential; it names the contracts it accepts (`serviceAccount.accepts`) and the provider owns
 the shape. See [Credential RFC §Opacity, refined](./credential.md#opacity-refined).
 
+> **Amended 2026-11-10:** for static contracts the host also reads the source, only via the pure `@w6w/types` helper `mapGenericSource`, in the host realm and never in a sandbox or publisher code — see [Credential RFC §Amendment](./credential.md#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 ### Auth keys and how a Connection names its auth
 
 - An auth's **`key`** is **required**, **unique within the App** and **immutable across versions**

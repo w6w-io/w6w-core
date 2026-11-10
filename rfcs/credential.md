@@ -68,6 +68,8 @@ authority is approved per Connection, and exactly one party derives or refreshes
 - Changing what `oauth2`, `apiKey`, `basic`, `bearer`, `custom`, `tenantAuth` and `jit` store or
   how their hooks behave.
 
+> **Amended 2026-11-10:** three static providers (`bearer.v1`, `api-key.v1`, `basic.v1`) now ship, so "additional providers" is partly done and static auths gain a credential path — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 ## Concept
 
 ### Source, record, binding, authorization
@@ -102,6 +104,8 @@ source as opaque — they store it, move it, redact it and never parse it. The *
 interprets a source is the compiled-in provider for that source's contract, and it does so inside
 the host's own realm, never in a sandbox, never in publisher code (intake D-4, D-A1). "Opaque to the
 platform" now means "opaque to everything except the one provider that owns the contract".
+
+> **Amended 2026-11-10:** for the three static contracts the host also maps the source with `mapGenericSource` (reads `token`/`key`/`username`/`password`), a pure `@w6w/types` helper run in the host realm, never in a sandbox or publisher code — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 
 ### Compatibility ids
 
@@ -312,6 +316,8 @@ implements no `revoke`.
   (`ownerConnectionId` = that Connection). A credential created on its own, or one a second Connection
   attaches to, is **shared** (`ownerConnectionId` null). Sharing is within **one tenant and account**,
   by `credentialId` (D-B3).
+
+> **Amended 2026-11-10:** there is no promotion — a second Connection attaching does not turn a private credential shared — and an app-scoped credential cannot be attached across apps — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 - **Disconnect detaches.** Deleting or disconnecting a Connection detaches it. It deletes a **private**
   credential that no other Connection references. It **never** revokes or deletes a **shared**
   credential.
@@ -437,6 +443,7 @@ A host that implements this RFC MUST satisfy:
    an upstream error body.
 2. Only a compiled-in provider interprets a source, only in the host's realm; an unregistered
    contract fails `provider_unsupported`.
+   > **Amended 2026-11-10:** for the three static contracts the host also reads the source, only through the pure `@w6w/types` helper `mapGenericSource`, in the host realm and never in a sandbox or publisher code; rule 2 still holds for derived contracts — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 3. `sign` receives a `DerivedToken` and never the source for a `serviceAccount` auth; `test` and
    `afterConnect` receive `credential: null`.
 4. Approved scopes and delegation are a subset of what the auth declares; a widening app upgrade
