@@ -11,7 +11,8 @@ import { W6WError } from "@w6w/runtime";
 import type {
   ApprovedBinding,
   CredentialErrorCode,
-  CredentialProvider,
+  CredentialTypeField,
+  DerivedCredentialProvider,
   DerivedToken,
   TokenEgress,
 } from "@w6w/types";
@@ -230,9 +231,21 @@ async function deriveAuthorization(i: {
   return { accessToken: access_token, tokenType: "Bearer", expiresAt: now + expires_in * 1000 };
 }
 
-export const googleServiceAccountV1: CredentialProvider = Object.freeze({
+export const googleServiceAccountV1: DerivedCredentialProvider = Object.freeze({
+  kind: "derived",
   contract: "google-service-account.v1",
   version: "1.0.0",
+  descriptor: Object.freeze({
+    label: "Google service account",
+    fields: Object.freeze([
+      Object.freeze({
+        key: "serviceAccountKey",
+        label: "Service account key (JSON)",
+        secret: true,
+        multiline: true,
+      }),
+    ]) as unknown as CredentialTypeField[],
+  }),
   capabilities: Object.freeze({
     handoffable: false,
     crossConnectionTokenReuse: false,
