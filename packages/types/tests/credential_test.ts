@@ -397,3 +397,39 @@ Deno.test("basic.v1 needs exactly 2 fields: wordpress shape with both roles is r
     null,
   );
 });
+
+// apps/atlassian/bitbucket/auth/basic.ts — basic, `username` string + `password` secret, NO roles.
+// The shape reads like username/password, but without the explicit role marker nothing maps (R-2).
+const bitbucketBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    { key: "username", label: "Username", type: "string", required: true },
+    { key: "password", label: "App password", type: "secret", required: true },
+  ],
+};
+
+Deno.test("untagged (string username, secret password) basic is not basic.v1 (R-20a)", () => {
+  assertEquals(genericContractFor(bitbucketBasic), null);
+  assertEquals(acceptedContractsFor(bitbucketBasic), []);
+  assertEquals(
+    mapGenericSource(bitbucketBasic, "basic.v1", { username: "u", password: "p" }),
+    null,
+  );
+});
+
+// Roles contradict the key names: the mapping must follow the roles, never the names (R-20c).
+const crossedBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    secretField("username", { credentialRole: "password" }),
+    secretField("password", { credentialRole: "username" }),
+  ],
+};
+
+Deno.test("crossed credentialRole fixture maps by role, not by key name (R-20c)", () => {
+  assertEquals(genericContractFor(crossedBasic), "basic.v1");
+  assertEquals(
+    mapGenericSource(crossedBasic, "basic.v1", { username: "U", password: "P" }),
+    { password: "U", username: "P" },
+  );
+});

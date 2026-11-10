@@ -30,6 +30,21 @@ function payloadScopes(v: unknown): Set<string> | null {
   return set.size > 0 ? set : null;
 }
 
+/** The inner key object of the connect form's serviceAccountKey wrapper: an object, or JSON text of one. */
+function parseKeyObject(v: unknown): Record<string, unknown> | null {
+  let o = v;
+  if (typeof o === "string") {
+    try {
+      o = JSON.parse(o);
+    } catch {
+      return null;
+    }
+  }
+  return typeof o === "object" && o !== null && !Array.isArray(o)
+    ? o as Record<string, unknown>
+    : null;
+}
+
 export function normaliseLegacyGoogleServiceAccount(
   payload: unknown,
   declared: ServiceAccountConfig,
@@ -42,14 +57,29 @@ export function normaliseLegacyGoogleServiceAccount(
     });
   }
   const p = payload as Record<string, unknown>;
-  const candidate: Record<string, unknown> = { type: p.type ?? "service_account" };
-  const email = firstStr(p, ["client_email", "email", "clientEmail"]);
+  // The connect form posts {serviceAccountKey: <JSON text or object>, delegatedUser?, ...}: the key
+  // fields live in the INNER object, while delegation, scopes, location and the projectId setting
+  // stay on the OUTER payload. A flat payload carries everything on one object (unchanged).
+  let k = p;
+  if ("serviceAccountKey" in p) {
+    const inner = parseKeyObject(p.serviceAccountKey);
+    if (inner === null) {
+      return fail("credential_invalid", "source_not_object", {
+        retryable: false,
+        status: null,
+        field: "serviceAccountKey",
+      });
+    }
+    k = inner;
+  }
+  const candidate: Record<string, unknown> = { type: k.type ?? "service_account" };
+  const email = firstStr(k, ["client_email", "email", "clientEmail"]);
   if (email !== undefined) candidate.client_email = email;
-  const key = p.private_key ?? p.privateKey;
+  const key = k.private_key ?? k.privateKey;
   if (key !== undefined) candidate.private_key = key;
-  for (const k of ["private_key_id", "client_id"]) if (p[k] !== undefined) candidate[k] = p[k];
+  for (const f of ["private_key_id", "client_id"]) if (k[f] !== undefined) candidate[f] = k[f];
   const projectId = str(p.projectId);
-  const project = p.project_id ?? projectId;
+  const project = k === p ? (p.project_id ?? projectId) : (k.project_id ?? str(k.projectId));
   if (project !== undefined) candidate.project_id = project;
   const source = validateSource(candidate);
 
