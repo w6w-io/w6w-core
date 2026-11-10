@@ -831,7 +831,9 @@ substitution happens and when it does not.
      rule in this section, whatever else it may be for a particular host's pass;
    - `inputs`, `output` — the Function RFC's widened `RunScope` (`rfcs/function.md:226-243`);
    - `foreach` — the Engine RFC's `@w6w/control` · `foreach` control, which adds `foreach.item` and
-     `foreach.index` to the sub-block's run scope (`rfcs/engine.md:210`), and its Conformance item 6
+     `foreach.index` to the sub-block's run scope (`rfcs/engine.md:210`) and, for nested loops,
+     `foreach.loops.<foreachStepId>.{item,index}` for every enclosing loop, the innermost included
+     (`rfcs/node-types.md`), and its Conformance item 6
      (`rfcs/engine.md:288`).
 
    The exported `RunScope` type in `@w6w/workflow` is **canonical** for this list: it is the single

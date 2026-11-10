@@ -273,3 +273,115 @@ Deno.test("binding.scopes and approved.scopes are distinct arrays", async () => 
   out.binding.scopes!.push("widened");
   assertEquals(out.approved.scopes, ["a", "b"]);
 });
+
+// ---- connect-form wrapper `{serviceAccountKey, ...outer}` (R-9 / SEAM-7) ----
+
+async function keyObject() {
+  const k = await testKey();
+  return {
+    type: "service_account",
+    client_email: EMAIL,
+    private_key: k.pem,
+    private_key_id: "kid1",
+    client_id: "cid1",
+    project_id: "inner-proj",
+  };
+}
+
+Deno.test("wrapper: object, JSON string and wrapper+outer all equal the flat source", async () => {
+  const inner = await keyObject();
+  const d = decl([S("drive")]);
+  const flat = norm({ ...inner }, d);
+  const asObject = norm({ serviceAccountKey: inner }, d);
+  const asString = norm({ serviceAccountKey: JSON.stringify(inner) }, d);
+  assertEquals(asObject.source, flat.source);
+  assertEquals(asString.source, flat.source);
+  assertEquals(asObject.binding, flat.binding);
+  const withUser = norm(
+    { serviceAccountKey: JSON.stringify(inner), delegatedUser: "boss@corp.com" },
+    d,
+  );
+  assertEquals(withUser.source, flat.source);
+  assertEquals(withUser.binding.delegatedUser, "boss@corp.com");
+  assertEquals(withUser.approved.delegatedUser, "boss@corp.com");
+  assertEquals(asObject.binding.delegatedUser, undefined);
+});
+
+Deno.test("wrapper: outer delegatedUser is read from the outer payload only", async () => {
+  const inner = await keyObject();
+  // A delegatedUser smuggled inside the key object is not a binding input.
+  const out = norm(
+    { serviceAccountKey: { ...inner, delegatedUser: "inner@corp.com" } },
+    decl([S("drive")]),
+  );
+  assertEquals(out.binding.delegatedUser, undefined);
+  assertEquals(out.approved.delegatedUser, null);
+  // The required-impersonation check still fires on the outer payload.
+  assertThrows(
+    () => norm({ serviceAccountKey: inner }, decl([S("gmail.send")], "required")),
+    W6WError,
+  );
+  const ok = norm(
+    { serviceAccountKey: inner, delegatedUser: "boss@corp.com" },
+    decl([S("gmail.send")], "required"),
+  );
+  assertEquals(ok.binding.delegatedUser, "boss@corp.com");
+});
+
+Deno.test("wrapper + outer projectId/location land in binding.settings, typed (R-19)", async () => {
+  const inner = await keyObject();
+  const out = norm(
+    { serviceAccountKey: inner, projectId: "my-proj", location: "us-central1" },
+    decl([S("cloud-platform")], "none"),
+  );
+  assertEquals(out.binding.settings, { projectId: "my-proj", location: "us-central1" });
+  // the key's own project_id stays the source's; the outer projectId is a setting only
+  assertEquals(out.source.project_id, "inner-proj");
+  const noSettings = norm({ serviceAccountKey: inner }, decl([S("cloud-platform")], "none"));
+  assertEquals(noSettings.binding.settings, undefined);
+});
+
+Deno.test("wrapper: scopes on the outer payload narrow the approved scopes", async () => {
+  const inner = await keyObject();
+  const out = norm(
+    { serviceAccountKey: inner, scopes: [S("drive")] },
+    decl([S("drive"), S("spreadsheets")]),
+  );
+  assertEquals(out.approved.scopes, [S("drive")]);
+});
+
+Deno.test("wrapper: a malformed serviceAccountKey fails on that field, leaking no key material", async () => {
+  const inner = await keyObject();
+  const pem = inner.private_key;
+  const body = pem.split("\n").filter((l) => l && !l.startsWith("-----"))[0];
+  const bad: unknown[] = [
+    "not json " + body,
+    JSON.stringify([inner]),
+    JSON.stringify("x" + body),
+    42,
+    null,
+    ["a"],
+    true,
+  ];
+  for (const v of bad) {
+    const e = assertThrows(() => norm({ serviceAccountKey: v }, decl([S("drive")])), W6WError);
+    assertEquals((e.details as { field?: string }).field, "serviceAccountKey");
+    assertEquals(e.code, "credential_invalid");
+    const text = JSON.stringify({ m: e.message, d: e.details });
+    assert(!text.includes(body.slice(0, 12)) && !text.includes(EMAIL));
+  }
+});
+
+Deno.test("wrapper: a bad INNER key fails with the key's own field, no key material", async () => {
+  const inner = await keyObject();
+  const e = assertThrows(
+    () =>
+      norm(
+        { serviceAccountKey: { ...inner, private_key: "-----BEGIN PRIVATE KEY-----\nQUJD\n" } },
+        decl([S("drive")]),
+      ),
+    W6WError,
+  );
+  assertEquals((e.details as { field?: string }).field, "private_key");
+  assert(!JSON.stringify({ m: e.message, d: e.details }).includes("QUJD"));
+});

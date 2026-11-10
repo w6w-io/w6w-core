@@ -2,7 +2,7 @@
  * Action — a single operation a user can perform through an App.
  * See rfcs/action.md.
  */
-import type { Param } from "./param.ts";
+import type { Param, ParamDefinition } from "./param.ts";
 import type { ActionExecuteHook, ResolveFieldsHook } from "./hooks.ts";
 import type { ActionHealthTag } from "./health.ts";
 
@@ -97,7 +97,9 @@ export interface Action {
  * ```
  */
 export interface ActionDefinition<P = Record<string, unknown>, O = unknown>
-  extends Omit<Action, "resolveFields"> {
+  extends Omit<Action, "resolveFields" | "params"> {
+  /** The Action's params; a param may carry a `parse` the sandbox applies before `execute`. */
+  params?: ParamDefinition[];
   execute: ActionExecuteHook<P, O>;
   /** Form-level options hook for params with `options: { source: "resolveFields" }`. */
   resolveFields?: ResolveFieldsHook;

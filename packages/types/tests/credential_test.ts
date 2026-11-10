@@ -1,6 +1,8 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import {
+  acceptedContractsFor,
   type AfterConnectHook,
+  type Auth,
   AUTH_TYPES,
   type AuthDefinition,
   type AuthType,
@@ -8,11 +10,15 @@ import {
   CREDENTIAL_CONTRACT_ID_RE,
   CREDENTIAL_ERROR_CODES,
   type CredentialRecord,
+  genericContractFor,
   isLegacyContractId,
   legacyContractId,
+  mapGenericSource,
+  type Param,
   redact,
   type RedactedConnection,
   type ResolvedAuthorization,
+  STATIC_CREDENTIAL_CONTRACTS,
   type StoredToken,
 } from "../mod.ts";
 
@@ -199,4 +205,231 @@ Deno.test("test/afterConnect inputs: binding and credentialDisplay are optional,
   const t1: TestIn = { credential: null };
   const t2: TestIn = { credential: null, binding: {}, credentialDisplay: { a: "b" } };
   assert(bare && full && bad && t1 && t2);
+});
+
+// ---- derivation helpers: auth literals copied from real files in packages/apps/apps ----
+
+const secretField = (key: string, extra: Record<string, unknown> = {}) =>
+  ({ key, label: key, type: "secret", required: true, ...extra }) as Param;
+
+// apps/deepseek/auth/api-key.ts — bearer, one secret field `apiKey`.
+const deepseekBearer: Pick<Auth, "type" | "fields"> = {
+  type: "bearer",
+  fields: [secretField("apiKey")],
+};
+// apps/chatwork/auth/api-token.ts — apiKey, the sole secret field is `apiToken` (not `apiKey`).
+const chatworkApiKey: Pick<Auth, "type" | "fields"> = {
+  type: "apiKey",
+  fields: [secretField("apiToken")],
+};
+// apps/booqable/auth/access-token.ts — bearer with an extra `companySlug` string field.
+const booqableBearer: Pick<Auth, "type" | "fields"> = {
+  type: "bearer",
+  fields: [
+    { key: "companySlug", label: "Company slug", type: "string", required: true },
+    secretField("accessToken"),
+  ],
+};
+// apps/browserless/auth/api-token.ts — apiKey with `token` + `region`.
+const browserlessApiKey: Pick<Auth, "type" | "fields"> = {
+  type: "apiKey",
+  fields: [
+    secretField("token"),
+    { key: "region", label: "Region", type: "string" },
+  ],
+};
+// apps/aircall/auth/basic.ts — basic, two secret fields, NO credentialRole.
+const aircallBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [secretField("apiId", { row: "creds" }), secretField("apiToken", { row: "creds" })],
+};
+// Same aircall shape once the apps node tags it (roles are the only difference).
+const aircallTagged: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    secretField("apiId", { row: "creds", credentialRole: "username" }),
+    secretField("apiToken", { row: "creds", credentialRole: "password" }),
+  ],
+};
+// apps/google/google-sheets/auth/service-account.ts
+const sheetsServiceAccount: Pick<Auth, "type" | "fields" | "serviceAccount"> = {
+  type: "serviceAccount",
+  fields: [secretField("serviceAccountKey", { type: "json", secret: true })],
+  serviceAccount: {
+    accepts: ["google-service-account.v1"],
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    impersonation: "optional",
+  } as Auth["serviceAccount"],
+};
+// apps/acuityscheduling/auth/oauth2.ts — oauth2.
+const acuityOauth: Pick<Auth, "type" | "fields"> = { type: "oauth2" };
+
+Deno.test("genericContractFor: 1:1 type compatibility from real auth shapes", () => {
+  assertEquals(genericContractFor(deepseekBearer), "bearer.v1");
+  assertEquals(genericContractFor(chatworkApiKey), "api-key.v1");
+  assertEquals(genericContractFor(booqableBearer), null);
+  assertEquals(genericContractFor(browserlessApiKey), null);
+  assertEquals(genericContractFor(aircallBasic), null);
+  assertEquals(genericContractFor(aircallTagged), "basic.v1");
+  assertEquals(genericContractFor(sheetsServiceAccount), null);
+  assertEquals(genericContractFor(acuityOauth), null);
+  // fields absent / empty, non-secret sole field, one role only
+  assertEquals(genericContractFor({ type: "bearer" }), null);
+  assertEquals(genericContractFor({ type: "bearer", fields: [] }), null);
+  assertEquals(
+    genericContractFor({ type: "apiKey", fields: [{ key: "k", label: "k", type: "string" }] }),
+    null,
+  );
+  assertEquals(
+    genericContractFor({
+      type: "apiKey",
+      fields: [{ key: "k", label: "k", type: "string", secret: true }],
+    }),
+    "api-key.v1",
+  );
+  assertEquals(
+    genericContractFor({
+      type: "basic",
+      fields: [
+        secretField("a", { credentialRole: "username" }),
+        secretField("b", { credentialRole: "username" }),
+      ],
+    }),
+    null,
+  );
+  // Same secret fields on a non-basic type never become basic.v1.
+  assertEquals(genericContractFor({ ...aircallTagged, type: "bearer" }), null);
+  assertEquals(genericContractFor({ type: "custom", fields: [secretField("x")] }), null);
+});
+
+Deno.test("acceptedContractsFor: serviceAccount accepts, generic, or nothing", () => {
+  assertEquals(acceptedContractsFor(sheetsServiceAccount), ["google-service-account.v1"]);
+  assertEquals(acceptedContractsFor(deepseekBearer), ["bearer.v1"]);
+  assertEquals(acceptedContractsFor(chatworkApiKey), ["api-key.v1"]);
+  assertEquals(acceptedContractsFor(aircallTagged), ["basic.v1"]);
+  assertEquals(acceptedContractsFor(booqableBearer), []);
+  assertEquals(acceptedContractsFor(aircallBasic), []);
+  assertEquals(acceptedContractsFor(acuityOauth), []);
+  // returns a copy, not the auth's own array
+  const out = acceptedContractsFor(sheetsServiceAccount);
+  out.push("x");
+  assertEquals(sheetsServiceAccount.serviceAccount!.accepts, ["google-service-account.v1"]);
+});
+
+Deno.test("mapGenericSource: the auth's OWN field key receives the secret", () => {
+  assertEquals(mapGenericSource(deepseekBearer, "bearer.v1", { token: "T1" }), { apiKey: "T1" });
+  assertEquals(mapGenericSource(chatworkApiKey, "api-key.v1", { key: "K1" }), { apiToken: "K1" });
+  assertEquals(
+    mapGenericSource(aircallTagged, "basic.v1", { username: "U1", password: "P1" }),
+    { apiId: "U1", apiToken: "P1" },
+  );
+  // role order in the fields array does not matter
+  assertEquals(
+    mapGenericSource(
+      { type: "basic", fields: [...aircallTagged.fields!].reverse() },
+      "basic.v1",
+      { username: "U1", password: "P1" },
+    ),
+    { apiId: "U1", apiToken: "P1" },
+  );
+});
+
+Deno.test("mapGenericSource: null on contract mismatch, incompatible auth, or bad source", () => {
+  assertEquals(mapGenericSource(deepseekBearer, "api-key.v1", { key: "K" }), null);
+  assertEquals(mapGenericSource(chatworkApiKey, "bearer.v1", { token: "T" }), null);
+  assertEquals(mapGenericSource(deepseekBearer, "google-service-account.v1", {}), null);
+  assertEquals(mapGenericSource(booqableBearer, "bearer.v1", { token: "T" }), null);
+  assertEquals(mapGenericSource(aircallBasic, "basic.v1", { username: "u", password: "p" }), null);
+  assertEquals(mapGenericSource(deepseekBearer, "bearer.v1", { key: "T" }), null);
+  assertEquals(mapGenericSource(deepseekBearer, "bearer.v1", { token: 5 }), null);
+  assertEquals(mapGenericSource(deepseekBearer, "bearer.v1", null), null);
+  assertEquals(mapGenericSource(aircallTagged, "basic.v1", { username: "u" }), null);
+  assertEquals(STATIC_CREDENTIAL_CONTRACTS, {
+    bearer: "bearer.v1",
+    apiKey: "api-key.v1",
+    basic: "basic.v1",
+  });
+});
+
+// apps/gocanvas/auth/basic.ts — basic, two secret fields keyed `username`/`password`, NO roles.
+// The names alone must never decide: a name heuristic would map a secret into a username slot (R-2).
+const gocanvasBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    secretField("username", { row: "creds" }),
+    secretField("password", { row: "creds" }),
+  ],
+};
+// apps/wordpress/auth/basic.ts — siteUrl + username + password (3 fields), here with both roles.
+const wordpressBasicTagged: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    { key: "siteUrl", label: "WordPress Site URL", type: "string", required: true },
+    {
+      key: "username",
+      label: "Username",
+      type: "string",
+      required: true,
+      credentialRole: "username",
+    },
+    secretField("password", { credentialRole: "password" }),
+  ],
+};
+
+Deno.test("untagged basic with username/password KEYS is not basic.v1 (no name heuristic)", () => {
+  assertEquals(genericContractFor(gocanvasBasic), null);
+  assertEquals(acceptedContractsFor(gocanvasBasic), []);
+  assertEquals(mapGenericSource(gocanvasBasic, "basic.v1", { username: "u", password: "p" }), null);
+});
+
+Deno.test("basic.v1 needs exactly 2 fields: wordpress shape with both roles is refused", () => {
+  assertEquals(wordpressBasicTagged.fields!.length, 3);
+  // Same three fields with the roled pair first: a "at least 2" check would pass this one.
+  const reordered = {
+    type: "basic" as const,
+    fields: [...wordpressBasicTagged.fields!.slice(1), wordpressBasicTagged.fields![0]],
+  };
+  assertEquals(genericContractFor(reordered), null);
+  assertEquals(genericContractFor(wordpressBasicTagged), null);
+  assertEquals(acceptedContractsFor(wordpressBasicTagged), []);
+  assertEquals(
+    mapGenericSource(wordpressBasicTagged, "basic.v1", { username: "u", password: "p" }),
+    null,
+  );
+});
+
+// apps/atlassian/bitbucket/auth/basic.ts — basic, `username` string + `password` secret, NO roles.
+// The shape reads like username/password, but without the explicit role marker nothing maps (R-2).
+const bitbucketBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    { key: "username", label: "Username", type: "string", required: true },
+    { key: "password", label: "App password", type: "secret", required: true },
+  ],
+};
+
+Deno.test("untagged (string username, secret password) basic is not basic.v1 (R-20a)", () => {
+  assertEquals(genericContractFor(bitbucketBasic), null);
+  assertEquals(acceptedContractsFor(bitbucketBasic), []);
+  assertEquals(
+    mapGenericSource(bitbucketBasic, "basic.v1", { username: "u", password: "p" }),
+    null,
+  );
+});
+
+// Roles contradict the key names: the mapping must follow the roles, never the names (R-20c).
+const crossedBasic: Pick<Auth, "type" | "fields"> = {
+  type: "basic",
+  fields: [
+    secretField("username", { credentialRole: "password" }),
+    secretField("password", { credentialRole: "username" }),
+  ],
+};
+
+Deno.test("crossed credentialRole fixture maps by role, not by key name (R-20c)", () => {
+  assertEquals(genericContractFor(crossedBasic), "basic.v1");
+  assertEquals(
+    mapGenericSource(crossedBasic, "basic.v1", { username: "U", password: "P" }),
+    { password: "U", username: "P" },
+  );
 });

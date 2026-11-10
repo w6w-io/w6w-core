@@ -298,6 +298,14 @@ advanced fields), `section: "group"` with `layout: "row" | "stack"` for side-by-
 sender email + name). Unlike `group` (which nests its value under its `key`), a section's children
 keep their own top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
 
+**Accept what users paste — `parse`.** An Action or Trigger param may carry `parse(value)`, a
+function the sandbox runs on that param's value before `execute` (or before a trigger hook that
+receives `params`). Use it so a field takes the form users actually have: a Google Sheets param
+accepts the spreadsheet id **or** its URL (`https://docs.google.com/spreadsheets/d/<id>/edit`) and
+`parse` reduces the URL to the id. It sees the resolved value (expressions already evaluated), may
+be async, and throws to reject. Declare a shared param once (`lib/params.ts`) and reuse it in every
+action. `parse` never reaches the manifest. Type the param as `ParamDefinition` (from `@w6w/types`).
+
 ## Hard rules (the sandbox will enforce these)
 
 - ✅ **Use `ctx.fetch`.** ❌ Global `fetch`, `Deno.*`, `node:*` net/fs, `XMLHttpRequest` are denied
@@ -391,10 +399,10 @@ Four things to know:
   outage that ended days ago. `latest` is the host's fold to one entry per incident.
   The feed's host is allowlisted implicitly, so do not restate it in `network.allow`.
 
-## Triggers (advanced / optional)
+## Triggers
 
-Apps may also declare `triggers` (what _starts_ a workflow) via `TriggerDefinition`. A trigger is
-one of two forms, and the loader derives which (`type`) from the hooks you declare:
+Apps declare `triggers` (what _starts_ a workflow) via `TriggerDefinition`. A trigger is one of two
+forms, and the loader derives which (`type`) from the hooks you declare:
 
 - **Webhook** — `onSubscribe` registers with the third party (it receives the `callbackUrl` to hand
   over) and `onUnsubscribe` destroys that registration. They MUST pair: the loader rejects
@@ -402,13 +410,22 @@ one of two forms, and the loader derives which (`type`) from the hooks you decla
   whole inbound call (`{ method, path, query, headers, body }`) into 0..N events; without it the
   body is the event. A trigger with no hooks is a plain receiver.
 - **Poll** — `poll({ params, state, subscriptionId }, ctx)` returns `{ events, nextState? }` and the
-  host calls it on an interval (`minIntervalMs` is your floor; the host may set a higher one). Dedupe
-  from your own cursor in `state`. A poll trigger MUST NOT declare `onSubscribe`.
+  host calls it on an interval (`minIntervalMs` is your floor; the host may set a higher one).
+  Dedupe from your own cursor in `state`. A poll trigger MUST NOT declare `onSubscribe`.
 
 Either form may add `parseOutput`, which reshapes a stored event into the run's `trigger.event`.
 That is five hooks in all: `onSubscribe`, `onUnsubscribe`, `handleIngest`, `poll`, `parseOutput`.
-The starter templates do **not** include triggers; add them only when asked, and read
-[`rfcs/trigger.md`](../rfcs/trigger.md) first.
+
+**Ship triggers.** When the vendor exposes events (webhooks) or a newest-first list, the app ships
+triggers; the only exception is a vendor with neither, and then the README records why. Read
+[`rfcs/trigger.md`](../rfcs/trigger.md) first. (The starter templates carry no trigger; add yours.)
+
+- **Poll** — use the poll kit at `apps/_shared/poll/mod.ts`: `pollFromListAction` turns an existing
+  list/search action into a `New <record>` trigger, `pollSnapshot` diffs a table-like source
+  (added/updated/removed), and `pollToken` follows a vendor change token or cursor. They own the
+  versioned cursor `state`, first-check seeding (no events on the first tick) and dedupe.
+- **Webhook** — use the webhook kit at `apps/_shared/webhook/` (signature verification) and mirror
+  the `eventbrite` app's `lib/triggers.ts`. Never accept unsigned payloads from a vendor that signs.
 
 ## Definition-of-done checklist
 
@@ -424,6 +441,7 @@ The starter templates do **not** include triggers; add them only when asked, and
 - [ ] Unit tests pass (`deno task test` / `npm test`) and the manifest validates
       (`deno task validate`).
 - [ ] Imports keep `.ts` extensions.
+- [ ] Triggers shipped, or the reason recorded in the README.
 
 ## Reference
 

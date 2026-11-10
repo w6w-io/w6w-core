@@ -90,6 +90,7 @@
     "advanced": { "type": "boolean" },
     "hidden": { "type": "boolean" },
     "whole": { "type": "boolean" },
+    "credentialRole": { "enum": ["username", "password"] },
     "row": { "type": "string" },
     "ui": { "type": "string" },
     "item": {

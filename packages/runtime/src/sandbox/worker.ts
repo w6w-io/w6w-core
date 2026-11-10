@@ -9,7 +9,7 @@
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import { AUTH_HOOK_KINDS, isFileRef, TRIGGER_HOOK_KINDS } from "@w6w/types";
+import { AUTH_HOOK_KINDS, isFileRef, parseParams, TRIGGER_HOOK_KINDS } from "@w6w/types";
 import type { AppDefinition, FileCapability, FileRef, SocketHandle } from "@w6w/types";
 import type {
   DescribedApp,
@@ -261,6 +261,26 @@ function locate(app: AppDefinition, sel: Selector): ((i: unknown, c: unknown) =>
   return typeof fn === "function" ? (fn as (i: unknown, c: unknown) => unknown).bind(auth) : null;
 }
 
+/**
+ * Apply the app's own param parsers (`ParamDefinition.parse`) to the input a
+ * hook is about to see: an Action's `execute` input, and the `params` of every
+ * trigger hook that carries them. Other hooks see their input untouched.
+ */
+async function parseInput(app: AppDefinition, sel: Selector, input: unknown): Promise<unknown> {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === "object" && !Array.isArray(v);
+  if (sel.kind === "action" && sel.hook !== "resolveFields") {
+    const action = app.actions?.find((a) => a.key === sel.key);
+    return isRecord(input) ? await parseParams(action?.params, input) : input;
+  }
+  if (sel.kind === "trigger" && isRecord(input) && isRecord(input.params)) {
+    const trigger = app.triggers?.find((t) => t.key === sel.key);
+    const params = await parseParams(trigger?.params, input.params);
+    return params === input.params ? input : { ...input, params };
+  }
+  return input;
+}
+
 async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
   const app = await importApp(msg);
   const fn = locate(app, msg.selector);
@@ -284,7 +304,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
     invocation: msg.invocation,
     file: proxyFile(msg.enableFile),
   };
-  const value = await fn(msg.input, ctx);
+  const value = await fn(await parseInput(app, msg.selector, msg.input), ctx);
   post({ type: "result", value });
 }
 
