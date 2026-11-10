@@ -15,6 +15,8 @@ short-lived authorization (a `DerivedToken`) from the source; only that token ev
 Auth `sign` hook. For every other auth type the source is the opaque blob the [Auth RFC](./auth.md)
 has always described, and the behaviour is unchanged.
 
+> **Amended 2026-11-10:** a credential is no longer tied to `serviceAccount` auths: three static contracts (`bearer.v1`, `api-key.v1`, `basic.v1`) let a shared credential fit a `bearer`, `apiKey` or `basic` auth with no derivation step — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 This RFC defines the logical model (the credential record, the per-Connection binding, the three
 shapes of a resolved authorization), the provider contract, the compatibility rules between
 credentials and apps, the lifecycle policy, the authorization cache key, the resolution seam between
@@ -66,6 +68,8 @@ authority is approved per Connection, and exactly one party derives or refreshes
 - Changing what `oauth2`, `apiKey`, `basic`, `bearer`, `custom`, `tenantAuth` and `jit` store or
   how their hooks behave.
 
+> **Amended 2026-11-10:** three static providers (`bearer.v1`, `api-key.v1`, `basic.v1`) now ship, so "additional providers" is partly done and static auths gain a credential path — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 ## Concept
 
 ### Source, record, binding, authorization
@@ -101,6 +105,8 @@ interprets a source is the compiled-in provider for that source's contract, and 
 the host's own realm, never in a sandbox, never in publisher code (intake D-4, D-A1). "Opaque to the
 platform" now means "opaque to everything except the one provider that owns the contract".
 
+> **Amended 2026-11-10:** for the three static contracts the host also maps the source with `mapGenericSource` (reads `token`/`key`/`username`/`password`), a pure `@w6w/types` helper run in the host realm, never in a sandbox or publisher code — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 ### Compatibility ids
 
 A credential has a **contract id**. A provider-backed contract id is `<name>.v<N>` and matches
@@ -115,6 +121,8 @@ A credential has a **contract id**. A provider-backed contract id is `<name>.v<N
   with an auth exactly when its contract equals one of the `accepts` entries (exact match).
 - **Compatibility is not authorization.** That a credential fits an auth says nothing about scopes
   or delegation: those are approved per Connection (see [Scopes and delegation](#scopes-and-delegation)).
+
+> **Amended 2026-11-10:** an auth does not have to declare `accepts`. For `bearer`, `apiKey` and `basic` auths the host derives the accepted contract from the auth type and fields, and `legacy:` ids stay never-shared — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 
 #### Manifest and provider versions
 
@@ -226,6 +234,8 @@ interface CredentialProvider {
 }
 ```
 
+> **Amended 2026-11-10:** `CredentialProvider` is a union on `kind`. `deriveAuthorization` is required only on the `"derived"` arm; a `"static"` provider has none, and every provider carries a `descriptor`. The `accepts` sentence in rule 1 below names `serviceAccount` auths only — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 Normative rules for a host:
 
 1. **Trust is a compiled-in registry.** Providers are registered in code through
@@ -259,6 +269,8 @@ Normative rules for a host:
    widen the token (D-D2).
 
 ### The v1 instance: `google-service-account.v1`
+
+> **Amended 2026-11-10:** this is the only *derived* provider, no longer the only provider; three static providers sit beside it — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 
 `googleServiceAccountV1` (`@w6w/credential-providers`, provider `version` `"1.0.0"`) takes a Google
 service-account key (`type: "service_account"`, `client_email`, a PKCS8 `private_key`; the optional
@@ -304,6 +316,8 @@ implements no `revoke`.
   (`ownerConnectionId` = that Connection). A credential created on its own, or one a second Connection
   attaches to, is **shared** (`ownerConnectionId` null). Sharing is within **one tenant and account**,
   by `credentialId` (D-B3).
+
+> **Amended 2026-11-10:** there is no promotion — a second Connection attaching does not turn a private credential shared — and an app-scoped credential cannot be attached across apps — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 - **Disconnect detaches.** Deleting or disconnecting a Connection detaches it. It deletes a **private**
   credential that no other Connection references. It **never** revokes or deletes a **shared**
   credential.
@@ -429,6 +443,7 @@ A host that implements this RFC MUST satisfy:
    an upstream error body.
 2. Only a compiled-in provider interprets a source, only in the host's realm; an unregistered
    contract fails `provider_unsupported`.
+   > **Amended 2026-11-10:** for the three static contracts the host also reads the source, only through the pure `@w6w/types` helper `mapGenericSource`, in the host realm and never in a sandbox or publisher code; rule 2 still holds for derived contracts — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
 3. `sign` receives a `DerivedToken` and never the source for a `serviceAccount` auth; `test` and
    `afterConnect` receive `credential: null`.
 4. Approved scopes and delegation are a subset of what the auth declares; a widening app upgrade
@@ -450,6 +465,8 @@ side.
 4. **Provider revoke.** `revoke?` exists on the provider interface; no v1 provider implements it, and
    issued tokens cannot be retracted regardless.
 
+> **Amended 2026-11-10:** questions 2 and 3 are partly answered: three static providers now ship, all `handoffable: true` — see [§Amendment — 2026-11-10](#amendment--2026-11-10-static-credential-contracts-and-derived-compatibility).
+
 ## Status ladder
 
 - `Draft` — under active design; fields and shape may change without notice.
@@ -457,3 +474,95 @@ side.
 - `Final` — frozen for the current `manifestVersion`. Breaking changes require a new RFC and a
   `manifestVersion` bump.
 - `Superseded` — replaced by another RFC; carry a pointer to its successor.
+
+## Amendment — 2026-11-10: static credential contracts and derived compatibility
+
+> **Additive.** This section adds three credential contracts that need no derivation, defines how an
+> auth's accepted contracts are derived, and states who may see and attach a credential. It qualifies
+> the passages marked `Amended 2026-11-10` above and edits none of them: `google-service-account.v1`
+> and the `serviceAccount` auth are unchanged, and `legacy:` credentials stay never-shared.
+
+### Static contracts
+
+A **static** contract is a credential whose source is used as-is: it has no token exchange, no cache
+and no refresh. Its provider has `kind: "static"` and no `deriveAuthorization`
+(`StaticCredentialProvider` declares `deriveAuthorization?: never`; `DerivedCredentialProvider`
+declares `kind: "derived"` and requires it). `CredentialProvider` is the union of the two.
+
+The compiled-in registry holds four providers, in this order:
+
+| contract | kind | source | descriptor label | descriptor fields |
+|---|---|---|---|---|
+| `google-service-account.v1` | derived | unchanged | `Google service account` | `serviceAccountKey` (secret, multiline) |
+| `bearer.v1` | static | `{ token }` | `Bearer token` | `token` (secret) |
+| `api-key.v1` | static | `{ key }` | `API key` | `key` (secret) |
+| `basic.v1` | static | `{ username, password }` | `Username and password` | `username` (not secret), `password` (secret) |
+
+- Every provider carries a `descriptor` (`{ label, fields: { key, label, secret, multiline? }[] }`);
+  a host builds its credential-type listing (`CredentialTypeDescriptor`: `id`, `label`, `fields`) from
+  the registry, so there is one source of truth for create and rotate forms.
+- Static capabilities are `handoffable: true`, `crossConnectionTokenReuse: false`, `delegation: false`.
+- A static `validateSource` accepts a plain object with **exactly** the contract's keys, each a
+  non-empty string (trimmed); it refuses `\r`, `\n` and `\0` in any value and, for `basic.v1`, a
+  `:` in the username (RFC 7617). Failures are `credential_invalid` with fixed text naming the field,
+  never the value (rule 4 of [Provider contract](#provider-contract) holds unchanged).
+- `displayOf` is `{}` for `bearer.v1` and `api-key.v1`, and `{ username }` for `basic.v1`; a
+  password, token or key is never displayed.
+- Because a static source is used as-is, a host MUST NOT run a refresh or write back into a
+  credential for a static contract: a hook can never overwrite a shared credential.
+
+### Compatibility is derived from the auth type
+
+A static contract is not named in a manifest. The accepted contracts of an auth are a pure function
+of the auth (`acceptedContractsFor`; `genericContractFor` for the static part). A *secret field* is
+one with `type: "secret"` or `secret: true`.
+
+| auth | accepted contract |
+|---|---|
+| `serviceAccount` | `serviceAccount.accepts`, unchanged |
+| `bearer` with exactly one field, and it is secret | `bearer.v1` |
+| `apiKey` with exactly one field, and it is secret | `api-key.v1` |
+| `basic` with exactly two fields, one `credentialRole: "username"` and one `"password"` | `basic.v1` |
+| anything else (extra fields, no fields, `oauth2`, `custom`, `tenantAuth`, `jit`) | none |
+
+Matching is **1:1 by type**: an API key is not offered to a `bearer` auth, and an untagged `basic`
+auth is not offered a credential at all. The role of a `basic` field is read only from
+`Param.credentialRole` (see [Param RFC](./param.md#amendment--2026-11-10-credentialrole)); a field is
+never mapped by its key, label or position, so a `basic` auth whose secret and non-secret fields are
+named `username` and `password` but carry no roles is not compatible. An auth with extra
+region, subdomain or base-URL fields is not compatible either: this version has no way to collect
+such a non-secret input at attach time.
+
+At attach the host maps the source onto the auth's own field keys (`mapGenericSource`), by role for
+`basic`: `{ [usernameKey]: source.username, [passwordKey]: source.password }` (a crossed pair, role
+`password` on the field keyed `username`, maps by role). It maps nothing when the contract is not the
+auth's, or when the source lacks a contract field. Compatibility is still not authorization: a static
+contract has no scopes or delegation.
+
+### App-scoped and shared credentials
+
+A credential is either **shared** (account-wide, listed and attachable by any compatible app) or
+**app-scoped** (private: created inline from one app's connect form and owned by that app's
+Connection). A host MUST:
+
+- list **shared credentials only** when the caller asks for credentials by contract or by app and
+  auth; an app-scoped credential is never listed for, offered to, or attachable by another app, and
+  attaching or resolving it from another app is refused;
+- not promote an app-scoped credential to shared: create it again where it should be shared;
+- keep `legacy:<appId>#<authKey>` credentials bound to their one app and auth key.
+
+### Authoring surface
+
+An auth declares no top-level `accepts`. The host emits an `accepts` array on each auth in its auth
+listing, derived from the auth type as above; a manifest cannot supply one, and a host strips
+an inbound top-level `accepts` rather than trusting it (see [Auth RFC](./auth.md#amendment--2026-11-10-host-derived-accepts)).
+
+### The legacy Google normaliser
+
+The legacy-payload normaliser (`normaliseLegacyGoogleServiceAccount`) also accepts the connect form's
+wrapper `{ serviceAccountKey: <object or JSON text>, delegatedUser?, scopes?, projectId?, location? }`.
+Key fields (`client_email`, `private_key`, `private_key_id`, `client_id`, `project_id`, `type`) are read
+from the inner object; `delegatedUser`, `scopes`, `location` and the `projectId` setting stay on the
+outer payload and land in the binding. A `serviceAccountKey` that is neither an object nor JSON text of
+one is `credential_invalid` with `field: "serviceAccountKey"` and fixed text. The flat payload is
+unchanged.

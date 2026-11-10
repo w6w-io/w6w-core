@@ -167,6 +167,7 @@ continue to store arrays. Use CSV only for choices whose values contain no comma
 | `readOnly` | boolean | ⬜ | Display-only; not submitted. |
 | `hidden` | boolean | ⬜ | Not rendered by a form; a canvas or host owns the value. See [the 2026-10-30 amendment](#amendment--2026-10-30-hidden-and-whole-param-flags). |
 | `whole` | boolean | ⬜ | The value is one value or one expression, so a picked reference binds the whole value. See [the 2026-10-30 amendment](#amendment--2026-10-30-hidden-and-whole-param-flags). |
+| `credentialRole` | enum | ⬜ | `"username"` or `"password"`. Marks a field of a `basic` auth as the username or password slot of a shared credential. See [the 2026-11-10 amendment](#amendment--2026-11-10-credentialrole). |
 | `repeat` | boolean | ⬜ | Allow multiple values (array of `type`). UI renders as an add/remove list. |
 | `ui` | string | ⬜ | Render hint — see UI hints by type. |
 | `dependsOn` | string[] | ⬜ | Keys of other params. Disabled until all listed keys have values; changes invalidate cached `options` and re-run `validate`. |
@@ -534,3 +535,17 @@ Two optional boolean keys on `Param`; both default to `false`.
 
 Neither flag changes resolution or validation, and neither is overlayable by a `when` entry
 (`ParamOverlay` is unchanged). `param.schema.json` carries both as `{ "type": "boolean" }`.
+
+## Amendment — 2026-11-10: `credentialRole`
+
+> Adds one optional key on `Param`. It qualifies the Field reference table (one new row) and edits
+> nothing else; no other key changes meaning.
+
+`credentialRole?: "username" | "password"` is meaningful **only** on a field of an auth of type
+`basic`. A `basic` auth is offered a shared `basic.v1` credential if and only if it declares exactly
+two fields, one tagged `"username"` and one tagged `"password"`. The tag is the sole signal: a field
+is never treated as a username or password because of its `key`, `label`, `type` or position, and an
+untagged `basic` auth (including one whose fields are keyed `username` and `password`) is not
+offered a shared credential. The key is ignored on any other auth type and on a param outside an
+auth, is not overlayable by `when`, and changes neither resolution nor validation of the param.
+`param.schema.json` carries it as an enum of the two strings.

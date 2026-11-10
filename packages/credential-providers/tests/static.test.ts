@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
 import { W6WError } from "@w6w/runtime";
-import type { CredentialProvider } from "@w6w/types";
+import type { CredentialProvider, StaticCredentialProvider } from "@w6w/types";
 import { apiKeyV1, basicV1, bearerV1, defaultCredentialProviders } from "../mod.ts";
 
 const SECRET = "Zq9xK2mWvT7pLrN4sHb8";
@@ -118,5 +118,14 @@ Deno.test("static providers: a deriveAuthorization on a static provider fails th
     // @ts-expect-error the static arm declares deriveAuthorization?: never
     deriveAuthorization: () => Promise.resolve({}),
   };
+  assert(bad);
+});
+
+Deno.test("static providers: a non-fresh static provider carrying deriveAuthorization is not assignable", () => {
+  // Not an object literal, so excess-property checking cannot be what rejects it: only the
+  // `deriveAuthorization?: never` arm does (deleting it turns this directive unused).
+  const withDerive = { ...bearerV1, deriveAuthorization: () => Promise.resolve({}) };
+  // @ts-expect-error the static arm declares deriveAuthorization?: never
+  const bad: StaticCredentialProvider = withDerive;
   assert(bad);
 });
