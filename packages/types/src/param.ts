@@ -201,6 +201,63 @@ export interface Param {
   collapsed?: boolean;
 }
 
+/**
+ * Normalizes one authored value before a hook sees it — e.g. a pasted Google
+ * Sheets URL into the bare spreadsheet id. Runs in the sandbox with the value
+ * the host resolved (expressions already evaluated); throw to reject it.
+ */
+export type ParamParser = (value: unknown) => unknown;
+
+/**
+ * A `Param` as an app module authors it: the serializable config plus an
+ * optional {@link ParamParser}. `describe()` drops the function, so the manifest
+ * and the editor only ever see the plain `Param`.
+ */
+export interface ParamDefinition extends Omit<Param, "children"> {
+  /** Optional. Applied to this param's value before `execute` / a trigger hook runs. */
+  parse?: ParamParser;
+  children?: ParamDefinition[];
+}
+
+/**
+ * Apply every `parse` declared in `params` to `values`, returning a new object.
+ * A `section`'s children parse at the same level, a `group`'s under its key
+ * (each item of a `repeat` group), and a `repeat` scalar per element. An absent
+ * value (`undefined`) is never passed to a parser.
+ */
+export async function parseParams(
+  params: readonly ParamDefinition[] | undefined,
+  values: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!params?.length || !values || typeof values !== "object") return values;
+  let out = values;
+  for (const p of params) {
+    if (p.type === "section") {
+      out = await parseParams(p.children, out);
+      continue;
+    }
+    const v = out[p.key];
+    if (v === undefined) continue;
+    let next: unknown = v;
+    if (p.type === "group" && p.children?.length) {
+      const children = p.children;
+      const one = (x: unknown) =>
+        x && typeof x === "object" && !Array.isArray(x)
+          ? parseParams(children, x as Record<string, unknown>)
+          : x;
+      next = Array.isArray(next) ? await Promise.all(next.map(one)) : await one(next);
+    }
+    if (typeof p.parse === "function") {
+      const parse = p.parse;
+      next = p.repeat && Array.isArray(next)
+        ? await Promise.all(next.map((x) => x === undefined ? x : parse(x)))
+        : await parse(next);
+    }
+    if (next !== v) out = { ...out, [p.key]: next };
+  }
+  return out;
+}
+
 /** Narrow `Options` to the dynamic (hook-driven) form. */
 export function isDynamicOptions(o: Options | undefined): o is DynamicOptions {
   return !!o && !Array.isArray(o) && typeof (o as DynamicOptions).source === "string";

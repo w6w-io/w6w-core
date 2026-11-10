@@ -536,6 +536,29 @@ Two optional boolean keys on `Param`; both default to `false`.
 Neither flag changes resolution or validation, and neither is overlayable by a `when` entry
 (`ParamOverlay` is unchanged). `param.schema.json` carries both as `{ "type": "boolean" }`.
 
+## Amendment — 2026-11-10: `parse` — the app normalizes a value before its hooks
+
+> Adds one optional **authoring-time** key. It qualifies **Hooks** (a third app-supplied function
+> joins `options.source` and `validation.hook`) without editing it. `Param`, the serializable
+> shape, and `param.schema.json` are unchanged.
+
+An Action's or Trigger's param, as the app module declares it (`ParamDefinition` in
+`@w6w/types`), may carry `parse: (value) => unknown | Promise<unknown>`.
+
+1. **When.** Inside the sandbox, after the host has resolved and validated the params and before
+   the hook runs: for an Action, before `execute` (not `resolveFields`); for a Trigger, before every
+   hook whose input carries `params` (`onSubscribe`, `onUnsubscribe`, `poll`, `handleIngest`).
+2. **What.** The param's resolved value — expressions already evaluated. An absent value
+   (`undefined`) is never passed. A `section`'s children parse at the enclosing level, a `group`'s
+   under the group's key (each item of a `repeat` group), and a `repeat` scalar per element.
+3. **Errors.** A parser that throws fails the call like the hook itself would (`hook_failed`).
+4. **Not serialized.** `describe()` drops the function, so the manifest, the editor and the host
+   never see it, and digests of apps without parsers do not move.
+
+Use it to accept the forms users paste — e.g. a spreadsheet's URL where the API wants its id.
+Declarative `validation` still runs on the **unparsed** value, so a param that accepts a URL
+must not declare a `pattern` only the parsed form matches.
+
 ## Amendment — 2026-11-10: `credentialRole`
 
 > Adds one optional key on `Param`. It qualifies the Field reference table (one new row) and edits
