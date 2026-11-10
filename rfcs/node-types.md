@@ -1247,3 +1247,118 @@ created. Traversing a scalar or array, an empty path segment, or `__proto__`, `p
 
 The updated object is the step output. Unlike Set's legacy default, Update does not automatically
 write to the state root; the existing **Write to state** setting can store it at a chosen state key.
+
+## Amendment — 2026-11-10: the `@w6w/csv` and `@w6w/files` host nodes
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change and edits none of the following, which **stand unedited**,
+> superseded in reading by this amendment — identified by link and location rather than reproduced:
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table, which this amendment
+>   extends with two more ids;
+> - the [Node kinds](#node-kinds) table's `internal` row, whose examples this amendment extends;
+> - the paragraph under [Non-echo classification](#non-echo-classification) in the 2026-10-24
+>   `@w6w/model` amendment, whose list of apps subject to the secret-echo refusal now also includes
+>   `@w6w/csv` and `@w6w/files`.
+>
+> Like the [2026-10-30 `@w6w/store` amendment](#amendment--2026-10-30-the-w6wstore-host-node-f-2),
+> it has no companion amendment in [`invocation.md`](./invocation.md): the host performs the work.
+
+`@w6w/csv` and `@w6w/files` are two new **internal host nodes**: `@w6w/*` pseudo-apps the platform
+executes itself. `@w6w/csv` builds, edits, writes and reads CSV tables inside a run. `@w6w/files`
+saves a file from a run into the run's project. Their params are ordinary expression-capable `with`
+values. Like `@w6w/store`, each is a **host** node — **not** a sandboxed `packages/apps` app. No
+registered app id may begin with `@w6w/`, so neither can collide with a catalog app.
+
+### Kind & routing
+
+Both slot into the existing tables as an **internal** kind that routes through the one invoke seam —
+there is no parallel code path:
+
+| Kind       | `uses.app`    | Executed by                 | Examples                              |
+| ---------- | ------------- | --------------------------- | ------------------------------------- |
+| `internal` | `@w6w/csv`    | the **host's internal API** | build a table from JSON · parse CSV   |
+| `internal` | `@w6w/files`  | the **host's internal API** | save a file into the project          |
+
+Routing is unchanged: `isInternalApp("@w6w/csv")` and `isInternalApp("@w6w/files")` are `true` (the
+reserved `@w6w/` prefix), so the invoke seam dispatches each to the **host's internal node
+processor** rather than to the registry.
+
+### Reserved internal pseudo-apps
+
+A **table** is `{ columns: string[], rows: Record<string, string | number | boolean | null>[] }`; a
+cell is a string, a number, a boolean or `null`.
+
+`@w6w/csv` — a pure computation: no connection, no I/O except reading a `file` input and creating a
+`file` output through the run's file port.
+
+| action        | type    | params                                                                                            | output                          |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `from-json`   | perform | `items`* (json list of objects), `csv` (table to append to), `columns` (json list)                | a table                         |
+| `create`      | perform | `columns` (json list), `rows` (json list of objects)                                              | a table                         |
+| `add-rows`    | perform | `csv`* (table), `rows`* (json list of objects)                                                    | a table                         |
+| `remove-rows` | perform | `csv`* (table), exactly one of `indexes` (json list of integers) or `where` (json object)         | a table                         |
+| `to-text`     | perform | `csv`* (table), `delimiter` (one of `,` `;` `\|` or tab), `header`, `bom`, `escapeFormulas`, `file`, `filename` | `{ text, file? }`      |
+| `parse`       | perform | exactly one of `text` or `file`, `delimiter`, `header`, `inferTypes`                              | a table                         |
+
+`@w6w/files` — one action.
+
+| action | type    | params                                                                                                  | output                                                          |
+| ------ | ------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `save` | perform | `path`*, exactly one of `text`, `csv` (a table) or `file` (a run file), `contentType`                    | `{ fileId, versionId, path, size, sha256, contentType }`        |
+
+A `*` marks a required param. `to-text` quotes a string that would otherwise read back as a number, a
+boolean or an empty cell, so `parse` of `to-text` returns the same table. A table is capped at 50,000
+rows, 100 columns and 5 MiB of CSV text; over a cap the step fails with `csv_too_large`. `save` writes
+`csv` with the default `,` delimiter and a header row, and writes cells exactly (no formula
+escaping). `fileId` is the asset id, stable across versions; saving to an existing path (compared
+case-folded and NFC-normalised) adds a new version to the same `fileId`. Node errors of `@w6w/csv`
+carry the codes `csv_too_large`, `csv_invalid` and `csv_file_unavailable` with phase `resolution`.
+Node errors of `@w6w/files` carry one of the fixed messages `quota exceeded`, `storage unavailable`,
+`path invalid`, `content too large`, `content invalid`, `file not found or expired`, or
+`exactly one of text, csv or file is required`; they never carry a storage error's own text, and
+`storage unavailable` alone is retryable.
+
+### Scope
+
+`@w6w/csv` has no scope: its table is a value in the run.
+
+`@w6w/files` writes to the run's own **account and project**, bound by the host. Ignored if present in
+`with`: `scope`, `account`, `project`, `tenant`, `subject`, `assetId`, `visibility`, `purpose`,
+`idempotencyKey`. A host MUST NOT fall back to a default project when the run's project is
+unavailable, and MUST refuse the step as `storage unavailable` when it has no storage to write to.
+A saved file is visible to the whole project, and any run in the project may add a version to it.
+
+### Echo classification
+
+Both nodes **copy their parameters into data a run can read back**: `@w6w/csv` outputs the table it
+was given or built, and `@w6w/files` persists its content where every project member can download
+it. Each is therefore a **secret-echo** app: listed in the engine's `SECRET_ECHO_APPS`
+([Engine RFC](./engine.md)) and **absent** from the host's `NON_ECHO_INTERNAL_APPS`. A step whose raw
+`with` reads a vault secret is refused before invoke (code `param_invalid`, phase `resolution`),
+exactly as for `@w6w/store`.
+
+### Spoke rule
+
+`@w6w/files` needs the host's storage, which a **spoke** does not hold. It is a **host-only** node:
+
+- A host MUST classify the id in `HOST_INTERNAL_APPS` and refuse it on a spoke: a `@w6w/files` step
+  executed on a spoke **fails the step** — never a success carrying an empty or `null` output.
+- A workflow containing a `@w6w/files` step is **not spoke-eligible**: the eligibility report names
+  the reason `files_step`.
+
+`@w6w/csv` is pure and stays **spoke-eligible**; its `file` input and output go through the run's
+file port, which a spoke supplies.
+
+### Conformance (additive)
+
+A host that implements `@w6w/csv` and `@w6w/files` MUST:
+
+- Classify a node whose `uses.app` is `@w6w/csv` or `@w6w/files` as an **internal** kind and route it
+  through the one invoke seam to the host's internal node processor, with no other execution path.
+- Support exactly the six `@w6w/csv` actions `from-json`, `create`, `add-rows`, `remove-rows`,
+  `to-text`, `parse` and the one `@w6w/files` action `save`, and **reject any other** action under
+  either id.
+- Bind `@w6w/files` to the run's own account and project, ignoring the params listed under Scope.
+- Classify both ids as **secret-echo** (`SECRET_ECHO_APPS`, absent from `NON_ECHO_INTERNAL_APPS`) and
+  `@w6w/files` as **host-only** (`HOST_INTERNAL_APPS`), failing its step on a spoke and refusing to
+  ship a workflow containing it to a spoke (`files_step`).
