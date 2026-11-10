@@ -298,6 +298,14 @@ advanced fields), `section: "group"` with `layout: "row" | "stack"` for side-by-
 sender email + name). Unlike `group` (which nests its value under its `key`), a section's children
 keep their own top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
 
+**Accept what users paste — `parse`.** An Action or Trigger param may carry `parse(value)`, a
+function the sandbox runs on that param's value before `execute` (or before a trigger hook that
+receives `params`). Use it so a field takes the form users actually have: a Google Sheets param
+accepts the spreadsheet id **or** its URL (`https://docs.google.com/spreadsheets/d/<id>/edit`) and
+`parse` reduces the URL to the id. It sees the resolved value (expressions already evaluated), may
+be async, and throws to reject. Declare a shared param once (`lib/params.ts`) and reuse it in every
+action. `parse` never reaches the manifest. Type the param as `ParamDefinition` (from `@w6w/types`).
+
 ## Hard rules (the sandbox will enforce these)
 
 - ✅ **Use `ctx.fetch`.** ❌ Global `fetch`, `Deno.*`, `node:*` net/fs, `XMLHttpRequest` are denied

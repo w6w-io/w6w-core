@@ -3,7 +3,7 @@
  * See rfcs/trigger.md. Parallels Action; where Action is a callable the workflow
  * invokes, Trigger is a source the workflow subscribes to.
  */
-import type { Param } from "./param.ts";
+import type { Param, ParamDefinition } from "./param.ts";
 import type { Output } from "./action.ts";
 import type { TriggerProtocol } from "./trigger-protocol.ts";
 import type {
@@ -103,7 +103,9 @@ export interface TriggerDefinition<
   P = Record<string, unknown>,
   E = unknown,
   S = unknown,
-> extends Trigger {
+> extends Omit<Trigger, "params"> {
+  /** The Trigger's params; a param's `parse` runs before every hook that receives `params`. */
+  params?: ParamDefinition[];
   onSubscribe?: OnSubscribeHook<P, S>;
   onUnsubscribe?: OnUnsubscribeHook<P, S>;
   handleIngest?: HandleIngestHook<P, S, E>;
