@@ -7,6 +7,8 @@
  * the host and in `@w6w/runtime`.
  */
 
+import type { Auth } from "./auth.ts";
+
 /** A credential contract id: `<name>.v<N>`, e.g. `google-service-account.v1`. */
 export const CREDENTIAL_CONTRACT_ID_RE = /^[a-z0-9-]+\.v[0-9]+$/;
 
@@ -21,6 +23,77 @@ export function legacyContractId(appId: string, authKey: string): string {
 /** True for every `legacy:*` contract (prefix semantics). */
 export function isLegacyContractId(id: string): boolean {
   return id.startsWith("legacy:");
+}
+
+/** The shared static credential contracts (secret-only sources, no token derivation). */
+export const STATIC_CREDENTIAL_CONTRACTS = {
+  bearer: "bearer.v1",
+  apiKey: "api-key.v1",
+  basic: "basic.v1",
+} as const;
+
+function isSecretField(f: { type?: string; secret?: boolean }): boolean {
+  return f.type === "secret" || f.secret === true;
+}
+
+/**
+ * The static contract a `bearer` / `apiKey` / `basic` auth natively accepts, or `null`.
+ * `bearer`/`apiKey`: exactly one field, and it is secret. `basic`: exactly two fields, one
+ * `credentialRole: "username"` and one `"password"` (never inferred from names). Anything
+ * else — extra fields, no fields, oauth2/custom/tenantAuth/jit/serviceAccount — is `null`.
+ */
+export function genericContractFor(auth: Pick<Auth, "type" | "fields">): string | null {
+  const fields = auth.fields;
+  if (!Array.isArray(fields)) return null;
+  if (auth.type === "bearer" || auth.type === "apiKey") {
+    if (fields.length !== 1 || !isSecretField(fields[0])) return null;
+    return auth.type === "bearer"
+      ? STATIC_CREDENTIAL_CONTRACTS.bearer
+      : STATIC_CREDENTIAL_CONTRACTS.apiKey;
+  }
+  if (auth.type === "basic") {
+    if (fields.length !== 2) return null;
+    const roles = fields.map((f) => f.credentialRole);
+    const ok = (roles[0] === "username" && roles[1] === "password") ||
+      (roles[0] === "password" && roles[1] === "username");
+    return ok ? STATIC_CREDENTIAL_CONTRACTS.basic : null;
+  }
+  return null;
+}
+
+/** Every credential contract id this auth accepts (derived; nothing is stored on the auth). */
+export function acceptedContractsFor(
+  auth: Pick<Auth, "type" | "fields" | "serviceAccount">,
+): string[] {
+  if (auth.type === "serviceAccount" && auth.serviceAccount) {
+    return [...auth.serviceAccount.accepts];
+  }
+  const c = genericContractFor(auth);
+  return c === null ? [] : [c];
+}
+
+/**
+ * Map a static credential source onto the auth's OWN field keys, or `null` when `contract`
+ * is not the auth's generic contract or the source lacks the contract's string fields.
+ */
+export function mapGenericSource(
+  auth: Pick<Auth, "type" | "fields">,
+  contract: string,
+  source: unknown,
+): Record<string, string> | null {
+  if (contract !== genericContractFor(auth)) return null;
+  if (typeof source !== "object" || source === null || Array.isArray(source)) return null;
+  const src = source as Record<string, unknown>;
+  const fields = auth.fields!;
+  if (contract === STATIC_CREDENTIAL_CONTRACTS.basic) {
+    const u = fields.find((f) => f.credentialRole === "username")!;
+    const p = fields.find((f) => f.credentialRole === "password")!;
+    if (typeof src.username !== "string" || typeof src.password !== "string") return null;
+    return { [u.key]: src.username, [p.key]: src.password };
+  }
+  const v = contract === STATIC_CREDENTIAL_CONTRACTS.bearer ? src.token : src.key;
+  if (typeof v !== "string") return null;
+  return { [fields[0].key]: v };
 }
 
 export type CredentialStatus = "active" | "disabled" | "revoked";
@@ -82,7 +155,22 @@ export type TokenEgress = (
   init: { method: "POST"; headers: Record<string, string>; body: string },
 ) => Promise<Response>;
 
-export interface CredentialProvider {
+/** One input of a credential type's create/rotate form. */
+export interface CredentialTypeField {
+  key: string;
+  label: string;
+  secret: boolean;
+  multiline?: boolean;
+}
+
+/** A credential type as the HTTP surface describes it (built from the provider registry). */
+export interface CredentialTypeDescriptor {
+  id: string;
+  label: string;
+  fields: CredentialTypeField[];
+}
+
+interface CredentialProviderBase {
   contract: string;
   version: string;
   capabilities: {
@@ -90,8 +178,15 @@ export interface CredentialProvider {
     crossConnectionTokenReuse: boolean;
     delegation: boolean;
   };
+  descriptor: { label: string; fields: CredentialTypeField[] };
   validateSource(payload: unknown): unknown;
   displayOf(source: unknown): Record<string, string>;
+  revoke?(i: { source: unknown; egress: TokenEgress }): Promise<void>;
+}
+
+/** A provider that exchanges its source for a short-lived token. */
+export interface DerivedCredentialProvider extends CredentialProviderBase {
+  kind: "derived";
   deriveAuthorization(i: {
     source: unknown;
     binding: ConnectionBinding;
@@ -99,8 +194,15 @@ export interface CredentialProvider {
     egress: TokenEgress;
     now?: number;
   }): Promise<DerivedToken>;
-  revoke?(i: { source: unknown; egress: TokenEgress }): Promise<void>;
 }
+
+/** A provider whose source is used as-is (never derived, never refreshed). */
+export interface StaticCredentialProvider extends CredentialProviderBase {
+  kind: "static";
+  deriveAuthorization?: never;
+}
+
+export type CredentialProvider = DerivedCredentialProvider | StaticCredentialProvider;
 
 export interface CredentialProviderRegistry {
   get(contract: string): CredentialProvider | undefined;

@@ -2,6 +2,9 @@ import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
 import type { CredentialProvider } from "@w6w/types";
 import * as mod from "../mod.ts";
 import {
+  apiKeyV1,
+  basicV1,
+  bearerV1,
   createCredentialProviderRegistry,
   defaultCredentialProviders,
   googleServiceAccountV1,
@@ -40,20 +43,27 @@ Deno.test("registry: duplicate contract and malformed id throw at construction",
 });
 
 Deno.test("registry: contracts() is a fresh array; the registry is frozen", () => {
-  const a = reg.contracts();
-  assertEquals(a, ["google-service-account.v1"]);
+  const full = createCredentialProviderRegistry(defaultCredentialProviders());
+  const a = full.contracts();
+  assertEquals(a, ["google-service-account.v1", "bearer.v1", "api-key.v1", "basic.v1"]);
   a.push("x");
   a.length = 0;
-  assertEquals(reg.contracts(), ["google-service-account.v1"]);
+  assertEquals(full.contracts(), [
+    "google-service-account.v1",
+    "bearer.v1",
+    "api-key.v1",
+    "basic.v1",
+  ]);
   assert(Object.isFrozen(reg));
 });
 
-Deno.test("defaultCredentialProviders: deep-equals [googleServiceAccountV1], fresh each call", () => {
+Deno.test("defaultCredentialProviders: the four providers in SEAM-2 order, fresh each call", () => {
   const a = defaultCredentialProviders();
-  assertEquals(a, [googleServiceAccountV1]);
+  assertEquals(a, [googleServiceAccountV1, bearerV1, apiKeyV1, basicV1]);
+  assertEquals(a.map((p) => p.kind), ["derived", "static", "static", "static"]);
   assert(a !== defaultCredentialProviders());
   a.pop();
-  assertEquals(defaultCredentialProviders().length, 1);
+  assertEquals(defaultCredentialProviders().length, 4);
 });
 
 Deno.test("mod.ts exports every BRIEFS I-3 runtime name", () => {
@@ -64,6 +74,28 @@ Deno.test("mod.ts exports every BRIEFS I-3 runtime name", () => {
       "normaliseLegacyGoogleServiceAccount",
       "createCredentialProviderRegistry",
       "defaultCredentialProviders",
+      "bearerV1",
+      "apiKeyV1",
+      "basicV1",
     ]
   ) assert(k in mod, k);
+});
+
+Deno.test("google descriptor and capabilities are the SEAM-2 values", () => {
+  assertEquals(googleServiceAccountV1.descriptor, {
+    label: "Google service account",
+    fields: [
+      {
+        key: "serviceAccountKey",
+        label: "Service account key (JSON)",
+        secret: true,
+        multiline: true,
+      },
+    ],
+  });
+  assertEquals(googleServiceAccountV1.capabilities, {
+    handoffable: false,
+    crossConnectionTokenReuse: false,
+    delegation: true,
+  });
 });

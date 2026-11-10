@@ -150,6 +150,12 @@ export interface Param {
    */
   whole?: boolean;
   /**
+   * Only meaningful on a `basic` auth's field: marks which half of a `basic.v1`
+   * credential fills it. A `basic` auth is offered a shared credential only when
+   * its two fields carry exactly one `"username"` and one `"password"`.
+   */
+  credentialRole?: "username" | "password";
+  /**
    * Lay this param out on a shared row with adjacent params carrying the same
    * `row` id (e.g. a username/password pair side by side).
    */

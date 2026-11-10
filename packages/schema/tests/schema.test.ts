@@ -163,6 +163,7 @@ const PARAM_KEYS: Record<keyof Param, true> = {
   advanced: true,
   hidden: true,
   whole: true,
+  credentialRole: true,
   row: true,
   ui: true,
   item: true,
@@ -186,4 +187,5 @@ Deno.test("param.schema.json: key set equals keyof Param, closed, hidden/whole b
   assertEquals(param.additionalProperties, false);
   assertEquals(param.properties.hidden, { type: "boolean" });
   assertEquals(param.properties.whole, { type: "boolean" });
+  assertEquals(param.properties.credentialRole, { enum: ["username", "password"] });
 });
