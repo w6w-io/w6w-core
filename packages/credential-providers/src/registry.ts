@@ -1,6 +1,7 @@
 import { CREDENTIAL_CONTRACT_ID_RE } from "@w6w/types";
 import type { CredentialProvider, CredentialProviderRegistry } from "@w6w/types";
 import { googleServiceAccountV1 } from "./google-service-account.ts";
+import { apiKeyV1, basicV1, bearerV1 } from "./static.ts";
 
 /** Compiled-in registry: exact-match lookup through a `Map`, never loaded from data (D-A1). */
 export function createCredentialProviderRegistry(
@@ -22,5 +23,5 @@ export function createCredentialProviderRegistry(
 
 /** A fresh list on every call. */
 export function defaultCredentialProviders(): CredentialProvider[] {
-  return [googleServiceAccountV1];
+  return [googleServiceAccountV1, bearerV1, apiKeyV1, basicV1];
 }
