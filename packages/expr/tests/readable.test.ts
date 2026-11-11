@@ -4,6 +4,7 @@ import {
   expressionReferences,
   formatReadableExpression,
   parseReadableExpression,
+  ReadableExpressionError,
 } from "../mod.ts";
 
 Deno.test("readable comparisons compile to JSONLogic and preserve literal types", () => {
@@ -94,4 +95,38 @@ Deno.test("invalid, unfinished, executable and excessively nested input is rejec
     );
   }
   assertEquals(formatReadableExpression({ map: [{ var: "state.items" }, { var: "id" }] }), null);
+});
+
+Deno.test("ternaries compile to JSONLogic if, flatten else-chains, and survive formatting", () => {
+  const rule = parseReadableExpression("var.a === var.b ? 'option1' : 'option2'");
+  assertEquals(rule, {
+    if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"],
+  });
+  assertEquals(evaluate(rule, { var: { a: 1, b: 1 } }), "option1");
+  assertEquals(
+    parseReadableExpression("state.n > 1 ? 'big' : state.n > 0 ? 'small' : 'none'"),
+    {
+      if: [
+        { ">": [{ var: "state.n" }, 1] },
+        "big",
+        { ">": [{ var: "state.n" }, 0] },
+        "small",
+        "none",
+      ],
+    },
+  );
+  for (
+    const source of [
+      "state.n > 1 ? 'big' : state.n > 0 ? 'small' : 'none'",
+      "state.a ? (state.b ? 1 : 2) : 3",
+      "state.a ? 1 : (state.b ? 2 : 3)",
+      "(state.a ? 1 : 2) == 1",
+    ]
+  ) {
+    const parsed = parseReadableExpression(source);
+    assertEquals(parseReadableExpression(formatReadableExpression(parsed)!), parsed, source);
+  }
+  assertEquals(formatReadableExpression({ if: [{ var: "a" }, 1] }), null, "no else arm");
+  assertThrows(() => parseReadableExpression("state.a ? 1"), ReadableExpressionError);
+  assertThrows(() => parseReadableExpression("state.a : 1"), ReadableExpressionError);
 });

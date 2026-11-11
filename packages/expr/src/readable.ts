@@ -25,7 +25,9 @@ const PRECEDENCE: Record<string, number> = {
 const LOGIC_OP: Record<string, string> = { "&&": "and", "||": "or" };
 const PATH = /^[A-Za-z_$][\w$-]*(?:\.[\w$-]+)*$/;
 
-/** Parse comparisons, boolean operators, parentheses, paths and JSON primitive literals.
+/** Parse comparisons, boolean operators, `cond ? a : b`, parentheses, paths and JSON primitive
+ * literals. A ternary binds loosest and is right-associative: an else arm that is itself an
+ * unparenthesised ternary flattens into one JSONLogic `if` (`[c1, v1, c2, v2, else]`).
  * `resolveRef` lets an editor expand a known step's short name to its canonical output path.
  * A reference wrapped in {{ }} is atomic, so picker fields containing spaces still work. */
 export function parseReadableExpression(
@@ -35,6 +37,8 @@ export function parseReadableExpression(
   if (source.length > 10000) throw new ReadableExpressionError("Expression is too long", 0);
   let i = 0;
   let depth = 0;
+  /** Values written inside `( … )` — never flattened into a neighbouring `if`. */
+  const grouped = new WeakSet<object>();
   const fail = (message: string, at = i): never => {
     throw new ReadableExpressionError(message, at);
   };
@@ -101,7 +105,7 @@ export function parseReadableExpression(
       }
       return { kind: "ref", value: word[0], at };
     }
-    const op = /^(===|!==|==|!=|>=|<=|&&|\|\||\?\?|[!<>()])/.exec(source.slice(i));
+    const op = /^(===|!==|==|!=|>=|<=|&&|\|\||\?\?|[!<>()?:])/.exec(source.slice(i));
     if (op) {
       i += op[0].length;
       return { kind: "op", value: op[0], at };
@@ -128,9 +132,10 @@ export function parseReadableExpression(
       }
       if (token.value === "(") {
         take();
-        const value = binary(1);
+        const value = conditional();
         if (String(token.value) !== ")") fail("Close the parenthesis", token.at);
         take();
+        if (value !== null && typeof value === "object") grouped.add(value);
         return value;
       }
       return fail("Expected a field or value", token.at);
@@ -146,7 +151,28 @@ export function parseReadableExpression(
     }
     return left;
   };
-  const result = binary(1);
+  const conditional = (): unknown => {
+    if (++depth > 64) fail("Expression is nested too deeply", token.at);
+    try {
+      const cond = binary(1);
+      if (token.kind !== "op" || token.value !== "?") return cond;
+      take();
+      const then = conditional();
+      if (String(token.value) !== ":" || token.kind !== "op") {
+        fail("Add the : else branch", token.at);
+      }
+      take();
+      const otherwise = conditional() as Record<string, unknown> | null;
+      if (
+        otherwise !== null && typeof otherwise === "object" && !grouped.has(otherwise) &&
+        Object.keys(otherwise).length === 1 && Array.isArray(otherwise.if)
+      ) return { if: [cond, then, ...otherwise.if] };
+      return { if: [cond, then, otherwise] };
+    } finally {
+      depth--;
+    }
+  };
+  const result = conditional();
   if (token.kind !== "end") fail("Expected a comparison or logical operator", token.at);
   return result;
 }
@@ -171,6 +197,17 @@ export function formatReadableExpression(
       return PATH.test(ref) && !["true", "false", "null"].includes(ref) ? ref : `{{ ${ref} }}`;
     }
     const args = Array.isArray(raw) ? raw : [raw];
+    if (op === "if") {
+      if (args.length < 3 || args.length % 2 === 0) return null;
+      const rendered = args.map((arg) => format(arg, true));
+      if (rendered.some((arg) => arg === null)) return null;
+      let text = "";
+      for (let k = 0; k < rendered.length - 1; k += 2) {
+        text += `${rendered[k]} ? ${rendered[k + 1]} : `;
+      }
+      text += rendered[rendered.length - 1];
+      return nested ? `(${text})` : text;
+    }
     const token = op === "and" ? "&&" : op === "or" ? "||" : op;
     if (op === "!" && args.length === 1) {
       const inner = format(args[0], true);

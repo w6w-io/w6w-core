@@ -11,7 +11,8 @@
  * Extensions include `includes` (reverse `in`), `include-any` / `include-all` (array
  * overlap / containment), and `xor` — true when EXACTLY ONE argument is truthy
  * (JSONLogic has no exclusive or). It is what the condition builder's "Exactly one of"
- * compiles to.
+ * compiles to. `get` reads ONE key of a computed value — `{"get":[<object>, <key>]}` — which is
+ * what a `{{ state[nodes.x.output.id] }}` computed bracket key lowers to.
  *
  * Reference: https://jsonlogic.com/operations.html
  */
@@ -45,6 +46,29 @@ function getVar(data: unknown, path: unknown, fallback: unknown): unknown {
   return cur === undefined ? (fallback ?? null) : cur;
 }
 
+/**
+ * `get`: one own key of an object, or one index of an array (an integer, or a string of digits),
+ * or `null` — for a missing key, a prototype member, a non-object base, or a key that is not a
+ * string/number. The key is used whole: `"a.b"` is the key `a.b`, never the path `a` → `b`.
+ */
+function getKey(base: unknown, key: unknown): unknown {
+  if (base === null || typeof base !== "object") return null;
+  if (Array.isArray(base)) {
+    const index = typeof key === "number"
+      ? key
+      : typeof key === "string" && /^(?:0|[1-9]\d*)$/.test(key)
+      ? Number(key)
+      : NaN;
+    return Number.isSafeInteger(index) && index >= 0 && index < base.length
+      ? (base[index] ?? null)
+      : null;
+  }
+  if (typeof key !== "string" && typeof key !== "number") return null;
+  const name = String(key);
+  const value = Object.hasOwn(base, name) ? (base as Record<string, unknown>)[name] : undefined;
+  return value === undefined ? null : value;
+}
+
 function compare(args: unknown[], data: unknown, cmp: (a: number, b: number) => boolean): boolean {
   const vals = args.map((a) => Number(evaluate(a, data)));
   for (let i = 0; i < vals.length - 1; i++) {
@@ -73,6 +97,8 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
   switch (op) {
     case "var":
       return getVar(data, args[0] !== undefined ? evaluate(args[0], data) : null, args[1]);
+    case "get":
+      return getKey(evaluate(args[0], data), evaluate(args[1], data));
     case "missing":
       return args
         .map((a) => evaluate(a, data))

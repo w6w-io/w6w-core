@@ -38,7 +38,10 @@ showIf({ "!": { var: "advanced" } }, { advanced: false }); // true
 `{ "<": [1, x, 10] }`) · `and` `or` `!` `!!` · `if` / `?:` (elseif chains) · `in` (string or array)
 · `+` `-` `*` `/` `%` · `??` — absent-coalescing (`null`/absent only — `0`, `""`, `false` are kept)
 · `xor` — exactly one argument truthy (not in JSONLogic; always a boolean, every argument evaluated)
-· `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons).
+· `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons) · `get` — one key of
+a computed value, `{ "get": [<object>, <key>] }`: an own object key or an array index (an integer or
+a digit string), used whole (`"a.b"` is one key, not a path); `null` when missing or when the base
+is not an object.
 
 Unknown operators throw `ExprError`. JSONLogic truthiness applies (an empty array is falsy). `??` is
 the one exception: it never uses truthiness, only a `null`/`undefined` check.
@@ -81,6 +84,49 @@ any operand begins `secrets.`; see
 [`rfcs/workflow.md`](https://github.com/w6w-io/w6w-core/blob/main/rfcs/workflow.md)'s 2026-08-20
 amendment for the full grammar.
 
+### Inline expressions: ternary and comparisons
+
+A marker may also hold a small expression. It lowers to the JSONLogic above:
+
+```ts
+parseTemplate("{{ var.a === var.b ? 'option1' : 'option2' }}");
+// [{ kind: "expr", expr: { if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"] } }]
+
+parseTemplate("{{ var.n > 10 ? 'big' : var.n > 0 ? 'small' : 'none' }}");
+// one flat `if`: [cond1, "big", cond2, "small", "none"]
+```
+
+| Syntax                                  | JSONLogic                         |
+| --------------------------------------- | --------------------------------- |
+| `c ? a : b` (right-associative)         | `if`                              |
+| `===` `==` `!==` `!=` `<` `<=` `>` `>=` | the operator of the same name     |
+| `&&` · `\|\|` · `??` · `!x` · `( … )`   | `and` · `or` · `??` · `!` · group |
+
+From loosest to tightest: the ternary, `??`, `||`, `&&`, equality, relational, `!`. Operands are
+paths (`steps.s.output.rows[0]['name']`), single- or double-quoted strings, numbers, `true`, `false`
+and `null`. A `?` or `:` inside a string or a bracket index is not an operator.
+
+A bracket may also hold an unquoted path — a **computed key**, read at run time and used as the key
+or index:
+
+```ts
+parseTemplate("{{ state[nodes.get_order_1.output.order.contextId] || state.default }}");
+// { or: [{ get: [{ var: "state" }, { var: "nodes.get_order_1.output.order.contextId" }] },
+//        { var: "state.default" }] }
+```
+
+A path may continue after it (`state[var.k].a.b`) and nest (`a[b[c]]`); each segment after a
+computed key is its own `get`, so a key containing dots is never split. A quoted or numeric bracket
+(`a["k"]`, `a[0]`) stays a static path segment, as before.
+
+The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!`, a
+parenthesis or a computed key. A static path, `secrets.NAME`, a vendor placeholder and a flat
+`||`/`??` chain parse as before. Malformed text falls back the same way, to a `var` part. Any
+operand that reads `secrets` (including a computed key, or the object a key is read from) refuses
+the whole expression to a `var` part carrying the original text, as with a chain.
+`serializeTemplate` prints the expression back as infix text with single-quoted strings, and falls
+back to `{{ =<raw> }}` for a shape it cannot spell. See `rfcs/workflow.md`'s 2026-11-11 amendment.
+
 ## API
 
 Editors can accept readable conditions and compile them to the existing JSONLogic format:
@@ -94,13 +140,15 @@ formatReadableExpression(rule); // '(state.source == "eventbrite") && state.enab
 ```
 
 The authoring syntax supports `==`, `!=`, `===`, `!==`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `??`, `!`,
-parentheses, dotted field paths and quoted strings/numbers/booleans/null. It does not execute
-JavaScript or allow function calls. An optional reference resolver expands an editor's short field
-names. Invalid input throws `ReadableExpressionError` with a character position. The formatter
-returns `null` for legacy JSONLogic outside this subset.
+the ternary `cond ? a : b`, parentheses, dotted field paths and quoted
+strings/numbers/booleans/null. It does not execute JavaScript or allow function calls. An optional
+reference resolver expands an editor's short field names. Invalid input throws
+`ReadableExpressionError` with a character position. The formatter returns `null` for legacy
+JSONLogic outside this subset.
 
 This is an editor compiler; workflow manifests still store JSONLogic expressions or their
-`{{ =<jsonlogic> }}` template form. The runtime template grammar remains unchanged.
+`{{ =<jsonlogic> }}` template form. The runtime `{{ }}` grammar accepts the same operators (see
+above).
 
 | Export                  | Purpose                                                     |
 | ----------------------- | ----------------------------------------------------------- |
