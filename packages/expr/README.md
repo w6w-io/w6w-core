@@ -38,7 +38,10 @@ showIf({ "!": { var: "advanced" } }, { advanced: false }); // true
 `{ "<": [1, x, 10] }`) · `and` `or` `!` `!!` · `if` / `?:` (elseif chains) · `in` (string or array)
 · `+` `-` `*` `/` `%` · `??` — absent-coalescing (`null`/absent only — `0`, `""`, `false` are kept)
 · `xor` — exactly one argument truthy (not in JSONLogic; always a boolean, every argument evaluated)
-· `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons).
+· `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons) · `get` — one key of
+a computed value, `{ "get": [<object>, <key>] }`: an own object key or an array index (an integer or
+a digit string), used whole (`"a.b"` is one key, not a path); `null` when missing or when the base
+is not an object.
 
 Unknown operators throw `ExprError`. JSONLogic truthiness applies (an empty array is falsy). `??` is
 the one exception: it never uses truthiness, only a `null`/`undefined` check.
@@ -103,10 +106,24 @@ From loosest to tightest: the ternary, `??`, `||`, `&&`, equality, relational, `
 paths (`steps.s.output.rows[0]['name']`), single- or double-quoted strings, numbers, `true`, `false`
 and `null`. A `?` or `:` inside a string or a bracket index is not an operator.
 
-The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!` or a
-parenthesis. A bare path, `secrets.NAME`, a vendor placeholder and a flat `||`/`??` chain parse as
-before. Malformed text falls back the same way, to a `var` part. Any operand that reads `secrets`
-refuses the whole expression to a `var` part carrying the original text, as with a chain.
+A bracket may also hold an unquoted path — a **computed key**, read at run time and used as the key
+or index:
+
+```ts
+parseTemplate("{{ state[nodes.get_order_1.output.order.contextId] || state.default }}");
+// { or: [{ get: [{ var: "state" }, { var: "nodes.get_order_1.output.order.contextId" }] },
+//        { var: "state.default" }] }
+```
+
+A path may continue after it (`state[var.k].a.b`) and nest (`a[b[c]]`); each segment after a
+computed key is its own `get`, so a key containing dots is never split. A quoted or numeric bracket
+(`a["k"]`, `a[0]`) stays a static path segment, as before.
+
+The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!`, a
+parenthesis or a computed key. A static path, `secrets.NAME`, a vendor placeholder and a flat
+`||`/`??` chain parse as before. Malformed text falls back the same way, to a `var` part. Any
+operand that reads `secrets` (including a computed key, or the object a key is read from) refuses
+the whole expression to a `var` part carrying the original text, as with a chain.
 `serializeTemplate` prints the expression back as infix text with single-quoted strings, and falls
 back to `{{ =<raw> }}` for a shape it cannot spell. See `rfcs/workflow.md`'s 2026-11-11 amendment.
 

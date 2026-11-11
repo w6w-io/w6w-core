@@ -175,3 +175,22 @@ Deno.test("array overlap and containment resolve both operands with strict membe
   }
   assertEquals(evaluate({ "include-all": [["a"], { var: "missing" }] }), false);
 });
+
+Deno.test("get: one own key or array index of a computed value, else null", () => {
+  const data = { o: { "a.b": 1, k: "a.b", zero: 0 }, arr: ["x", "y"], key: "k" };
+  assertEquals(evaluate({ get: [{ var: "o" }, { var: "o.k" }] }, data), 1); // dotted key, whole
+  assertEquals(evaluate({ get: [{ var: "o" }, "zero"] }, data), 0); // falsy values survive
+  assertEquals(evaluate({ get: [{ var: "arr" }, 1] }, data), "y");
+  assertEquals(evaluate({ get: [{ var: "arr" }, "1"] }, data), "y");
+  assertEquals(evaluate({ get: [{ var: "arr" }, 2] }, data), null); // out of range
+  assertEquals(evaluate({ get: [{ var: "arr" }, -1] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "arr" }, "01"] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "o" }, "missing"] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "o" }, "constructor"] }, data), null); // own keys only
+  assertEquals(evaluate({ get: [{ var: "o" }, "__proto__"] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "o" }, null] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "o" }, { var: "nope" }] }, data), null);
+  assertEquals(evaluate({ get: [{ var: "key" }, "length"] }, data), null); // non-object base
+  assertEquals(evaluate({ get: [{ var: "nope" }, "k"] }, data), null);
+  assertEquals(evaluate({ get: [{ get: [{ var: "o" }, "k"] }, "length"] }, data), null);
+});

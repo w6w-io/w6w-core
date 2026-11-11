@@ -13,6 +13,12 @@ All notable changes to `@w6w/expr` are documented here. The format follows
   indexing included), single- or double-quoted strings, numbers, `true`, `false` and `null`.
   `{{ var.a === var.b ? 'option1' : 'option2' }}` parses to
   `{ if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"] }`.
+- Computed bracket keys: an unquoted path inside `[…]` is read at run time and used as the key or
+  index — `{{ state[nodes.get_order_1.output.order.contextId] || state.default }}`. It lowers to the
+  new `get` operator, nests (`a[b[c]]`) and takes a trailing path (`state[x].a.b`). Quoted and
+  numeric brackets stay static path segments. A `secrets` key or base refuses the expression.
+- `get` evaluator operator: `{ "get": [<object>, <key>] }` reads one own key or array index, whole
+  (a key containing dots is not split); `null` when missing or when the base is not an object.
 - `serializeTemplate` prints these expressions back as infix text (strings single-quoted), and
   `parseTemplate(serializeTemplate(x))` is stable. A shape it cannot spell keeps `{{ =<raw> }}`.
 - `parseReadableExpression` / `formatReadableExpression` accept and print the ternary too.

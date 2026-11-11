@@ -188,9 +188,10 @@ function tryChain(inner: string, tokens: ChainToken[]): ExprPart | null {
 //
 // The second infix production (RFC workflow.md, 2026-11-11 amendment). It engages ONLY when the
 // marker carries at least one top-level operator the flat chain does not know (`?`, `:`, a
-// comparison, `&&`, `!`, a parenthesis) — so a bare path, a vendor `{{name}}`, and every
-// `||`/`??` chain keep exactly the dispatch above. It lowers to the JSONLogic `@w6w/expr` already
-// evaluates (`if`, `===`, `and`, `!`, …); malformed text falls back to the pre-existing arms.
+// comparison, `&&`, `!`, a parenthesis) or a COMPUTED bracket key (`state[nodes.x.output.id]`, an
+// unquoted path inside `[…]`) — so a static path, a vendor `{{name}}`, and every `||`/`??` chain
+// over static paths keep exactly the dispatch above. It lowers to the JSONLogic `@w6w/expr`
+// evaluates (`if`, `===`, `and`, `!`, `get`, …); malformed text falls back to the pre-existing arms.
 
 /** Infix tokens: the longest spelling first, so `===` never reads as `==` + `=`. */
 const INLINE_OP = /(===|!==|==|!=|>=|<=|&&|\|\||\?\?|[!<>()?:])/y;
@@ -211,8 +212,10 @@ const INLINE_ONLY_OPS = new Set([
   "?",
   ":",
 ]);
-/** A reference operand: a path with optional `[n]` / `["key"]` / `['key']` segments. */
-const INLINE_REF = /[A-Za-z_$][\w$-]*(?:\.[\w$-]+|\[\s*(?:\d+|"[^"\\\n\r]*"|'[^'\\\n\r]*')\s*\])*/y;
+/** A reference operand's head, its `.name` segments, and its static `[n]`/`["key"]`/`['key']`. */
+const REF_HEAD = /[A-Za-z_$][\w$-]*/y;
+const REF_DOT = /\.([\w$-]+)/y;
+const REF_STATIC_BRACKET = /\[\s*(?:(\d+)|"([^"\\\n\r]*)"|'([^'\\\n\r]*)')\s*\]/y;
 const INLINE_NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w$.])/y;
 const STRING_ESCAPES: Record<string, string> = {
   n: "\n",
@@ -246,7 +249,8 @@ const INLINE_NARY = new Set(["or", "and", "??"]);
 const INLINE_MAX_DEPTH = 64;
 
 type InlineToken =
-  | { kind: "ref"; value: string }
+  /** `node` is the lowered `get` chain when the path has a computed `[ref]`; else null. */
+  | { kind: "ref"; value: string; node: unknown }
   | { kind: "lit"; value: string | number | boolean | null }
   | { kind: "op"; value: string };
 
@@ -278,6 +282,61 @@ function readQuoted(s: string, i: number): { value: string; end: number } | null
     }
   }
   return null;
+}
+
+/** `re` (sticky) matched at `s[i]`, or null. */
+function stickyAt(re: RegExp, s: string, i: number): RegExpExecArray | null {
+  re.lastIndex = i;
+  return re.exec(s);
+}
+
+/**
+ * Read one reference operand at `s[i]`. A static path (`a.b`, `a[0]`, `a["k"]`) comes back as its
+ * raw text with `node: null` — the caller normalises it exactly as before. A path holding a
+ * COMPUTED key — an unquoted path inside `[…]`, `state[nodes.x.output.id]` — lowers to nested
+ * `{"get":[<object>, <key>]}`: the static prefix is one `var`, each computed key is its own
+ * expression (itself possibly computed: `a[b[c]]`), and every segment after the first computed
+ * key is a literal key on its own `get` (never a dotted string, since a key may contain dots).
+ */
+function readRef(
+  s: string,
+  i: number,
+  depth: number,
+): { raw: string; node: unknown; end: number } | null {
+  if (depth > INLINE_MAX_DEPTH) return null;
+  const head = stickyAt(REF_HEAD, s, i);
+  if (!head) return null;
+  let j = i + head[0].length;
+  let node: unknown = null;
+  while (j < s.length) {
+    const dot = stickyAt(REF_DOT, s, j);
+    if (dot) {
+      if (node !== null) node = { get: [node, dot[1]] };
+      j += dot[0].length;
+      continue;
+    }
+    const fixed = stickyAt(REF_STATIC_BRACKET, s, j);
+    if (fixed) {
+      if (node !== null) {
+        node = { get: [node, fixed[1] !== undefined ? Number(fixed[1]) : (fixed[2] ?? fixed[3])] };
+      }
+      j += fixed[0].length;
+      continue;
+    }
+    if (s[j] !== "[") break;
+    let k = j + 1;
+    while (k < s.length && /\s/.test(s[k])) k += 1;
+    const key = readRef(s, k, depth + 1);
+    if (!key) return null;
+    if (key.node === null && ["true", "false", "null"].includes(key.raw)) return null;
+    k = key.end;
+    while (k < s.length && /\s/.test(s[k])) k += 1;
+    if (s[k] !== "]") return null;
+    const keyExpr = key.node ?? { var: normalizeRefPath(key.raw) };
+    node = { get: [node ?? { var: normalizeRefPath(s.slice(i, j)) }, keyExpr] };
+    j = k + 1;
+  }
+  return { raw: s.slice(i, j), node, end: j };
 }
 
 /**
@@ -314,14 +373,14 @@ function tokenizeInline(s: string): InlineToken[] | null {
       i += num.length;
       continue;
     }
-    const ref = sticky(INLINE_REF);
+    const ref = readRef(s, i, 0);
     if (ref) {
-      if (ref === "true" || ref === "false" || ref === "null") {
-        tokens.push({ kind: "lit", value: JSON.parse(ref) });
+      if (ref.node === null && ["true", "false", "null"].includes(ref.raw)) {
+        tokens.push({ kind: "lit", value: JSON.parse(ref.raw) });
       } else {
-        tokens.push({ kind: "ref", value: ref });
+        tokens.push({ kind: "ref", value: ref.raw, node: ref.node });
       }
-      i += ref.length;
+      i = ref.end;
       continue;
     }
     const op = sticky(INLINE_OP);
@@ -340,6 +399,15 @@ function isSecretRef(ref: string): boolean {
   return /^secrets(?:[.[]|$)/.test(ref);
 }
 
+/** True when any `{ var }` anywhere in `v` — an operand, a computed key or its base — is secret. */
+function readsSecret(v: unknown): boolean {
+  if (v === null || typeof v !== "object") return false;
+  if (Array.isArray(v)) return v.some(readsSecret);
+  const ref = asVarOperand(v);
+  if (ref !== undefined) return isSecretRef(ref);
+  return Object.values(v as Record<string, unknown>).some(readsSecret);
+}
+
 /** Thrown inside {@link parseInline} for malformed text; never escapes it. */
 class InlineMalformed extends Error {}
 
@@ -347,19 +415,19 @@ class InlineMalformed extends Error {}
 type InlineResult = { expr: unknown } | "refused" | null;
 
 /**
- * Parse `inner` as an inline expression. Null when it carries no inline-only operator (so the
- * caller's pre-existing arms keep it), when it is malformed, or when it reduces to a bare path or
- * literal. `"refused"` when it is well-formed but any reference operand reads `secrets` — refused
+ * Parse `inner` as an inline expression. Null when it carries neither an inline-only operator nor a
+ * computed bracket key (so the caller's pre-existing arms keep it), when it is malformed, or when
+ * it reduces to a bare static path or literal. `"refused"` when it is well-formed but any `var` in
+ * it — an operand, a computed key, or the object a key is read from — reads `secrets`: refused
  * outright, exactly like a chain with a `secrets.` operand, never filtered after the fact.
  */
 function parseInline(inner: string): InlineResult {
   const tokens = tokenizeInline(inner);
-  if (!tokens || !tokens.some((t) => t.kind === "op" && INLINE_ONLY_OPS.has(t.value))) {
-    return null;
-  }
+  const engages = (t: InlineToken) =>
+    (t.kind === "op" && INLINE_ONLY_OPS.has(t.value)) || (t.kind === "ref" && t.node !== null);
+  if (!tokens || !tokens.some(engages)) return null;
   let pos = 0;
   let depth = 0;
-  let secretRef = false;
   /** Nodes written inside `( … )` — never flattened into a neighbouring n-ary or `if`. */
   const grouped = new WeakSet<object>();
   const isOp = (value: string) => {
@@ -381,9 +449,9 @@ function parseInline(inner: string): InlineResult {
       }
       if (t.kind === "ref") {
         pos += 1;
-        const ref = normalizeRefPath(t.value);
-        if (isSecretRef(ref) || isSecretRef(t.value)) secretRef = true;
-        return { var: ref };
+        if (t.node !== null) return t.node;
+        if (isSecretRef(t.value)) return { var: t.value }; // refused below, whatever its spelling
+        return { var: normalizeRefPath(t.value) };
       }
       if (t.value === "!") {
         pos += 1;
@@ -459,7 +527,7 @@ function parseInline(inner: string): InlineResult {
   if (pos !== tokens.length) return null;
   // A bare path or literal (`(vars.a)`, `("x")`) is not an expression: keep today's arms.
   if (expr === null || typeof expr !== "object" || asVarOperand(expr) !== undefined) return null;
-  if (secretRef) return "refused";
+  if (readsSecret(expr)) return "refused";
   return { expr };
 }
 
@@ -473,6 +541,7 @@ function inlineNode(v: unknown): { key: string; args: unknown[] } | null {
   const key = keys[0];
   if (key === "if") return args.length >= 3 && args.length % 2 === 1 ? { key, args } : null;
   if (key === "!") return args.length === 1 ? { key, args } : null;
+  if (key === "get") return args.length === 2 ? { key, args } : null;
   if (INLINE_NARY.has(key)) return args.length >= 2 ? { key, args } : null;
   if (Object.hasOwn(INLINE_PRECEDENCE, key)) return args.length === 2 ? { key, args } : null;
   return null;
@@ -537,12 +606,38 @@ function printInlineRef(ref: string): string | null {
   return out;
 }
 
+/**
+ * A path operand — a `var`, or a `get` chain — in bracket form: `state[nodes.x.id].a["b.c"]`.
+ * A literal key prints only after a computed one (before it, it would have been part of the
+ * static `var` path); null for any shape the reference grammar cannot spell.
+ */
+function printRefExpr(v: unknown): string | null {
+  const ref = asVarOperand(v);
+  if (ref !== undefined) return printInlineRef(ref);
+  const node = inlineNode(v);
+  if (!node || node.key !== "get") return null;
+  const [base, key] = node.args;
+  const head = printRefExpr(base);
+  if (head === null) return null;
+  const afterComputed = inlineNode(base)?.key === "get";
+  if (typeof key === "string" && afterComputed) {
+    if (/^[\w$-]+$/.test(key)) return `${head}.${key}`;
+    return /["\\\n\r]/.test(key) ? null : `${head}["${key}"]`;
+  }
+  if (typeof key === "number" && afterComputed) {
+    return Number.isSafeInteger(key) && key >= 0 && !Object.is(key, -0) ? `${head}[${key}]` : null;
+  }
+  const computed = printRefExpr(key);
+  return computed === null ? null : `${head}[${computed}]`;
+}
+
 /** How tightly a printed node binds: ternary 0, the infix table, `!` 6, an operand 7. */
 function inlinePrecedence(v: unknown): number {
   const node = inlineNode(v);
   if (!node) return 7;
   if (node.key === "if") return 0;
   if (node.key === "!") return 6;
+  if (node.key === "get") return 7;
   const token = node.key === "and" ? "&&" : node.key === "or" ? "||" : node.key;
   return INLINE_PRECEDENCE[token];
 }
@@ -566,7 +661,9 @@ function formatInline(expr: unknown): string | null {
       } else {
         const node = inlineNode(v)!;
         const own = inlinePrecedence(v);
-        if (node.key === "if") {
+        if (node.key === "get") {
+          text = printRefExpr(v);
+        } else if (node.key === "if") {
           const pieces: string[] = [];
           for (let i = 0; i < node.args.length - 1; i += 2) {
             const c = print(node.args[i], 1);

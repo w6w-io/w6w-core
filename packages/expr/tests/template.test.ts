@@ -735,3 +735,122 @@ Deno.test("inline: coalesceOperandRefs returns an inline expression's refs for r
   assertEquals(coalesceOperandRefs({ if: [{ var: "a" }, 1] }), null);
   assertEquals(coalesceOperandRefs({ if: [{ "+": [1, 2] }, 1, 2] }), null);
 });
+
+// --- computed bracket keys: `state[nodes.x.output.id]` (2026-11-11) -----------------------
+
+const ORDER_DATA = {
+  state: {
+    evt_zZcKxYqV3VywLiiOo8Fq: "order-confirmation-email-2",
+    default: "order-confirmation-email",
+    "a.b": { c: 1 },
+    m: { k1: { x: [10, 20] } },
+    keys: { inner: "k1" },
+  },
+  nodes: { get_order_1: { output: { order: { contextId: "evt_zZcKxYqV3VywLiiOo8Fq" } } } },
+  var: { i: 1, k: "a.b", n: "inner" },
+};
+
+Deno.test("computed key: the user's state[contextId] || state.default resolves both ways", () => {
+  const expr = exprOf("{{ state[nodes.get_order_1.output.order.contextId] || state.default }}");
+  assertEquals(expr, {
+    or: [
+      { get: [{ var: "state" }, { var: "nodes.get_order_1.output.order.contextId" }] },
+      { var: "state.default" },
+    ],
+  });
+  assertEquals(evaluate(expr, ORDER_DATA), "order-confirmation-email-2");
+  const missing = {
+    ...ORDER_DATA,
+    nodes: { get_order_1: { output: { order: { contextId: "evt_other" } } } },
+  };
+  assertEquals(evaluate(expr, missing), "order-confirmation-email");
+  assertEquals(coalesceOperandRefs(expr), [
+    "state",
+    "nodes.get_order_1.output.order.contextId",
+    "state.default",
+  ]);
+});
+
+Deno.test("computed key: a key holding dots is one key, never a dotted path", () => {
+  const expr = exprOf("{{ state[var.k].c }}");
+  assertEquals(expr, { get: [{ get: [{ var: "state" }, { var: "var.k" }] }, "c"] });
+  assertEquals(evaluate(expr, ORDER_DATA), 1);
+});
+
+Deno.test("computed key: nesting, trailing path, indexes, and use in ternary/comparison/??", () => {
+  const nested = exprOf("{{ state.m[state.keys[var.n]].x[1] }}");
+  assertEquals(nested, {
+    get: [
+      {
+        get: [
+          { get: [{ var: "state.m" }, { get: [{ var: "state.keys" }, { var: "var.n" }] }] },
+          "x",
+        ],
+      },
+      1,
+    ],
+  });
+  assertEquals(evaluate(nested, ORDER_DATA), 20);
+  assertEquals(
+    evaluate(exprOf("{{ state.m[state.keys[var.n]].x[var.i] == 20 ? 'yes' : 'no' }}"), ORDER_DATA),
+    "yes",
+  );
+  assertEquals(evaluate(exprOf("{{ state[var.missing] ?? 'none' }}"), ORDER_DATA), "none");
+  // Whitespace inside the brackets, and a static ["key"] after a computed one.
+  assertEquals(exprOf(`{{ state[ var.k ]["c"] }}`), exprOf("{{ state[var.k].c }}"));
+});
+
+Deno.test("computed key: a secrets key OR base refuses the whole expression, in both modes", () => {
+  for (
+    const inner of [
+      "state[secrets.K]",
+      "state[secrets.K] || 'x'",
+      "secrets[var.k]",
+      "var.a ? state[var.b[secrets.K]] : 1",
+      "state[var.k] || secrets.K",
+    ]
+  ) {
+    for (const mode of ["editor", "render"] as const) {
+      assertEquals(parseTemplate(`{{ ${inner} }}`, mode), [{ kind: "var", ref: inner }], inner);
+    }
+    assertEquals(hasRefusedChainToken(inner), true, inner);
+  }
+});
+
+Deno.test("computed key: static brackets, and malformed brackets, keep the pre-existing parse", () => {
+  assertEquals(parseTemplate(`{{ state["evt"] }}`), [{ kind: "var", ref: "state.evt" }]);
+  assertEquals(parseTemplate("{{ state[0] }}"), [{ kind: "var", ref: "state.0" }]);
+  assertEquals(parseTemplate("{{ state[var.k }}"), [{ kind: "var", ref: "state[var.k" }]);
+  assertEquals(parseTemplate("{{ state[true] }}"), [{ kind: "var", ref: "state[true]" }]);
+  assertEquals(parseTemplate("{{ state[var.k + 1] }}"), [{ kind: "var", ref: "state[var.k + 1]" }]);
+  assertEquals(parseTemplate("{{ state[] }}"), [{ kind: "var", ref: "state[]" }]);
+});
+
+Deno.test("computed key: serialize prints bracket form and parse(serialize(x)) is stable", () => {
+  for (
+    const template of [
+      "{{ state[nodes.get_order_1.output.order.contextId] || state.default }}",
+      "{{ state[var.k].c }}",
+      "{{ state.m[state.keys[var.n]].x[1] }}",
+      "{{ state[var.k][\"has space\"].x ?? 'none' }}",
+      "{{ state[var.k] == 'x' ? state[var.j].y : null }}",
+    ]
+  ) {
+    const parts = parseTemplate(template);
+    assertEquals(parts[0].kind, "expr", template);
+    assertEquals(serializeTemplate(parts), template, template);
+    assertEquals(parseTemplate(serializeTemplate(parts)), parts, template);
+  }
+  // A `get` that the bracket grammar cannot spell keeps the escape hatch.
+  for (
+    const expr of [
+      { get: [{ var: "state" }, "literal"] }, // a literal key straight on a static path
+      { get: [{ var: "state" }, { "+": [1, 2] }] },
+      { get: [{ get: [{ var: "a" }, { var: "b" }] }, 'q"uote'] },
+    ]
+  ) {
+    const parts: ExprPart[] = [{ kind: "expr", expr }];
+    assertEquals(serializeTemplate(parts), `{{ =${JSON.stringify(expr)} }}`);
+    assertEquals(parseTemplate(serializeTemplate(parts)), parts);
+  }
+});

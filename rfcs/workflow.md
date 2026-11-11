@@ -1852,13 +1852,23 @@ Operands are paths (bracket indexing allowed), single- or double-quoted strings,
 `!`. Example: `{{ var.a === var.b ? 'option1' : 'option2' }}` →
 `{"if":[{"===":[{"var":"var.a"},{"var":"var.b"}]},"option1","option2"]}`.
 
+A bracket holding an **unquoted path** is a **computed key**: the path is read at run time and its
+value is used as the key or index. `{{ state[nodes.o.output.id] || state.default }}` →
+`{"or":[{"get":[{"var":"state"},{"var":"nodes.o.output.id"}]},{"var":"state.default"}]}`. The
+static prefix is one `var`; each computed key is its own expression (it may itself hold a computed
+key, `a[b[c]]`); every segment after the first computed key is a literal key on its own `get`, so
+a key containing dots is never split. `get` is specified by `@w6w/expr`: one own key or array
+index, `null` when missing or when the base is not an object. A quoted or numeric bracket
+(`a["k"]`, `a[0]`) stays a static path segment, unchanged.
+
 A host that implements the `{{ }}` grammar MUST:
 
 - Engage this production **only** for a marker that has at least one top-level `?` (not `??`), `:`,
-  comparison, `&&`, `!` or parenthesis outside a string or bracket index. Every other marker parses
+  comparison, `&&`, `!`, parenthesis or computed key outside a string or bracket index. Every other marker parses
   as the earlier productions define. Testably, `{{ vars.a }}`, `{{ secrets.K }}` and
   `{{ vars.a || "x" }}` parse exactly as before.
-- Refuse the **whole** expression when any path operand, at any depth, reads `secrets`. Return a
+- Refuse the **whole** expression when any path, at any depth, reads `secrets`: an operand, a
+  computed key, or the object a key is read from (`{{ state[secrets.K] }}`, `{{ secrets[vars.k] }}`). Return a
   `var` part with the original text, in both modes, never a `secret` part. Testably,
   `{{ vars.a ? 1 : secrets.K }}` is a single `var` part. This is the chain rule from 2026-08-20,
   applied to the larger production.
