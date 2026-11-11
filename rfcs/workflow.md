@@ -1837,3 +1837,36 @@ a reference remain data and are never interpreted a second time. Literal source 
 as Run script's `code`) retain their literal semantics. Recorded parameters reflect the merged
 result, with the existing secret redaction rules. Editors must indicate active customization even
 when the ordinary parameter form is selected.
+
+## Amendment — 2026-11-11: inline expressions in `{{ }}`
+
+> Additive to [Amendment — 2026-08-20](#amendment--2026-08-20-infix-fallback-operators-in--), whose
+> chain production, refusal rule and root-anchoring rule are unchanged. 0 lines are deleted.
+
+A marker may hold an **inline expression**: a ternary `C ? A : B`, the comparisons `===` `==` `!==`
+`!=` `<` `<=` `>` `>=`, `&&`, prefix `!`, `||`/`??` inside a larger expression, and parentheses.
+Operands are paths (bracket indexing allowed), single- or double-quoted strings, numbers, `true`,
+`false` and `null`. It parses to the existing `expr` part kind, carrying ordinary JSONLogic: `if`
+(an unparenthesised else-ternary flattens into one `if` array), the comparison of the same name,
+`and`, `or`, `??`, `!`. Precedence from loosest: ternary, `??`, `||`, `&&`, equality, relational,
+`!`. Example: `{{ var.a === var.b ? 'option1' : 'option2' }}` →
+`{"if":[{"===":[{"var":"var.a"},{"var":"var.b"}]},"option1","option2"]}`.
+
+A host that implements the `{{ }}` grammar MUST:
+
+- Engage this production **only** for a marker that has at least one top-level `?` (not `??`), `:`,
+  comparison, `&&`, `!` or parenthesis outside a string or bracket index. Every other marker parses
+  as the earlier productions define. Testably, `{{ vars.a }}`, `{{ secrets.K }}` and
+  `{{ vars.a || "x" }}` parse exactly as before.
+- Refuse the **whole** expression when any path operand, at any depth, reads `secrets`. Return a
+  `var` part with the original text, in both modes, never a `secret` part. Testably,
+  `{{ vars.a ? 1 : secrets.K }}` is a single `var` part. This is the chain rule from 2026-08-20,
+  applied to the larger production.
+- Fall back to the earlier productions for malformed text, such as a missing `:`, an unclosed quote
+  or parenthesis, a function call or a lone `=`. Never fail the parse.
+- For root-anchoring, judge an inline expression the way a chain is judged. It resolves iff every
+  `{ "var": … }` operand names a rooted path, and otherwise the whole marker is refused. The check
+  goes by **shape**, so a `{{ =<JSONLogic> }}` payload of the same shape is judged the same way.
+  Testably, `{{ vars.a ? badroot.x : 1 }}` is refused in full.
+- Serialize such a payload back to infix text so that re-parsing it yields the identical JSONLogic.
+  Fall back to `{{ =<raw> }}` when no such text exists.

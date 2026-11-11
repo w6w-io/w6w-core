@@ -81,6 +81,35 @@ any operand begins `secrets.`; see
 [`rfcs/workflow.md`](https://github.com/w6w-io/w6w-core/blob/main/rfcs/workflow.md)'s 2026-08-20
 amendment for the full grammar.
 
+### Inline expressions: ternary and comparisons
+
+A marker may also hold a small expression. It lowers to the JSONLogic above:
+
+```ts
+parseTemplate("{{ var.a === var.b ? 'option1' : 'option2' }}");
+// [{ kind: "expr", expr: { if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"] } }]
+
+parseTemplate("{{ var.n > 10 ? 'big' : var.n > 0 ? 'small' : 'none' }}");
+// one flat `if`: [cond1, "big", cond2, "small", "none"]
+```
+
+| Syntax                                  | JSONLogic                         |
+| --------------------------------------- | --------------------------------- |
+| `c ? a : b` (right-associative)         | `if`                              |
+| `===` `==` `!==` `!=` `<` `<=` `>` `>=` | the operator of the same name     |
+| `&&` · `\|\|` · `??` · `!x` · `( … )`   | `and` · `or` · `??` · `!` · group |
+
+From loosest to tightest: the ternary, `??`, `||`, `&&`, equality, relational, `!`. Operands are
+paths (`steps.s.output.rows[0]['name']`), single- or double-quoted strings, numbers, `true`, `false`
+and `null`. A `?` or `:` inside a string or a bracket index is not an operator.
+
+The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!` or a
+parenthesis. A bare path, `secrets.NAME`, a vendor placeholder and a flat `||`/`??` chain parse as
+before. Malformed text falls back the same way, to a `var` part. Any operand that reads `secrets`
+refuses the whole expression to a `var` part carrying the original text, as with a chain.
+`serializeTemplate` prints the expression back as infix text with single-quoted strings, and falls
+back to `{{ =<raw> }}` for a shape it cannot spell. See `rfcs/workflow.md`'s 2026-11-11 amendment.
+
 ## API
 
 Editors can accept readable conditions and compile them to the existing JSONLogic format:
@@ -94,13 +123,15 @@ formatReadableExpression(rule); // '(state.source == "eventbrite") && state.enab
 ```
 
 The authoring syntax supports `==`, `!=`, `===`, `!==`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `??`, `!`,
-parentheses, dotted field paths and quoted strings/numbers/booleans/null. It does not execute
-JavaScript or allow function calls. An optional reference resolver expands an editor's short field
-names. Invalid input throws `ReadableExpressionError` with a character position. The formatter
-returns `null` for legacy JSONLogic outside this subset.
+the ternary `cond ? a : b`, parentheses, dotted field paths and quoted
+strings/numbers/booleans/null. It does not execute JavaScript or allow function calls. An optional
+reference resolver expands an editor's short field names. Invalid input throws
+`ReadableExpressionError` with a character position. The formatter returns `null` for legacy
+JSONLogic outside this subset.
 
 This is an editor compiler; workflow manifests still store JSONLogic expressions or their
-`{{ =<jsonlogic> }}` template form. The runtime template grammar remains unchanged.
+`{{ =<jsonlogic> }}` template form. The runtime `{{ }}` grammar accepts the same operators (see
+above).
 
 | Export                  | Purpose                                                     |
 | ----------------------- | ----------------------------------------------------------- |

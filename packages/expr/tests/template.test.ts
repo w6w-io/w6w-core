@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert@^1.0.0";
 import type { ExprPart } from "../../types/mod.ts";
 import {
   coalesceOperandRefs,
+  evaluate,
   hasRefusedChainToken,
   parseCoalesceChain,
   parseRenderTemplate,
@@ -470,4 +471,267 @@ Deno.test("escape — a marker that is not ours keeps its backslash (vendor Hand
     { kind: "text", value: " " },
     { kind: "var", ref: "var.x" },
   ]);
+});
+
+// --- inline expressions: ternary, comparisons, `&&`, `!`, parentheses (2026-11-11) -----------
+
+const exprOf = (template: string): unknown => {
+  const parts = parseTemplate(template);
+  assertEquals(parts.length, 1, template);
+  assertEquals(parts[0].kind, "expr", template);
+  return parts[0].expr;
+};
+
+Deno.test("inline: the user's ternary lowers to JSONLogic if/=== and evaluates", () => {
+  const expr = exprOf("{{ var.a === var.b ? 'option1' : 'option2' }}");
+  assertEquals(expr, {
+    if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"],
+  });
+  assertEquals(evaluate(expr, { var: { a: 1, b: 1 } }), "option1");
+  assertEquals(evaluate(expr, { var: { a: 1, b: "1" } }), "option2");
+});
+
+Deno.test("inline: every comparison operator, in the condition", () => {
+  const data = { var: { n: 2 } };
+  for (
+    const [op, expected] of [
+      ["===", "y"],
+      ["==", "y"],
+      ["!==", "n"],
+      ["!=", "n"],
+      ["<", "n"],
+      ["<=", "y"],
+      [">", "n"],
+      [">=", "y"],
+    ] as const
+  ) {
+    const expr = exprOf(`{{ var.n ${op} 2 ? 'y' : 'n' }}`);
+    assertEquals(expr, { if: [{ [op]: [{ var: "var.n" }, 2] }, "y", "n"] }, op);
+    assertEquals(evaluate(expr, data), expected, op);
+  }
+  // A comparison alone (no ternary) is an expression too.
+  assertEquals(exprOf("{{ var.n > 1 }}"), { ">": [{ var: "var.n" }, 1] });
+});
+
+Deno.test("inline: a nested else-ternary is right-associative and flattens into one if", () => {
+  const expr = exprOf(`{{ var.n > 10 ? "big" : var.n > 0 ? 'small' : 'none' }}`);
+  assertEquals(expr, {
+    if: [{ ">": [{ var: "var.n" }, 10] }, "big", { ">": [{ var: "var.n" }, 0] }, "small", "none"],
+  });
+  assertEquals(evaluate(expr, { var: { n: 11 } }), "big");
+  assertEquals(evaluate(expr, { var: { n: 3 } }), "small");
+  assertEquals(evaluate(expr, { var: { n: -1 } }), "none");
+  // Parentheses keep the nesting exactly as written, in either arm.
+  assertEquals(exprOf("{{ var.a ? (var.b ? 1 : 2) : 3 }}"), {
+    if: [{ var: "var.a" }, { if: [{ var: "var.b" }, 1, 2] }, 3],
+  });
+  assertEquals(exprOf("{{ var.a ? 1 : (var.b ? 2 : 3) }}"), {
+    if: [{ var: "var.a" }, 1, { if: [{ var: "var.b" }, 2, 3] }],
+  });
+  // Unparenthesised then-arm ternary, as JavaScript allows.
+  assertEquals(exprOf("{{ var.a ? var.b ? 1 : 2 : 3 }}"), {
+    if: [{ var: "var.a" }, { if: [{ var: "var.b" }, 1, 2] }, 3],
+  });
+});
+
+Deno.test("inline: !, && and ||/?? in the condition, with precedence and parentheses", () => {
+  const expr = exprOf("{{ !var.off && (var.n <= 3 || var.force) ? var.items[0] : null }}");
+  assertEquals(expr, {
+    if: [
+      {
+        and: [
+          { "!": [{ var: "var.off" }] },
+          { or: [{ "<=": [{ var: "var.n" }, 3] }, { var: "var.force" }] },
+        ],
+      },
+      { var: "var.items.0" },
+      null,
+    ],
+  });
+  assertEquals(evaluate(expr, { var: { off: false, n: 9, force: true, items: ["x"] } }), "x");
+  assertEquals(evaluate(expr, { var: { off: true, n: 1, items: ["x"] } }), null);
+  // `&&` binds tighter than `||`, `||` tighter than `??`, and the ternary loosest of all.
+  assertEquals(exprOf("{{ var.a ?? var.b || var.c && var.d ? 1 : 0 }}"), {
+    if: [
+      {
+        "??": [{ var: "var.a" }, {
+          or: [{ var: "var.b" }, { and: [{ var: "var.c" }, { var: "var.d" }] }],
+        }],
+      },
+      1,
+      0,
+    ],
+  });
+  // An unparenthesised run of one n-ary operator is one flat array.
+  assertEquals(exprOf("{{ var.a && var.b && var.c ? 1 : 0 }}"), {
+    if: [{ and: [{ var: "var.a" }, { var: "var.b" }, { var: "var.c" }] }, 1, 0],
+  });
+});
+
+Deno.test("inline: literals — both quote styles, escapes, numbers, booleans, null", () => {
+  assertEquals(
+    exprOf(`{{ var.a ? "dq" : 'sq' }}`),
+    { if: [{ var: "var.a" }, "dq", "sq"] },
+  );
+  assertEquals(
+    exprOf(`{{ var.a ? 'it\\'s' : "say \\"hi\\"\\n" }}`),
+    { if: [{ var: "var.a" }, "it's", 'say "hi"\n'] },
+  );
+  assertEquals(exprOf("{{ var.a == -1.5e2 ? true : false }}"), {
+    if: [{ "==": [{ var: "var.a" }, -150] }, true, false],
+  });
+  assertEquals(exprOf("{{ var.a === null ? 0 : 1 }}"), {
+    if: [{ "===": [{ var: "var.a" }, null] }, 0, 1],
+  });
+});
+
+Deno.test("inline: ? : and comparisons inside strings or brackets are not operators", () => {
+  assertEquals(exprOf("{{ var.a ? 'x ? y : z' : \"a === b\" }}"), {
+    if: [{ var: "var.a" }, "x ? y : z", "a === b"],
+  });
+  assertEquals(exprOf(`{{ steps.s.output["a:b"] == 'x' ? 1 : 2 }}`), {
+    if: [{ "==": [{ var: "steps.s.output.a:b" }, "x"] }, 1, 2],
+  });
+  // Bracket indexing normalises exactly as an ordinary marker does.
+  assertEquals(exprOf(`{{ steps.s.output.rows[0]['name'] ? 1 : 2 }}`), {
+    if: [{ var: "steps.s.output.rows.0.name" }, 1, 2],
+  });
+});
+
+Deno.test("inline: a secrets operand ANYWHERE refuses the whole expression to the var arm", () => {
+  for (
+    const inner of [
+      "secrets.K === 'a' ? 1 : 2",
+      "var.a ? secrets.K : 2",
+      "var.a ? 1 : secrets.K",
+      "var.a ? 1 : var.b ? 2 : secrets.K",
+      "!secrets.K",
+      "var.a === secrets['K'] ? 1 : 2",
+      "(var.a || secrets.K) ? 1 : 2",
+    ]
+  ) {
+    for (const mode of ["editor", "render"] as const) {
+      const parts = parseTemplate(`{{ ${inner} }}`, mode);
+      assertEquals(parts, [{ kind: "var", ref: inner }], `${mode}: ${inner}`);
+      assertEquals(hasRefusedChainToken(inner), true, inner);
+    }
+  }
+});
+
+Deno.test("inline: malformed input falls back exactly as before (never throws)", () => {
+  for (
+    const [template, expected] of [
+      ["{{ var.a ? 1 }}", [{ kind: "var", ref: "var.a ? 1" }]],
+      ["{{ var.a ? : 2 }}", [{ kind: "var", ref: "var.a ? : 2" }]],
+      ["{{ var.a = 1 ? 2 : 3 }}", [{ kind: "var", ref: "var.a = 1 ? 2 : 3" }]],
+      ["{{ (var.a ? 1 : 2 }}", [{ kind: "var", ref: "(var.a ? 1 : 2" }]],
+      ["{{ var.a ? 'open : 2 }}", [{ kind: "var", ref: "var.a ? 'open : 2" }]],
+      ["{{ var.a.toLowerCase() == 'x' ? 1 : 2 }}", [{
+        kind: "var",
+        ref: "var.a.toLowerCase() == 'x' ? 1 : 2",
+      }]],
+      ["{{ (var.a) }}", [{ kind: "var", ref: "(var.a)" }]],
+      ["{{> partial}}", [{ kind: "var", ref: "> partial" }]],
+      ["{{var:name}}", [{ kind: "var", ref: "var:name" }]],
+      ["{{! a Handlebars comment }}", [{ kind: "var", ref: "! a Handlebars comment" }]],
+      // A mixed `||`/`??` chain with no inline-only operator is still the chain's refusal.
+      ["{{ vars.a || vars.b ?? vars.c }}", [{ kind: "var", ref: "vars.a || vars.b ?? vars.c" }]],
+    ] as const
+  ) {
+    assertEquals(parseTemplate(template), expected as unknown as ExprPart[], template);
+  }
+  // Too deep to be authored by hand: refused, not a stack overflow.
+  const deep = "(".repeat(200) + "var.a == 1" + ")".repeat(200);
+  assertEquals(parseTemplate(`{{ ${deep} }}`)[0].kind, "var");
+});
+
+Deno.test("inline: plain paths, secrets and ||/?? chains keep their pre-existing parse", () => {
+  assertEquals(parseTemplate("{{ var.a }}"), [{ kind: "var", ref: "var.a" }]);
+  assertEquals(parseTemplate("{{ secrets.K }}"), [{ kind: "secret", ref: "K" }]);
+  assertEquals(parseTemplate('{{ var.a || "x" }}'), [
+    { kind: "expr", expr: { or: [{ var: "var.a" }, "x"] } },
+  ]);
+  // Byte-identical chain behaviour: a single-quoted chain operand is still read as a path.
+  assertEquals(parseTemplate("{{ var.a ?? 'x' }}"), [
+    { kind: "expr", expr: { "??": [{ var: "var.a" }, { var: "'x'" }] } },
+  ]);
+});
+
+Deno.test("inline: serialize prints readable infix and parse(serialize(x)) is stable", () => {
+  for (
+    const template of [
+      "{{ var.a === var.b ? 'option1' : 'option2' }}",
+      "{{ var.n > 10 ? 'big' : var.n > 0 ? 'small' : 'none' }}",
+      "{{ var.a ? (var.b ? 1 : 2) : 3 }}",
+      "{{ var.a ? 1 : (var.b ? 2 : 3) }}",
+      "{{ !var.off && (var.n <= 3 || var.force) ? var.items.0 : null }}",
+      "{{ (var.a ? 1 : 2) == 1 }}",
+      "{{ var.a ? 'it\\'s' : 'x ? y : z' }}",
+      "Hello {{ var.name }}, you are {{ var.age >= 18 ? 'an adult' : 'a minor' }}.",
+    ]
+  ) {
+    const parts = parseTemplate(template);
+    assertEquals(serializeTemplate(parts), template, template);
+    assertEquals(parseTemplate(serializeTemplate(parts)), parts, template);
+  }
+  // Double quotes and bracket indexing normalise to the canonical spelling, then hold.
+  const t = `{{ var.list[0] == "x" ? "a" : "b" }}`;
+  const once = serializeTemplate(parseTemplate(t));
+  assertEquals(once, "{{ var.list.0 == 'x' ? 'a' : 'b' }}");
+  assertEquals(serializeTemplate(parseTemplate(once)), once);
+});
+
+Deno.test("inline: a path segment that is not a plain name prints in bracket form", () => {
+  const parts: ExprPart[] = [{
+    kind: "expr",
+    expr: { if: [{ "==": [{ var: "steps.my step.output.a:b" }, 1] }, "y", "n"] },
+  }];
+  assertEquals(serializeTemplate(parts), `{{ steps["my step"].output["a:b"] == 1 ? 'y' : 'n' }}`);
+  assertEquals(parseTemplate(serializeTemplate(parts)), parts);
+});
+
+Deno.test("inline: an =<jsonlogic> payload of an inline shape promotes to infix on round trip", () => {
+  const parts = parseTemplate('{{ ={"if":[{"==":[{"var":"var.a"},1]},"y","n"]} }}');
+  assertEquals(serializeTemplate(parts), "{{ var.a == 1 ? 'y' : 'n' }}");
+  assertEquals(parseTemplate(serializeTemplate(parts)), parts);
+  // An un-flattened nested else-if keeps its nesting through parentheses.
+  const nested: ExprPart[] = [{
+    kind: "expr",
+    expr: { if: [{ var: "var.a" }, 1, { if: [{ var: "var.b" }, 2, 3] }] },
+  }];
+  assertEquals(serializeTemplate(nested), "{{ var.a ? 1 : (var.b ? 2 : 3) }}");
+  assertEquals(parseTemplate(serializeTemplate(nested)), nested);
+});
+
+Deno.test("inline: shapes the grammar cannot spell keep the {{ =<raw> }} escape hatch", () => {
+  for (
+    const expr of [
+      { if: [{ var: "var.a" }, 1] }, // no else arm
+      { if: [{ var: "secrets.K" }, 1, 2] }, // would be refused if printed
+      { if: [{ var: 'steps.a"b.output' }, 1, 2] }, // a segment with no bracket spelling
+      { if: [{ var: "var.a" }, "}}", 2] }, // would close the marker early
+      { "==": [{ var: "var.a" }, { "+": [1, 2] }] }, // an operator outside the grammar
+      { "<": [1, { var: "var.a" }, 3] }, // three-argument between
+      { "!": { var: "var.a" } }, // unary without the array
+    ]
+  ) {
+    const parts: ExprPart[] = [{ kind: "expr", expr }];
+    const text = serializeTemplate(parts);
+    assertEquals(text, `{{ =${JSON.stringify(expr)} }}`, JSON.stringify(expr));
+    assertEquals(parseTemplate(text), parts);
+  }
+});
+
+Deno.test("inline: coalesceOperandRefs returns an inline expression's refs for root-anchoring", () => {
+  assertEquals(
+    coalesceOperandRefs(exprOf("{{ var.a === steps.s.output.x ? var.b : 'n' }}")),
+    ["var.a", "steps.s.output.x", "var.b"],
+  );
+  // A Handlebars-ish `{{!name}}` parses as negation, but its unrooted ref keeps it someone
+  // else's marker for every consumer's root check.
+  assertEquals(coalesceOperandRefs(exprOf("{{!name}}")), ["name"]);
+  // Bare refs / unknown operators stay opaque (null).
+  assertEquals(coalesceOperandRefs({ var: "var.a" }), null);
+  assertEquals(coalesceOperandRefs({ if: [{ var: "a" }, 1] }), null);
+  assertEquals(coalesceOperandRefs({ if: [{ "+": [1, 2] }, 1, 2] }), null);
 });

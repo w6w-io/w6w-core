@@ -3,6 +3,34 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.4]
+
+### Added
+
+- `{{ }}` templates accept inline expressions: a ternary `cond ? a : b` (right-associative, so an
+  else arm may chain `: cond2 ? b : c`), the comparisons `===` `==` `!==` `!=` `<` `<=` `>` `>=`,
+  `&&`, `!`, `||`/`??` inside a larger expression, and parentheses. Operands are paths (bracket
+  indexing included), single- or double-quoted strings, numbers, `true`, `false` and `null`.
+  `{{ var.a === var.b ? 'option1' : 'option2' }}` parses to
+  `{ if: [{ "===": [{ var: "var.a" }, { var: "var.b" }] }, "option1", "option2"] }`.
+- `serializeTemplate` prints these expressions back as infix text (strings single-quoted), and
+  `parseTemplate(serializeTemplate(x))` is stable. A shape it cannot spell keeps `{{ =<raw> }}`.
+- `parseReadableExpression` / `formatReadableExpression` accept and print the ternary too.
+
+### Changed
+
+- `coalesceOperandRefs` also returns the `var` refs of an inline expression (and of an
+  `{{ =<jsonlogic> }}` payload of the same shape), so a consumer's root-anchoring check treats it
+  like a chain: ours only when every ref is rooted. Previously such a payload was always ours.
+- `hasRefusedChainToken` is also true for an inline expression refused because it reads `secrets`.
+
+### Unchanged
+
+- A marker with no inline-only operator (`?`, `:`, a comparison, `&&`, `!`, a parenthesis) parses
+  exactly as before: bare paths, `secrets.NAME`, vendor placeholders and flat `||`/`??` chains. A
+  single-quoted operand in a flat chain (`{{ a ?? 'x' }}`) is still read as a path.
+- Any operand reading `secrets` refuses the whole expression to a plain `var` part, as a chain does.
+
 ## [0.1.3]
 
 ### Added
