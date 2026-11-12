@@ -435,6 +435,8 @@ code**. They join the closed code set of the [Hook Runtime RFC](./hook-runtime.m
 | `jit_unavailable_in_background` | A `jit` authorization was requested in a run that has no inbound token. |
 | `credential_invalid` | The source or key is unusable, or the token exchange failed or returned something unusable. |
 
+> **Amended 2026-11-12:** a tenth code, `user_context_required`, is appended (phase `auth`): the resolver refused a user-owned credential because the execution is not an authenticated end user. `CREDENTIAL_ERROR_CODES` is the nine above plus this one, in that order — see [§Amendment — 2026-11-12](#amendment--2026-11-12-ownership-scope).
+
 ## Conformance
 
 A host that implements this RFC MUST satisfy:
@@ -566,3 +568,46 @@ from the inner object; `delegatedUser`, `scopes`, `location` and the `projectId`
 outer payload and land in the binding. A `serviceAccountKey` that is neither an object nor JSON text of
 one is `credential_invalid` with `field: "serviceAccountKey"` and fixed text. The flat payload is
 unchanged.
+
+## Amendment — 2026-11-12: ownership scope
+
+> **Additive.** This section adds an ownership scope to the Credential and states who may see and use
+> it. It edits none of the passages above; the error-code count is qualified by an inline note at
+> [§Error codes](#error-codes).
+
+### Scope
+
+A Credential has an `accessScope`: `account` or `user`. It is **independent of reuse**: whether a
+credential is private to one Connection or shared by several (the unchanged
+[Lifecycle policy](#lifecycle-policy)) says nothing about who owns it.
+
+- `account` — owned by `(tenant, account)`. This is the behaviour before this amendment and the
+  meaning of an absent scope.
+- `user` — owned by `(tenant, account, ownerSubject)`. `ownerSubject` is the **verified subject
+  string** of the end user (the identifier the host's authentication verified), never the host's
+  internal `users.id`. It is stamped by the host from the authenticated principal and is **never
+  client-supplied**; a request that names one is refused.
+
+`CredentialRecord` carries `accessScope` (required) and `ownerSubject` (present if and only if the
+scope is `user`). `createdBy` stays attribution only and does not decide ownership. The scope is
+**immutable after creation**: it is not edited, and a credential does not move between scopes.
+
+### Visibility and use
+
+A user-owned credential is visible to and usable by **its owner only**, and only when the execution is
+an authenticated end user. A service principal, an operator, an impersonated session and an
+unattended or background run are not such an execution and cannot use it. A foreign id and an absent id
+are **indistinguishable** to the caller.
+
+The ownership check **precedes any decrypt, hook, token-store read or egress**, including a cached
+authorization: a cache hit does not skip it. When the resolver refuses a user-owned credential because
+the execution is not an authenticated end user, it raises `user_context_required` (phase `auth`),
+which joins the resolution-time codes at [§Error codes](#error-codes).
+
+A user-owned credential is **never handed off to a spoke**; it resolves on the host that stores it.
+
+### Connections
+
+A Connection and the Credential it references must have **identical ownership**: account to account,
+or both user-owned by the same `ownerSubject`. The host's storage enforces this at attach time and as
+an invariant. See [Connection RFC §Amendment — 2026-11-12](./connection.md#amendment--2026-11-12-connection-ownership).
