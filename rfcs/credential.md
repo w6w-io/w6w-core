@@ -543,7 +543,9 @@ contract has no scopes or delegation.
 
 ### App-scoped and shared credentials
 
-A credential is either **shared** (account-wide, listed and attachable by any compatible app) or
+A credential is either **shared** (reusable: listed and attachable by any compatible app within its
+ownership scope — account-wide for `accessScope: "account"`, owner-only for `"user"`; see
+§Amendment — 2026-11-12) or
 **app-scoped** (private: created inline from one app's connect form and owned by that app's
 Connection). A host MUST:
 
