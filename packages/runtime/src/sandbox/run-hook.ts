@@ -8,6 +8,7 @@
  * where the egress allowlist is enforced and where `sign` runs.
  */
 import type { FileRef, InvocationContext, RedactedConnection, SignableRequest } from "@w6w/types";
+import { REAUTH_REQUIRED } from "@w6w/types";
 import { W6WError } from "../errors.ts";
 import type { ExecCode } from "../loader.ts";
 import type {
@@ -328,8 +329,15 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
           finish(() => resolvePromise(msg.value as T));
           return;
         case "error":
+          // A hook that says the user must sign in again (`ReauthRequiredError`, or any error whose
+          // `code` is `reauth_required`) is its own typed failure; every other one is `hook_failed`,
+          // its well-formed `code` (if any) kept in `details`.
           finish(() =>
-            reject(new W6WError("hook_failed", "execute", msg.error.message, msg.error))
+            reject(
+              msg.error.code === REAUTH_REQUIRED
+                ? new W6WError(REAUTH_REQUIRED, "auth", msg.error.message, msg.error)
+                : new W6WError("hook_failed", "execute", msg.error.message, msg.error),
+            )
           );
           return;
       }

@@ -632,6 +632,16 @@ first `lastRefreshedAt`, so the keep-alive clock starts then. A credential the u
   `refreshToken` changed but this value was carried over unchanged, it described the old token and
   is dropped.
 
+A vendor that reports lifetimes (`expiresIn`, `refreshTokenExpiresIn`) is converted by the hook,
+at response time: `expiresAt = now + expiresIn`. A vendor that replays a recent response to a
+just-rotated refresh token reports the REMAINING lifetime, so this is right for a replay too. A
+returned instant outranks the declared TTL, which outranks the default.
+- **Re-auth required:** a hook that learns the credential can never be renewed (the vendor refused
+  the refresh token as invalid, reused or expired, or the account is disabled) throws
+  `ReauthRequiredError` from `@w6w/types`, or any `Error` whose `code` is `"reauth_required"`,
+  optionally with the vendor's code as `reason`. See "Failure policy" below. Any other throw is a
+  transient failure.
+
 `normalizeHookRefreshedCredential(prev, next, { now, accessTokenTtlSeconds })` from `@w6w/runtime`
 applies these two rules; every other member is stored as the hook returned it. A host may store the
 two instants in its own format (the reference host stores ISO 8601).
@@ -777,3 +787,41 @@ from `accessTokenTtlSeconds`, and the hook runs at day 7, 14, ….
   [Connection lifecycle](./connection.md#lifecycle), and emits its usual connection-health event. A
   single failure never breaks a Connection, because a vendor outage of a few hours must not
   disconnect every user.
+- **Permanent failure.** Some failures mean the user must sign in again, and retrying cannot help.
+  The host moves the Connection to `broken` at once, on use or in the background, with no retries
+  and no 72 h wait, and emits the same event with the reason `reauth_required`. The on-use call
+  fails too. The two permanent failures are:
+  - a `refresh` hook throwing the re-auth signal (above);
+  - for the built-in refresh, the token endpoint answering `invalid_grant`. RFC 6749 §5.2 defines it
+    as a refresh token that is "invalid, expired, revoked, … or was issued to another client". The
+    host decides only after re-reading the stored credential, so a concurrent refresher that already
+    rotated the token is served rather than reported. A rotating vendor refusing the loser's reused
+    token is therefore not treated as a reason to break.
+
+  Every other failure is transient: 5xx, network, a timeout, an uncoded hook throw, and
+  `invalid_client` or other OAuth errors (a host's client configuration can be fixed without
+  the user).
+  The reason the hook gives, when it is a well-formed code (`[a-z][a-z0-9_]{0,63}`), is recorded with
+  the event; vendor text never is. The sandbox boundary carries an error's `code` and `reason` only
+  in that shape.
+
+### The `exchange` hook at connect
+
+When an auth declares `exchange`, the host runs it whenever it takes a credential from the user.
+That means connect, and any change that replaces the Connection's credential. It runs in the order
+of the Lifecycle table: `exchange`, then `test` where the host runs it, then `afterConnect`.
+
+- **Input:** `{ fields }`, the values the user entered. Exchange does not take the old stored
+  credential. Re-entering the sign-in form replaces the credential rather than merging into it.
+- **Output:** the credential to store, as a non-empty plain object. Only the output is stored, never
+  the fields. A login that must not keep the password returns a credential without it.
+  `accessTokenTtlSeconds` fills a missing `expiresAt`, as at any connect.
+- **Failure:** a throw fails the connect with a 4xx carrying a host-authored message and the hook
+  error's `code` when it is well-formed. Nothing is persisted, and the fields are never echoed back.
+
+### Revoke on disconnect
+
+When a Connection is deleted and its own (private) credential goes with it, the host runs the auth's
+`revoke` hook, if any, with that credential. It runs after the delete and is best-effort: a failure
+or a timeout is logged by name only and never blocks or undoes the delete. A credential shared
+with other Connections is not revoked when one of them is deleted.

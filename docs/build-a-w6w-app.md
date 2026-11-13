@@ -205,9 +205,9 @@ export default apiKey;
 ```
 
 Full Auth hook lifecycle (all optional except `test`): `preflight` → `exchange` (auth code / form →
-opaque credential) → `test` → `afterConnect` (fetch label data) → `sign` (per request) → `refresh`
-(renew expired credential) → `revoke` (on disconnect). For OAuth2, set `type: "oauth2"` and the
-`oauth2` config (`authorizationUrl`, `tokenUrl`, `scopes`, `pkce`); see
+opaque credential; the host stores only its output) → `test` → `afterConnect` (fetch label data) →
+`sign` (per request) → `refresh` (renew expired credential) → `revoke` (on disconnect). For OAuth2,
+set `type: "oauth2"` and the `oauth2` config (`authorizationUrl`, `tokenUrl`, `scopes`, `pkce`); see
 [`rfcs/auth.md`](../rfcs/auth.md). An OAuth2 auth gets token refresh **without** a `refresh` hook —
 see [Refresh & keep-alive](#refresh--keep-alive).
 
@@ -313,6 +313,13 @@ kept alive.
 - **Failures.** A Connection whose refreshes keep failing is retried hourly. After 72 hours, and
   once one more attempt past that mark has failed too, it is marked `broken` and the user is asked
   to reconnect. If the host itself was down, it tries again before giving up.
+- **Permanent failures** skip that wait: the Connection is marked `broken` on the first one. That
+  happens when your `refresh` hook throws `ReauthRequiredError` (below), and when the built-in grant
+  gets `invalid_grant` (the refresh token is invalid, expired or revoked). It never happens when a
+  concurrent refresher had already rotated the token: the host re-reads the stored credential first.
+  Every other failure (`5xx`, network, `invalid_client`, a plain throw) is transient.
+- **Revoke on delete.** Deleting a Connection runs the auth's `revoke` hook with its credential,
+  best-effort.
 
 The user can turn keep-alive off per Connection ("Keep connected"); it is on by default.
 
@@ -379,60 +386,135 @@ Max idle is `min(30 d / 3, 7 d) = 7 d`, so keep-alive refreshes at day 7, 14, 21
 issues a new 30-day refresh token, so a Connection with no activity for months stays connected. (The
 URLs above are placeholders; use the vendor's real ones.)
 
-**Worked example 2: a bearer token with a refresh hook.** The vendor is not OAuth2. The user copies
-two values from the vendor's settings page: an API token that lives 7 days, and a refresh token that
-lives 30 days. `POST https://vendor.example/api/token/refresh` with the refresh token returns
-`{ "token": "…", "refresh_token": "…" }`: a new token AND a new refresh token (it rotates; the old
-one stops working). The response carries no expiry.
+**Worked example 2: a session login (bearer) with exchange, refresh and revoke.** The vendor is not
+OAuth2. The user signs in with email and password; the app turns them into a session and keeps only
+the session. The vendor (`vendor.example`):
 
-Declare the two values as `fields`. The host stores what the user enters, keyed by field `key`, as
-the credential: here `{ token, refreshToken }`. At connect the host adds
-`expiresAt = now + accessTokenTtlSeconds` (the user did not enter one), and the 7-day keep-alive
-clock starts at connect.
+- `POST /partner-login` `{ email, password }` returns
+  `{ data: { token, refreshToken, expiresIn, refreshTokenExpiresIn, refreshTokenExpiresAt, user } }`.
+  The access token lives 7 days (`expiresIn: 604800`), the refresh token 30 days.
+- `POST /partner-refresh-token` `{ refreshToken }` (no `Authorization` header) returns the same
+  shape. **Both** tokens rotate on every refresh, and the 30-day refresh lifetime is **sliding**.
+  For 5 minutes after a refresh the old refresh token replays the same new pair (lifetimes as they
+  remain at that moment); after that it is `401 refresh_token_reused`.
+- `401 invalid_refresh_token` / `refresh_token_reused` / `refresh_token_expired` and
+  `403 account_disabled` / `org_access_revoked` mean the user must sign in again. Per the vendor,
+  any refresh failure other than `400` means that.
+- `POST /partner-revoke-token` `{ refreshToken }` ends the session; `401 invalid_refresh_token`
+  means it already ended.
 
 ```ts
-import type { AuthDefinition } from "@w6w/types";
+import { type AuthDefinition, ReauthRequiredError } from "@w6w/types";
+
+const API = "https://vendor.example";
 
 interface Session {
   token: string;
   refreshToken: string;
-  expiresAt?: number | string; // set by the host; epoch ms or ISO 8601
+  expiresAt: string;
+  refreshTokenExpiresAt: string;
+}
+
+interface VendorSession {
+  token: string;
+  refreshToken: string;
+  expiresIn: number;
+  refreshTokenExpiresIn: number;
+}
+
+/** The vendor's reply → the credential to store. Expiries are computed at RESPONSE time. */
+function toSession(d: VendorSession): Session {
+  const now = Date.now();
+  return {
+    token: d.token,
+    refreshToken: d.refreshToken,
+    // `expiresIn` is the REMAINING lifetime, so this is right for a replayed response too.
+    expiresAt: new Date(now + d.expiresIn * 1000).toISOString(),
+    refreshTokenExpiresAt: new Date(now + d.refreshTokenExpiresIn * 1000).toISOString(),
+  };
+}
+
+/** Refusals after which only a new sign-in helps. */
+const SIGN_IN_AGAIN = new Set([
+  "invalid_refresh_token",
+  "refresh_token_reused",
+  "refresh_token_expired",
+  "account_disabled",
+  "org_access_revoked",
+]);
+
+async function errorCode(res: Response): Promise<string | undefined> {
+  // Read only the code. Never log the body or a token.
+  const body = await res.json().catch(() => undefined) as { error?: unknown } | undefined;
+  return typeof body?.error === "string" ? body.error : undefined;
 }
 
 const session: AuthDefinition = {
   key: "session",
   type: "bearer",
-  displayName: "API token",
-  // Vendor docs: token 7 d, no expiry in the response; refresh token 30 d, rotated on refresh.
+  displayName: "Email and password",
+  // Vendor docs: access token 7 d; refresh token 30 d, sliding, both rotate on every refresh.
+  // The responses state both expiries, which outrank these; these are the fallback.
   accessTokenTtlSeconds: 604_800,
   refreshTokenTtlSeconds: 2_592_000,
   fields: [
-    { key: "token", label: "API token", type: "secret", required: true },
-    { key: "refreshToken", label: "Refresh token", type: "secret", required: true },
+    { key: "email", label: "Email", type: "string", required: true },
+    { key: "password", label: "Password", type: "secret", required: true },
   ],
-  setup: [{
-    text: "Create both tokens under Settings → API.",
-    url: "https://vendor.example/settings/api",
-  }],
+
+  // Connect: the host runs this with what the user typed and stores ONLY what it returns.
+  // The password is used once and never stored.
+  async exchange({ fields }, ctx) {
+    const { email, password } = fields as { email: string; password: string };
+    const res = await ctx.fetch(`${API}/partner-login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      // `code` reaches the connect response; the message never does.
+      throw Object.assign(new Error("sign-in rejected"), {
+        code: (await errorCode(res)) ?? "login_failed",
+      });
+    }
+    return toSession((await res.json() as { data: VendorSession }).data);
+  },
+
   sign({ request, credential }) {
     request.headers["authorization"] = `Bearer ${(credential as Session).token}`;
     return request;
   },
+
   async refresh({ credential }, ctx) {
     const prev = credential as Session;
-    const res = await ctx.fetch("https://vendor.example/api/token/refresh", {
+    const res = await ctx.fetch(`${API}/partner-refresh-token`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refresh_token: prev.refreshToken }),
+      body: JSON.stringify({ refreshToken: prev.refreshToken }),
     });
-    if (!res.ok) throw new Error(`refresh failed: ${res.status}`);
-    const body = await res.json() as { token?: string; refresh_token?: string };
-    if (!body.token) throw new Error("refresh returned no token");
-    // The COMPLETE new credential. No expiresAt: the host sets now + accessTokenTtlSeconds.
-    return { token: body.token, refreshToken: body.refresh_token || prev.refreshToken };
+    if (res.ok) return toSession((await res.json() as { data: VendorSession }).data);
+    const code = await errorCode(res);
+    if (res.status === 401 || res.status === 403) {
+      // Permanent: the host marks the Connection broken now and asks the user to reconnect.
+      throw new ReauthRequiredError(code && SIGN_IN_AGAIN.has(code) ? code : undefined);
+    }
+    // 400, 5xx, network: transient. The host retries hourly and keeps the stored session.
+    throw new Error(`refresh failed (${res.status})`);
   },
+
+  // Disconnect: the host runs this after deleting the Connection. Best-effort.
+  async revoke({ credential }, ctx) {
+    const res = await ctx.fetch(`${API}/partner-revoke-token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: (credential as Session).refreshToken }),
+    });
+    if (res.ok || (res.status === 401 && await errorCode(res) === "invalid_refresh_token")) return;
+    throw new Error(`revoke failed (${res.status})`);
+  },
+
   async test({ credential }, ctx) {
-    const res = await ctx.fetch("https://vendor.example/api/me", {
+    const res = await ctx.fetch(`${API}/api/me`, {
       headers: { authorization: `Bearer ${(credential as Session).token}` },
     });
     return { ok: res.ok };
@@ -441,9 +523,24 @@ const session: AuthDefinition = {
 export default session;
 ```
 
-`network.allow` must list `vendor.example`, since the hook calls it. An idle Connection's hook runs
-at day 7, 14, 21, …: each call renews the 30-day refresh token long before it lapses, and the stored
-token is never more than 7 days old.
+`network.allow` must list `vendor.example`. What the host does with this auth:
+
+- **Connect** runs `exchange` → `test` → `afterConnect`, and stores the returned session:
+  `{ token, refreshToken, expiresAt, refreshTokenExpiresAt }`, no password. A failed `exchange` is a
+  `422` carrying your error's `code` (`hookCode`); nothing is saved. Re-entering the sign-in form (a
+  reconnect) runs `exchange` again and replaces the session.
+- **Keep-alive** runs `refresh` at day 7, 14, 21, … (max idle `min(30 d / 3, 7 d)`). Each call
+  rotates both tokens and slides the 30-day lifetime forward, so an idle Connection never lapses.
+- **Concurrent refreshes** are safe: two refreshers that present the same refresh token within the
+  vendor's 5-minute window both get the same pair, and the host keeps one write.
+- **`ReauthRequiredError`** marks the Connection `broken` at once, on use or in the background, with
+  no retries. Any other throw is retried hourly, for up to 72 hours.
+- **Delete** runs `revoke` with the stored session. A failing `revoke` never blocks the delete.
+
+The `exchange` contract: input `{ fields }` (what the user typed), output the complete credential to
+store as a non-empty plain object. Only the output is stored. A throw fails the connect; put a short
+machine code (`[a-z][a-z0-9_]*`) on the error's `code` to tell the user why, and never put secrets
+in the message.
 
 **When to write a `refresh` hook for an `oauth2` auth.** Only when the built-in grant cannot work,
 because the vendor's refresh is non-standard:
@@ -472,7 +569,15 @@ If the auth defines a hook, the host runs it and never runs the built-in refresh
 - **`refreshTokenExpiresAt`** (optional, epoch ms or ISO 8601): when the vendor states when the new
   refresh token expires. It outranks `refreshTokenTtlSeconds` for the cadence. A value carried over
   unchanged while `refreshToken` changed is dropped, because it described the old token.
-- **Errors:** throw. The host keeps the old credential, and never surfaces your message to users.
+- **Errors:** throw. The host keeps the old credential, and never surfaces your message to users. A
+  plain throw is transient: retried hourly, for up to 72 hours.
+- **Sign in again:** when the vendor says the credential can never be renewed (the refresh token is
+  invalid, reused or expired, or the account is disabled), throw `ReauthRequiredError` from
+  `@w6w/types`, optionally with the vendor's code:
+  `throw new ReauthRequiredError("account_disabled")`. An `Error` with `code: "reauth_required"`
+  (and an optional `reason`) is the same signal. The host marks the Connection `broken` at once and
+  records the reason when it is a short code (`[a-z][a-z0-9_]*`). Only `code` and `reason` cross the
+  sandbox, so never put vendor text in them.
 
 An `oauth2` hook for a vendor whose refresh answers `{ data: { token, renew, ttl } }`:
 

@@ -131,6 +131,8 @@ export type WorkerMessage =
   | { type: "socket-read"; id: number; max?: number }
   | { type: "socket-close"; id: number }
   | { type: "result"; value: unknown }
-  | { type: "error"; error: { name: string; message: string } }
+  // `code` / `reason`: the thrown error's own, only when each is a well-formed hook error code
+  // (`@w6w/types` `hookErrorCode`) — never free text.
+  | { type: "error"; error: { name: string; message: string; code?: string; reason?: string } }
   | { type: "file-read"; id: number; ref: string }
   | { type: "file-create"; id: number; bytes: Uint8Array; contentType: string; filename: string };
