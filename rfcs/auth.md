@@ -632,10 +632,11 @@ first `lastRefreshedAt`, so the keep-alive clock starts then. A credential the u
   `refreshToken` changed but this value was carried over unchanged, it described the old token and
   is dropped.
 
-A vendor that reports lifetimes (`expiresIn`, `refreshTokenExpiresIn`) is converted by the hook,
-at response time: `expiresAt = now + expiresIn`. A vendor that replays a recent response to a
+A vendor that reports lifetimes (`expiresIn`, `refreshTokenExpiresIn`) is converted by the hook, at
+response time: `expiresAt = now + expiresIn`. A vendor that replays a recent response to a
 just-rotated refresh token reports the REMAINING lifetime, so this is right for a replay too. A
 returned instant outranks the declared TTL, which outranks the default.
+
 - **Re-auth required:** a hook that learns the credential can never be renewed (the vendor refused
   the refresh token as invalid, reused or expired, or the account is disabled) throws
   `ReauthRequiredError` from `@w6w/types`, or any `Error` whose `code` is `"reauth_required"`,
@@ -799,11 +800,10 @@ from `accessTokenTtlSeconds`, and the hook runs at day 7, 14, ….
     token is therefore not treated as a reason to break.
 
   Every other failure is transient: 5xx, network, a timeout, an uncoded hook throw, and
-  `invalid_client` or other OAuth errors (a host's client configuration can be fixed without
-  the user).
-  The reason the hook gives, when it is a well-formed code (`[a-z][a-z0-9_]{0,63}`), is recorded with
-  the event; vendor text never is. The sandbox boundary carries an error's `code` and `reason` only
-  in that shape.
+  `invalid_client` or other OAuth errors (a host's client configuration can be fixed without the
+  user). The reason the hook gives, when it is a well-formed code (`[a-z][a-z0-9_]{0,63}`), is
+  recorded with the event; vendor text never is. The sandbox boundary carries an error's `code` and
+  `reason` only in that shape.
 
 ### The `exchange` hook at connect
 
@@ -813,8 +813,17 @@ of the Lifecycle table: `exchange`, then `test` where the host runs it, then `af
 
 - **Input:** `{ fields }`, the values the user entered. Exchange does not take the old stored
   credential. Re-entering the sign-in form replaces the credential rather than merging into it.
-- **Output:** the credential to store, as a non-empty plain object. Only the output is stored, never
-  the fields. A login that must not keep the password returns a credential without it.
+- **Output:** a non-empty plain object, the credential the hook produced.
+- **What is stored:** the submitted fields whose declared field is **not** secret, overlaid with the
+  output; the output wins a clash. A field is secret when its `type` is `"secret"` or it sets
+  `secret: true`. A `section`'s children count as fields at the same level; a `group`'s value is
+  filtered the same way, one level down. So:
+  - a **secret** field survives only when the hook returns it. A login that must not keep the
+    password simply does not return it;
+  - a **non-secret** field (host, port, database, an email) is kept without the hook having to
+    return it;
+  - a submitted key the auth does **not declare** is dropped unless the hook returns it.
+
   `accessTokenTtlSeconds` fills a missing `expiresAt`, as at any connect.
 - **Failure:** a throw fails the connect with a 4xx carrying a host-authored message and the hook
   error's `code` when it is well-formed. Nothing is persisted, and the fields are never echoed back.
@@ -823,5 +832,5 @@ of the Lifecycle table: `exchange`, then `test` where the host runs it, then `af
 
 When a Connection is deleted and its own (private) credential goes with it, the host runs the auth's
 `revoke` hook, if any, with that credential. It runs after the delete and is best-effort: a failure
-or a timeout is logged by name only and never blocks or undoes the delete. A credential shared
-with other Connections is not revoked when one of them is deleted.
+or a timeout is logged by name only and never blocks or undoes the delete. A credential shared with
+other Connections is not revoked when one of them is deleted.

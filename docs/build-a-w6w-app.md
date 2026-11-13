@@ -205,11 +205,11 @@ export default apiKey;
 ```
 
 Full Auth hook lifecycle (all optional except `test`): `preflight` → `exchange` (auth code / form →
-opaque credential; the host stores only its output) → `test` → `afterConnect` (fetch label data) →
-`sign` (per request) → `refresh` (renew expired credential) → `revoke` (on disconnect). For OAuth2,
-set `type: "oauth2"` and the `oauth2` config (`authorizationUrl`, `tokenUrl`, `scopes`, `pkce`); see
-[`rfcs/auth.md`](../rfcs/auth.md). An OAuth2 auth gets token refresh **without** a `refresh` hook —
-see [Refresh & keep-alive](#refresh--keep-alive).
+opaque credential; the host stores its output plus the non-secret fields) → `test` → `afterConnect`
+(fetch label data) → `sign` (per request) → `refresh` (renew expired credential) → `revoke` (on
+disconnect). For OAuth2, set `type: "oauth2"` and the `oauth2` config (`authorizationUrl`,
+`tokenUrl`, `scopes`, `pkce`); see [`rfcs/auth.md`](../rfcs/auth.md). An OAuth2 auth gets token
+refresh **without** a `refresh` hook — see [Refresh & keep-alive](#refresh--keep-alive).
 
 **Host-sourced credentials (no user fields).** Two auth types carry no `fields` and no connect flow
 — the host supplies the credential and hands it to `sign` as a bearer. Use them for an App that
@@ -409,6 +409,7 @@ import { type AuthDefinition, ReauthRequiredError } from "@w6w/types";
 const API = "https://vendor.example";
 
 interface Session {
+  email?: string; // kept by the host: a non-secret declared field
   token: string;
   refreshToken: string;
   expiresAt: string;
@@ -462,8 +463,8 @@ const session: AuthDefinition = {
     { key: "password", label: "Password", type: "secret", required: true },
   ],
 
-  // Connect: the host runs this with what the user typed and stores ONLY what it returns.
-  // The password is used once and never stored.
+  // Connect: the host runs this with what the user typed. It stores what this returns plus the
+  // NON-secret fields (here `email`); `password` is `secret`, so it is used once and never stored.
   async exchange({ fields }, ctx) {
     const { email, password } = fields as { email: string; password: string };
     const res = await ctx.fetch(`${API}/partner-login`, {
@@ -492,7 +493,10 @@ const session: AuthDefinition = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken: prev.refreshToken }),
     });
-    if (res.ok) return toSession((await res.json() as { data: VendorSession }).data);
+    if (res.ok) {
+      // Keep the stored non-secret fields (`email`); replace the session parts.
+      return { ...prev, ...toSession((await res.json() as { data: VendorSession }).data) };
+    }
     const code = await errorCode(res);
     if (res.status === 401 || res.status === 403) {
       // Permanent: the host marks the Connection broken now and asks the user to reconnect.
@@ -525,10 +529,10 @@ export default session;
 
 `network.allow` must list `vendor.example`. What the host does with this auth:
 
-- **Connect** runs `exchange` → `test` → `afterConnect`, and stores the returned session:
-  `{ token, refreshToken, expiresAt, refreshTokenExpiresAt }`, no password. A failed `exchange` is a
-  `422` carrying your error's `code` (`hookCode`); nothing is saved. Re-entering the sign-in form (a
-  reconnect) runs `exchange` again and replaces the session.
+- **Connect** runs `exchange` → `test` → `afterConnect`, and stores the returned session plus the
+  non-secret `email`: `{ email, token, refreshToken, expiresAt, refreshTokenExpiresAt }`, no
+  password. A failed `exchange` is a `422` carrying your error's `code` (`hookCode`); nothing is
+  saved. Re-entering the sign-in form (a reconnect) runs `exchange` again and replaces the session.
 - **Keep-alive** runs `refresh` at day 7, 14, 21, … (max idle `min(30 d / 3, 7 d)`). Each call
   rotates both tokens and slides the 30-day lifetime forward, so an idle Connection never lapses.
 - **Concurrent refreshes** are safe: two refreshers that present the same refresh token within the
@@ -537,10 +541,17 @@ export default session;
   no retries. Any other throw is retried hourly, for up to 72 hours.
 - **Delete** runs `revoke` with the stored session. A failing `revoke` never blocks the delete.
 
-The `exchange` contract: input `{ fields }` (what the user typed), output the complete credential to
-store as a non-empty plain object. Only the output is stored. A throw fails the connect; put a short
-machine code (`[a-z][a-z0-9_]*`) on the error's `code` to tell the user why, and never put secrets
-in the message.
+The `exchange` contract: input `{ fields }` (what the user typed), output a non-empty plain object.
+The host stores the submitted fields you declared as **not** secret, overlaid with your output (your
+output wins a clash):
+
+- a `secret` field (`type: "secret"` or `secret: true`) is stored only if you return it, so a
+  password you do not return is never kept;
+- a plain field (a host, a port, a database, an email) is kept without your returning it;
+- a key the user sent that your auth does not declare is dropped unless you return it.
+
+A throw fails the connect; put a short machine code (`[a-z][a-z0-9_]*`) on the error's `code` to
+tell the user why, and never put secrets in the message.
 
 **When to write a `refresh` hook for an `oauth2` auth.** Only when the built-in grant cannot work,
 because the vendor's refresh is non-standard:
