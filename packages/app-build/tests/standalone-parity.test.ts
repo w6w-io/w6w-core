@@ -195,6 +195,19 @@ Deno.test("5: cross-mode parity — same authored .ts, byte-equal app.js and equ
     assert(!code.includes("jsr:"), "a jsr: specifier survived bundling");
     assert(!code.includes(mirrorUrl), "a mirror URL survived bundling");
 
+    // Negative control: the comparison above can fail — one changed authored byte changes app.js.
+    const controlDir = join(tmp, "control");
+    await stageApp(controlDir, REGISTRY_DENO_JSON);
+    await Deno.writeTextFile(join(controlDir, "index.ts"), INDEX.replace('"Ping"', '"Pong"'));
+    const control = await buildApp(controlDir, join(tmp, "out-control"), {
+      resolution: "registry",
+    });
+    assertNotEquals(
+      control.execSha256,
+      registry.execSha256,
+      "the byte comparison does discriminate",
+    );
+
     // Equal exec hash, stated twice: from the two builds, and against the bytes on disk.
     assertEquals(registry.execSha256, sibling.execSha256);
     assert(HEX64.test(sibling.execSha256), `execSha256 is not 64 hex: ${sibling.execSha256}`);
