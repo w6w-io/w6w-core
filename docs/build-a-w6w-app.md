@@ -25,21 +25,45 @@ updatedAt: null
 > [`../rfcs/`](../rfcs/) and the types in [`@w6w/types`](../packages/types/) are the source of
 > truth.
 
-## Start from a template — do not scaffold from scratch
+## Start with `w6w apps init`
 
-Two official starter templates satisfy the **identical** App contract. Clone one and edit it; the
-toolchain is the only difference. Prefer **Deno** unless the user needs Node.
+Scaffold a working app with the CLI; do not write one from scratch and do not clone a starter
+repo (the old `w6w-app-template-*` repos are superseded by `w6w apps init`). Both variants satisfy
+the **identical** App contract; the toolchain is the only difference. Prefer **Deno** unless the
+user needs Node.
 
-| Template                                                                            | Toolchain                                     | Use when                                                       |
-| ----------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------- |
-| **[w6w-io/w6w-app-template-deno](https://github.com/w6w-io/w6w-app-template-deno)** | Deno + JSR `@w6w/types` + `deno test`         | Default. Zero-install; matches the reference runtime directly. |
-| **[w6w-io/w6w-app-template-node](https://github.com/w6w-io/w6w-app-template-node)** | Node 22 + npm `@w6w/types` + `tsx` + `vitest` | The user's stack is Node, or they want `vitest`.               |
+```bash
+w6w apps init <id> [--template deno|node] [--dir <path>]
+```
 
-Both ship a working app you mutate into the target: bearer-token Auth (`sign` + `test`), a `read` +
-a `perform` Action against `httpbin.org`, unit tests with a mocked `HookContext`, and a green CI
-workflow. On GitHub, **Use this template**; or `git clone` and strip it down.
+`<id>` is lowercase letters, digits and single hyphens; the target directory (default `./<id>`)
+must be missing or empty. [Deno](https://deno.com) must be on your PATH for `validate`, `build` and
+`publish` — also for the Node variant.
 
-**Keep `.ts` extensions in imports** (`import x from "./actions/foo.ts"`). The Node template keeps
+| `--template` | Toolchain                                    | Use when                                      |
+| ------------ | -------------------------------------------- | --------------------------------------------- |
+| `deno`       | Deno + JSR `@w6w/types` + `deno test`        | Default. Zero-install.                        |
+| `node`       | Node + `node --test --experimental-strip-types` | The user's stack is Node. Zero dependencies. |
+
+Both scaffold a working app you mutate into the target: an `apiKey` Auth (`sign` + `test`), a
+`ping` Action, a `new-item` poll trigger stub, a `service` health check, unit tests with a mocked
+`HookContext`, and a CI workflow that runs `w6w apps validate`.
+
+The scaffold's `deno.json` resolves `@w6w/*` from the registry with **exact versions** (ranges are
+refused); only the keys the app uses are present:
+
+```json
+{
+  "imports": {
+    "@w6w/types": "jsr:@w6w/types@0.2.0",
+    "@w6w/runtime/author": "jsr:@w6w/runtime@0.2.0/author",
+    "@w6w/app-kit/poll": "jsr:@w6w/app-kit@0.1.0/poll",
+    "@w6w/app-kit/webhook": "jsr:@w6w/app-kit@0.1.0/webhook"
+  }
+}
+```
+
+**Keep `.ts` extensions in imports** (`import x from "./actions/foo.ts"`). The Node variant keeps
 them too, so the same source runs unchanged under the Deno runtime.
 
 ## Mental model — the five invariants
@@ -76,7 +100,7 @@ my-app/
 │   └── api-key.ts          # one file per auth method, default export = AuthDefinition
 ├── assets/
 │   └── icon.svg            # referenced from w6w.appearance.icon
-└── (deno.json | tsconfig.json)  # from the template
+└── (deno.json | tsconfig.json)  # from `w6w apps init`
 ```
 
 ## `package.json` — identity
@@ -328,11 +352,11 @@ action. `parse` never reaches the manifest. Type the param as `ParamDefinition` 
 
 ## Test, validate, run
 
-Templates ship unit tests that call hooks with a **mocked `HookContext`** (a fake `ctx.fetch`, a
+The scaffold ships unit tests that call hooks with a **mocked `HookContext`** (a fake `ctx.fetch`, a
 no-op `ctx.log`). Test the hook functions directly — no server needed.
 
 ```ts
-// Deno template
+// Deno variant
 const ctx = { fetch: fakeFetch, log: () => {} } as unknown as HookContext;
 const out = await sendEmail.execute({
   to: "a@b.com",
@@ -343,10 +367,17 @@ const out = await sendEmail.execute({
 assertEquals(out.status, 202);
 ```
 
-Commands (from the template):
+The loop, from the app directory:
 
 - `deno task test` / `npm test` — unit tests.
-- `deno task validate` (the `@w6w/validator` CLI) — checks the manifest against spec rules.
+- `w6w apps validate [dir] [--resolution sibling|registry]` — builds into a temp dir and checks the
+  manifest and bundle against the same rules the registry applies; nothing is kept.
+- `w6w apps build [dir] [-o|--out <dir>] [--pack <file>]` — writes
+  `<out>/<id>/<version>/{app.js,manifest.json}` and `<out>/index.json`; `--pack` updates a pack
+  file with the built entry.
+- `w6w apps publish [dir] [--version <semver>]` — builds and uploads the artifact to **your
+  personal catalog** (visible only to you). `--version` is written into `package.json` first.
+  `w6w apps list [--scope personal]` shows what is installed.
 - To run against the reference runtime: `loadApp(dir)` → `describe(app)` (public manifest, runs no
   untrusted code) →
   `invoke(app, { manifestVersion: "1", app: "<id>",
@@ -418,7 +449,8 @@ That is five hooks in all: `onSubscribe`, `onUnsubscribe`, `handleIngest`, `poll
 
 **Ship triggers.** When the vendor exposes events (webhooks) or a newest-first list, the app ships
 triggers; the only exception is a vendor with neither, and then the README records why. Read
-[`rfcs/trigger.md`](../rfcs/trigger.md) first. (The starter templates carry no trigger; add yours.)
+[`rfcs/trigger.md`](../rfcs/trigger.md) first. (The `w6w apps init` scaffold ships one poll trigger stub, `triggers/new-item.ts`, built on
+`@w6w/app-kit/poll`; replace it with yours.)
 
 - **Poll** — use the poll kit at `apps/_shared/poll/mod.ts`: `pollFromListAction` turns an existing
   list/search action into a `New <record>` trigger, `pollSnapshot` diffs a table-like source
@@ -429,8 +461,7 @@ triggers; the only exception is a vendor with neither, and then the README recor
 
 ## Definition-of-done checklist
 
-- [ ] Started from a template ([deno](https://github.com/w6w-io/w6w-app-template-deno) or
-      [node](https://github.com/w6w-io/w6w-app-template-node)).
+- [ ] Started with `w6w apps init` (`--template deno` or `node`).
 - [ ] `package.json` `w6w` block: reverse-DNS `id`, `displayName`, `appearance.icon`, 1–3
       `categories`, `network.allow` lists every host the hooks call.
 - [ ] `index.ts` default-exports `{ actions, auth }` satisfying `AppDefinition`.
@@ -438,15 +469,14 @@ triggers; the only exception is a vendor with neither, and then the README recor
       `ctx.fetch`, no credentials.
 - [ ] Auth (if any): `test` present; `sign` injects the credential; secret fields use
       `type: "secret"`.
-- [ ] Unit tests pass (`deno task test` / `npm test`) and the manifest validates
-      (`deno task validate`).
+- [ ] Unit tests pass (`deno task test` / `npm test`), `w6w apps validate` passes,
+      and `w6w apps publish` succeeds.
 - [ ] Imports keep `.ts` extensions.
 - [ ] Triggers shipped, or the reason recorded in the README.
 
 ## Reference
 
-- Templates: [w6w-app-template-node](https://github.com/w6w-io/w6w-app-template-node) ·
-  [w6w-app-template-deno](https://github.com/w6w-io/w6w-app-template-deno)
+- Scaffold: `w6w apps init` (the CLI is `@w6w/cli`)
 - Types: [`@w6w/types`](../packages/types/) · Runtime: [`@w6w/runtime`](../packages/runtime/)
 - RFCs: [app](../rfcs/app.md) · [action](../rfcs/action.md) · [auth](../rfcs/auth.md) ·
   [param](../rfcs/param.md) · [connection](../rfcs/connection.md) ·
