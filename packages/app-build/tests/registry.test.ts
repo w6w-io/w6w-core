@@ -8,7 +8,13 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { dirname, join } from "jsr:@std/path@^1.0.0";
 import { buildApp, BuildError, P3_SPECS } from "../mod.ts";
-import { type LocalMirror, type MirrorPackage, startMirror } from "./jsr-mirror.ts";
+import {
+  hasRealAppKit,
+  type LocalMirror,
+  type MirrorPackage,
+  REAL_APP_KIT_DIR,
+  startMirror,
+} from "./jsr-mirror.ts";
 import { moduleAllowed, readRegistryMap } from "../src/registry.ts";
 
 const encoder = new TextEncoder();
@@ -35,22 +41,40 @@ const app: AppDefinition = { actions: [ping] };
 export default app;
 `;
 
-/** Both app-kit entrypoints, used at runtime. */
-const APP_KIT_INDEX = `import { pollTrigger } from "@w6w/app-kit/poll";
-import { webhookTrigger } from "@w6w/app-kit/webhook";
+/** The app-kit entrypoints, resolved as namespaces so either kit (real or synthetic) fits. */
+const APP_KIT_INDEX = `import * as poll from "@w6w/app-kit/poll";
+import * as webhook from "@w6w/app-kit/webhook";
 import type { ActionDefinition, AppDefinition } from "@w6w/runtime/author";
-
-const poll = pollTrigger({ name: "Poll", everySeconds: 300 });
-const webhook = webhookTrigger({ name: "Hook", path: "events" });
 
 const ping: ActionDefinition = {
   key: "ping",
   type: "perform",
   title: "Ping",
-  execute: () => ({ poll, webhook }),
+  execute: () => ({ poll: Object.keys(poll).length, webhook: Object.keys(webhook).length }),
 };
 
 const app: AppDefinition = { actions: [ping] };
+
+export default app;
+`;
+
+/**
+ * Requirement 4's app: it imports `pollSnapshot`, which only the REAL kit
+ * (`apps/apps/_shared/poll`) exports — so a successful build proves the mirror
+ * served those files, not the synthetic interface.
+ */
+const POLL_SNAPSHOT_INDEX = `import { pollSnapshot } from "@w6w/app-kit/poll";
+import type { ActionDefinition, AppDefinition } from "@w6w/runtime/author";
+
+const scan: ActionDefinition = {
+  key: "scan",
+  type: "read",
+  title: "Scan",
+  execute: () =>
+    pollSnapshot({ state: undefined, rows: [{ key: "row-1", values: { title: "first" } }] }),
+};
+
+const app: AppDefinition = { actions: [scan] };
 
 export default app;
 `;
@@ -223,9 +247,97 @@ Deno.test("4f: app-kit /poll and /webhook both build", async () => {
     const js = await Deno.readFile(join(r.outDir, "app.js"));
     assertEquals((await infoModules(join(r.outDir, "app.js"))).length, 1);
     const code = new TextDecoder().decode(js);
-    assert(code.includes("everySeconds"), "poll's option key is missing from the bundle");
-    assert(code.includes("events"), "webhook's option value is missing from the bundle");
+    // One exported name from each entrypoint, whichever kit the mirror staged.
+    assert(
+      code.includes("pollSnapshot") || code.includes("pollTrigger"),
+      "poll's exports are missing from the bundle",
+    );
+    assert(
+      code.includes("requireRawBody") || code.includes("webhookTrigger"),
+      "webhook's exports are missing from the bundle",
+    );
   });
+});
+
+/** Whether the real kit is there — the `../apps` sibling is absent in a lone core checkout. */
+const realAppKit = await hasRealAppKit();
+if (!realAppKit) {
+  console.log(
+    `4g SKIPPED: the real @w6w/app-kit is not at ${REAL_APP_KIT_DIR} (the ../apps sibling is missing)`,
+  );
+}
+
+Deno.test({
+  name: "4g: an app importing pollSnapshot from the real @w6w/app-kit/poll builds",
+  ignore: !realAppKit,
+  fn: async () => {
+    await withApp({ "index.ts": POLL_SNAPSHOT_INDEX }, async ({ app, out, mirror }) => {
+      const kit = mirror.packages.find((pkg) => pkg.name === "app-kit");
+      assert(kit, "the mirror staged no @w6w/app-kit");
+      // The P3 pin: the real kit's own deno.json version.
+      assertEquals(kit.version, "0.1.0");
+
+      const r = await buildApp(app, out, { resolution: "registry" });
+      assertEquals((await infoModules(join(r.outDir, "app.js"))).length, 1);
+      const code = new TextDecoder().decode(await Deno.readFile(join(r.outDir, "app.js")));
+      // `pollSnapshot`'s own error message: the real kit's source, not the synthetic stub.
+      assert(code.includes("pollSnapshot: "), "the real kit's poll source is not in the bundle");
+    });
+  },
+});
+
+Deno.test("mirror: unserved paths pass through to the upstream, 404 when offline", async () => {
+  // A stand-in jsr.io, so the pass-through is proven without leaving the machine.
+  const upstream = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    (req: Request) => new Response(`upstream ${new URL(req.url).pathname}\n`),
+  );
+  const upstreamUrl = `http://127.0.0.1:${(upstream.addr as Deno.NetAddr).port}/`;
+  try {
+    const online = await startMirror({ offline: false, upstream: upstreamUrl });
+    try {
+      assertEquals(online.offline, false);
+      const res = await fetch(`${online.url}@std/assert/1.0.0_meta.json`);
+      assertEquals(res.status, 200);
+      assertEquals(await res.text(), "upstream /@std/assert/1.0.0_meta.json\n");
+    } finally {
+      await online.close();
+    }
+
+    const offline = await startMirror({ offline: true });
+    try {
+      assertEquals(offline.offline, true);
+      const res = await fetch(`${offline.url}@std/assert/1.0.0_meta.json`);
+      assertEquals(res.status, 404);
+      await res.text();
+    } finally {
+      await offline.close();
+    }
+  } finally {
+    await upstream.shutdown();
+  }
+});
+
+Deno.test("mirror: offline is the test default and JSR_MIRROR_OFFLINE=1 keeps it", async () => {
+  const saved = Deno.env.get("JSR_MIRROR_OFFLINE");
+  const offlineWith = async (value: string | undefined): Promise<boolean> => {
+    if (value === undefined) Deno.env.delete("JSR_MIRROR_OFFLINE");
+    else Deno.env.set("JSR_MIRROR_OFFLINE", value);
+    const mirror = await startMirror();
+    try {
+      return mirror.offline;
+    } finally {
+      await mirror.close();
+    }
+  };
+  try {
+    assertEquals(await offlineWith(undefined), true, "tests must default to offline");
+    assertEquals(await offlineWith("1"), true, "JSR_MIRROR_OFFLINE=1 must stay offline");
+    assertEquals(await offlineWith("0"), false, "JSR_MIRROR_OFFLINE=0 opts into pass-through");
+  } finally {
+    if (saved === undefined) Deno.env.delete("JSR_MIRROR_OFFLINE");
+    else Deno.env.set("JSR_MIRROR_OFFLINE", saved);
+  }
 });
 
 // ---- allowlist unit tests: no mirror, no subprocess ----

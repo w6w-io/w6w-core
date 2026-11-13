@@ -77,18 +77,25 @@ fetches the real jsr.io.
 
 ### Local JSR mirror
 
-`tests/jsr-mirror.ts` stages a JSR layout in a temp dir and serves it on `127.0.0.1:0`. Run as a
-main module it prints exactly one stdout line and serves until killed:
+`tests/jsr-mirror.ts` stages a JSR layout in a temp dir and serves it on `127.0.0.1:0`. It stages
+the lane's own `@w6w/types` and `@w6w/runtime` (only the `./author` entry) with their `@w6w/*`
+imports rewritten to `jsr:` the way `deno publish` does, plus `@w6w/app-kit@0.1.0`: the real
+`../apps/apps/_shared/{poll,webhook}/mod.ts` sources when that sibling checkout exists (checksums
+computed over them), else a synthetic stand-in exporting the same `./poll` and `./webhook` keys.
+
+As a standalone `JSR_URL`: it passes anything it does not serve — every package outside the `@w6w`
+scope, and any path it lacks — through to the real JSR, so a manual `--resolution registry`
+rehearsal is:
 
 ```bash
-deno run -A --no-lock packages/app-build/tests/jsr-mirror.ts
-JSR_URL=http://127.0.0.1:<port>/
+deno run -A --no-lock packages/app-build/tests/jsr-mirror.ts   # serves until killed, prints JSR_URL=http://127.0.0.1:<port>/
+JSR_URL=http://127.0.0.1:<port>/ deno run -A packages/app-build/cli.ts <app-dir> -o out --resolution registry
 ```
 
-It stages the lane's own `@w6w/types` and `@w6w/runtime` (only the `./author` entry) with their
-`@w6w/*` imports rewritten to `jsr:` the way `deno publish` does, plus a synthetic
-`@w6w/app-kit@0.1.0` exporting `./poll` and `./webhook`. Tests import `startMirror` from the same
-file instead of running it; it has no side effects off `import.meta.main`.
+`JSR_MIRROR_OFFLINE=1` 404s those unserved paths instead of proxying (a fully offline run).
+`startMirror()` defaults to offline so no test touches the network — tests import `startMirror` from
+the same file, which has no side effects off `import.meta.main` — and its `offline`/`upstream`
+options opt a caller back in.
 
 ## Validating an app
 
