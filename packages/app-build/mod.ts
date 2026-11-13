@@ -25,4 +25,4 @@ export { compareDescribed } from "./src/parity.ts";
 export { jsrHost, P3_SPECS } from "./src/registry.ts";
 export type { Resolution } from "./src/registry.ts";
 export { validateApp } from "./src/validate.ts";
-export type { ValidateResult } from "./src/validate.ts";
+export type { ValidateOptions, ValidateResult } from "./src/validate.ts";
