@@ -193,7 +193,7 @@ export function webhookTrigger(options: WebhookTriggerOptions): WebhookTriggerOp
 function rewriteSpecifiers(pkg: string, path: string, source: string): string {
   return source.replace(
     /(?<quote>["'])(?<spec>@w6w\/[^"'\n]*)\k<quote>/g,
-    (match, _quote: string, spec: string) => {
+    (_match: string, _quote: string, spec: string) => {
       const mapped = P3_SPECS[spec];
       if (!mapped) {
         throw new Error(
