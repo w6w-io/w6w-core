@@ -12,21 +12,106 @@ deno run -A packages/app-build/cli.ts <app-dir> -o out
 deno run -A packages/app-build/cli.ts --pack ../apps/w6w-pack.json -o out [--concurrency 8]
 # published form
 deno run -A jsr:@w6w/app-build/cli --pack w6w-pack.json -o out
+# how `@w6w/*` imports resolve: the sibling checkout (default) or approved JSR specifiers
+deno run -A packages/app-build/cli.ts <app-dir> -o out --resolution registry
+# check an app directory without keeping any output
+deno run -A packages/app-build/cli.ts --validate <app-dir>
 ```
 
 Flags: `-o/--out <dir>` (default `./out`), `--minify` (default) / `--no-minify`, `--sourcemap`,
-`--concurrency N` (`--pack` only, default 8), `--help`.
+`--resolution sibling|registry` (default `sibling`), `--validate <app-dir>`, `--concurrency N`
+(`--pack` only, default 8), `--help`. Anything else — including an unknown `--resolution` value — is
+a usage error (exit 2).
 
 ## Requirements
 
-- **Sibling layout.** Each app's `deno.json` maps `@w6w/types` to the sibling core checkout
-  (`../../../core/packages/types` for flat apps, `../../../../core/packages/types` for provider
-  apps), so the pack must sit beside a core checkout for that path to resolve. There is no override
-  flag.
+- **Sibling layout** (default `resolution: "sibling"`). Each app's `deno.json` maps `@w6w/types` to
+  the sibling core checkout (`../../../core/packages/types` for flat apps,
+  `../../../../core/packages/types` for provider apps), so the pack must sit beside a core checkout
+  for that path to resolve. `--resolution registry` drops that requirement — see below.
 - **`--unstable-worker-options`.** Describing a bundle runs it in a permission-restricted Worker,
   which Deno only allows with that flag. `cli.ts` therefore re-runs itself once with the flag
   (marker env `W6W_APP_BUILD_REEXEC=1`), so a bare `deno run -A cli.ts …` works. Library users of
   `buildApp` must pass the flag themselves (otherwise `worker_options_required`).
+
+## Resolution modes
+
+`resolution` (`BuildOptions.resolution`, `PackBuildOptions.resolution`, CLI `--resolution`) picks
+how an app's `@w6w/*` imports resolve. It defaults to `sibling` and that mode is unchanged: imports
+come from the sibling core checkout, `deno info`/`deno bundle` run with `--no-remote`, and a
+`jsr:`/`http:` module is refused exactly as before.
+
+`resolution: "registry"` resolves the same imports from JSR instead. It is an **allowlist**, never a
+blocklist: before bundling, the app's `deno.json` `imports` are read and every `@w6w/*` key must be
+one of the four approved P3 keys, mapped to its pinned specifier:
+
+```json
+{
+  "imports": {
+    "@w6w/types": "jsr:@w6w/types@0.2.0",
+    "@w6w/runtime/author": "jsr:@w6w/runtime@0.2.0/author",
+    "@w6w/app-kit/poll": "jsr:@w6w/app-kit@0.1.0/poll",
+    "@w6w/app-kit/webhook": "jsr:@w6w/app-kit@0.1.0/webhook"
+  }
+}
+```
+
+The value must be `<pkg>@<X.Y.Z>[/<sub>]` with an **exact** three-part version: `^0.2.0`, `~0.2.0`,
+a range or `latest` is refused with `registry_spec_invalid`, as is any other `@w6w/*` key
+(`@w6w/runtime` at the host root, `@w6w/validator`, …). Apps that import no `@w6w/*` module need no
+map at all.
+
+After the allowlist, `deno info`/`deno bundle` still run with `--no-npm` but remote resolution is
+allowed, so a non-file module is accepted **only** when its URL is under
+`<JSR host>/@w6w/<pkg>/<X.Y.Z>/` for a `(pkg, version)` pair the app mapped. Every other module
+keeps today's refusals — `graph_npm` (`npm:`), `graph_jsr` (`jsr:` outside the map, e.g.
+`@std/assert`), `graph_remote` (any other remote URL, including a mirror module for a version the
+app did not map), `graph_tests`, `graph_outside_app` — and the bundle is still checked for being one
+module with zero dependencies (`bundle_not_self_contained`). `resolveTypesRoot` accepts a `jsr:`
+value in registry mode only; sibling mode keeps `types_root_invalid` for any URL scheme.
+
+The JSR host is the `JSR_URL` environment variable when set, else `https://jsr.io/` (a trailing `/`
+is added if missing). It is the base for both the allowlist check and Deno's own fetching, so a
+local mirror plus a fresh `DENO_DIR` makes registry builds fully offline. No gate in this package
+fetches the real jsr.io.
+
+### Local JSR mirror
+
+`tests/jsr-mirror.ts` stages a JSR layout in a temp dir and serves it on `127.0.0.1:0`. Run as a
+main module it prints exactly one stdout line and serves until killed:
+
+```bash
+deno run -A --no-lock packages/app-build/tests/jsr-mirror.ts
+JSR_URL=http://127.0.0.1:<port>/
+```
+
+It stages the lane's own `@w6w/types` and `@w6w/runtime` (only the `./author` entry) with their
+`@w6w/*` imports rewritten to `jsr:` the way `deno publish` does, plus a synthetic
+`@w6w/app-kit@0.1.0` exporting `./poll` and `./webhook`. Tests import `startMirror` from the same
+file instead of running it; it has no side effects off `import.meta.main`.
+
+## Validating an app
+
+```bash
+deno run -A packages/app-build/cli.ts --validate <app-dir> [--resolution sibling|registry]
+```
+
+Builds the app into a throwaway out root, reads the built `manifest.json` back off disk, runs the
+artifact parser the server publishes with (`parseAppArtifactManifest` from `@w6w/types`) over it and
+prints exactly that result as one JSON line:
+
+```text
+{"ok":true,"id":"io.example.app","version":"1.0.0"}
+{"ok":false,"errors":[{"code":"graph_npm","message":"…"}]}
+```
+
+Exit `0` for `{"ok":true,…}`, `1` for `{"ok":false,…}`, `2` on a usage problem. The codes are the
+build's own refusal codes (see below) plus `invalid_manifest` for a built manifest the parser
+rejects. Nothing is left behind: the temp out root is always removed, `./out` is never touched,
+`-o|--out` and `--pack` are usage errors, and `--minify`/`--no-minify`, `--sourcemap` and
+`--resolution` are forwarded to the build. From a library, `validateApp(appDir, opts)` (exported by
+`mod.ts`) takes `BuildOptions` and returns the same object; it reports refusals rather than
+throwing.
 
 ## Provider folders and shared files
 
@@ -82,7 +167,8 @@ without output, of samples not matching their output and of `items` on a non-arr
 ## Exit codes
 
 `0` all built · `1` any build failure (one stderr line per failure: `<path>: <code>: <message>`; the
-other apps still build; warnings never change it) · `2` usage error.
+other apps still build; warnings never change it) · `2` usage error. `--validate` uses the same
+`0`/`2` and exits `1` when its one JSON line says `{"ok":false,…}`.
 
 ## Refusal codes
 
@@ -106,3 +192,20 @@ interfaces), the artifact manifest parses, and `app.js` matches its recorded sha
 `parity: total=N built=N equal=N mismatched=0 failed=0`; exit 0 only when all hold. It is not part
 of `deno task test`. Pass `--out` to retain the verified artifacts and `index.json`; otherwise
 temporary output is removed.
+
+## Cross-mode parity
+
+The same authored files built once with `resolution: "sibling"` and once with
+`resolution: "registry"` produce the same artifact, as long as only the app's `deno.json` differs
+between the two trees (sibling paths vs. the P3 `jsr:` values):
+
+- `app.js` is **byte-identical**;
+- `execSha256` is **equal** (and still the sha-256 of those very bytes);
+- the registry content **digest** is **equal** (`digestVersion` 2) — the same `manifest.json`
+  describes the same artifact;
+- `sourceDigest` **differs**, because the source digest covers the app tree including its
+  `deno.json`, and the two `deno.json` files differ. That is expected, not a leak.
+
+`tests/standalone-parity.test.ts` asserts all four against the local JSR mirror, with a per-mode
+`DENO_DIR` and a negative control (one changed authored byte must change `app.js`). If `app.js` ever
+differs, resolution has leaked into the bundle.
