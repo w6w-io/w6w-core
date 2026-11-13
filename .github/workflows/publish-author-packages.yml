@@ -1,0 +1,87 @@
+name: Publish author toolchain (@w6w/types, runtime, validator, app-build)
+
+# Rehearses by default. A real `deno publish` happens ONLY when a repository owner
+# dispatches this workflow on w6w-io/w6w-core with `publish: true`. Every other path
+# is `--dry-run`. Tokenless via OIDC (id-token: write).
+#
+# Release flow:
+#   1. bump "version" in the four deno.json files (and types/package.json); commit
+#   2. Actions -> "Publish author toolchain" -> Run workflow, tag "toolchain-vX.Y.Z",
+#      publish unchecked (rehearsal)
+#   3. re-run with publish checked to release. Order: types -> runtime/validator -> app-build.
+#      @w6w/expr is released by its own workflow (publish-expr.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, toolchain-vX.Y.Z (must equal all four package versions)"
+        required: true
+        type: string
+      publish:
+        description: "Really publish to JSR (owner only, w6w-io/w6w-core only). Default: dry-run"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    if: github.repository == 'w6w-io/w6w-core' && startsWith(inputs.tag, 'toolchain-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Tag must match all four package versions
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          VER="${TAG#toolchain-v}"
+          for f in packages/types packages/runtime packages/validator packages/app-build; do
+            V="$(node -p "require('./$f/deno.json').version")"
+            echo "$f deno.json=$V tag=$VER"
+            if [ "$V" != "$VER" ]; then
+              echo "::error::Tag '$TAG' (version $VER) must match $f/deno.json ($V)"
+              exit 1
+            fi
+          done
+          P="$(node -p "require('./packages/types/package.json').version")"
+          if [ "$P" != "$VER" ]; then
+            echo "::error::Tag '$TAG' (version $VER) must match packages/types/package.json ($P)"
+            exit 1
+          fi
+
+  dry-run:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Isolated dry-run of all five packages
+        run: deno run -A scripts/check-author-packages.ts
+
+  publish:
+    needs: dry-run
+    if: inputs.publish == true && github.repository == 'w6w-io/w6w-core' && github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Publish types
+        working-directory: packages/types
+        run: deno publish
+      - name: Publish runtime
+        working-directory: packages/runtime
+        run: deno publish
+      - name: Publish validator
+        working-directory: packages/validator
+        run: deno publish
+      - name: Publish app-build
+        working-directory: packages/app-build
+        run: deno publish
