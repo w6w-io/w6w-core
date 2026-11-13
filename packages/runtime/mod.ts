@@ -50,6 +50,7 @@ export {
   KEEPALIVE_LEAD_MS,
   keepAliveDecision,
   keepAliveMaxIdleMs,
+  keepAliveNextCheckAt,
   mergeRefreshedCredential,
   oauth2RefreshRequest,
   OAuthRefreshError,

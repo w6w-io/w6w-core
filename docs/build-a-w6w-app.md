@@ -240,8 +240,14 @@ const serviceAccount: AuthDefinition = {
   type: "serviceAccount",
   displayName: "Service account",
   fields: [ // the credential-source input: by convention exactly one field
-    { key: "serviceAccountKey", label: "Service account key", type: "json", secret: true,
-      required: true, ui: "textarea" },
+    {
+      key: "serviceAccountKey",
+      label: "Service account key",
+      type: "json",
+      secret: true,
+      required: true,
+      ui: "textarea",
+    },
   ],
   serviceAccount: {
     accepts: ["google-service-account.v1"], // the contract ids you take
@@ -265,10 +271,10 @@ const serviceAccount: AuthDefinition = {
 export default serviceAccount;
 ```
 
-`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the Connection's
-non-secret `binding` and `credentialDisplay` (such as the service-account email), never key material.
-A host that supplies no credential resolver refuses a `serviceAccount` auth with `provider_unsupported`.
-See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
+`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the
+Connection's non-secret `binding` and `credentialDisplay` (such as the service-account email), never
+key material. A host that supplies no credential resolver refuses a `serviceAccount` auth with
+`provider_unsupported`. See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
 [`fixtures/apps/service-account`](../fixtures/apps/service-account/).
 
 ## OAuth2 refresh & keep-alive
@@ -282,29 +288,32 @@ can keep the Connection alive. The spec is
 
 - **Refresh on use.** When a call needs the token and it expires within 60 s, the host refreshes it
   first.
-- **Keep-alive.** A background sweep also refreshes a Connection nobody is using: when its access
-  token expires within an hour, or when the longest allowed gap between refreshes has passed
-  (a third of the refresh token's lifetime, at most 7 days). This stops an idle Connection's
-  refresh token from lapsing.
+- **Keep-alive.** A background sweep also refreshes a Connection nobody is using, to stop its
+  **refresh token** from lapsing: when the longest allowed gap between refreshes has passed (a third
+  of the refresh token's lifetime, at most 7 days), or when the refresh token expires within an
+  hour. The access token's expiry does not trigger it; a short-lived access token is refreshed on
+  use. An idle Connection with 1-hour access tokens is refreshed about once a week, not hourly.
 - **Built-in grant.** The host POSTs `grant_type=refresh_token` and the stored `refresh_token` to
   `oauth2.refreshUrl`, or to `tokenUrl` when `refreshUrl` is not set. It authenticates with the same
   OAuth client and method as the code exchange (`tokenAuthMethod`), and encodes the body per
   `tokenBodyFormat`.
 - **Rotation.** If the response has a new `refresh_token`, the host stores it. If not, it keeps the
-  old one. `expiresAt` comes from `expires_in`.
-- **Failures.** A Connection whose refreshes keep failing is retried hourly. After 72 hours it is
-  marked `broken` and the user is asked to reconnect.
+  old one. `expiresAt` comes from `expires_in`. A `refresh_token_expires_in` in the response (at
+  connect time or on refresh) is stored too, and outranks `refreshTokenTtlSeconds` for the cadence.
+- **Failures.** A Connection whose refreshes keep failing is retried hourly. After 72 hours, and
+  once one more attempt past that mark has failed too, it is marked `broken` and the user is asked
+  to reconnect. If the host itself was down, it tries again before giving up.
 
 The user can turn keep-alive off per Connection ("Keep connected"); it is on by default.
 
 **What to declare** in `oauth2`:
 
-| Field | When | Value |
-|---|---|---|
-| `refreshTokenTtlSeconds` | The vendor's refresh tokens expire | Their lifetime in seconds. This sets how often keep-alive refreshes. Omit when refresh tokens never expire. |
-| `accessTokenTtlSeconds` | The token response has **no** `expires_in` | The access-token lifetime in seconds. Without it such a token is never treated as expiring and is only refreshed on the 7-day cadence. |
-| `refreshUrl` | The refresh endpoint is **not** the `tokenUrl` | The refresh endpoint. Leave it unset otherwise. |
-| `builtinRefresh: false` | The vendor has **no** refresh grant (tokens never expire, or the user must reconnect) | Turns the built-in refresh off. The Connection is then never refreshed and keep-alive skips it. |
+| Field                    | When                                                                                  | Value                                                                                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshTokenTtlSeconds` | The vendor's refresh tokens expire                                                    | Their lifetime in seconds. This sets how often keep-alive refreshes. A `refresh_token_expires_in` in the token response takes precedence. Omit when refresh tokens never expire. |
+| `accessTokenTtlSeconds`  | The token response has **no** `expires_in`                                            | The access-token lifetime in seconds. Without it such a token is never treated as expiring on use, and is only refreshed on the keep-alive cadence.                              |
+| `refreshUrl`             | The refresh endpoint is **not** the `tokenUrl`                                        | The refresh endpoint. Leave it unset otherwise.                                                                                                                                  |
+| `builtinRefresh: false`  | The vendor has **no** refresh grant (tokens never expire, or the user must reconnect) | Turns the built-in refresh off. The Connection is then never refreshed and keep-alive skips it.                                                                                  |
 
 Leave `builtinRefresh` unset in every other case; it defaults to `true`.
 
@@ -321,8 +330,8 @@ Leave `builtinRefresh` unset in every other case; it defaults to `true`.
 If the docs don't say, test it: connect, refresh twice with a sandbox account, and check whether the
 `refresh_token` changes.
 
-**Worked example.** Access tokens live 7 days, and the token response has no `expires_in`.
-Refresh tokens live 30 days and are sliding: every refresh issues a new one.
+**Worked example.** Access tokens live 7 days, and the token response has no `expires_in`. Refresh
+tokens live 30 days and are sliding: every refresh issues a new one.
 
 ```ts
 import type { AuthDefinition } from "@w6w/types";
@@ -370,15 +379,15 @@ vendor's refresh is non-standard:
 If the auth defines a hook, the host runs it and never runs the built-in refresh. The hook's
 contract:
 
-- **Input:** `{ credential }`, the whole stored credential. For the host's own OAuth exchange that is
-  `{ accessToken, refreshToken?, expiresAt?, scope?, tokenType? }`, or whatever your `exchange` hook
-  returned.
+- **Input:** `{ credential }`, the whole stored credential. For the host's own OAuth exchange that
+  is `{ accessToken, refreshToken?, expiresAt?, scope?, tokenType? }`, or whatever your `exchange`
+  hook returned.
 - **Context:** `ctx.fetch`, allowed to reach the hosts of `tokenUrl` / `refreshUrl`. The hook does
-  **not** receive the OAuth client id or secret, so a hook works only for a vendor whose refresh does
-  not need them.
-- **Output:** the **complete** new credential as a non-empty plain object. It replaces the stored one,
-  so carry forward everything you still need: keep the old `refreshToken` when the vendor did not
-  send a new one, and set `expiresAt` (epoch ms) yourself.
+  **not** receive the OAuth client id or secret, so a hook works only for a vendor whose refresh
+  does not need them.
+- **Output:** the **complete** new credential as a non-empty plain object. It replaces the stored
+  one, so carry forward everything you still need: keep the old `refreshToken` when the vendor did
+  not send a new one, and set `expiresAt` (epoch ms) yourself.
 - **Errors:** throw. The host keeps the old credential, and never surfaces your message to users.
 
 ```ts
@@ -485,33 +494,31 @@ Commands (from the template):
 
 ## Health checks
 
-An App may declare probes a host runs to answer "is this working?": vendor status,
-credential liveness, quota headroom. `Auth.test` already covers the credential case and is
-derived into that surface automatically, so **nothing is required of you today** — adding a
-`service` or `quota` check is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
+An App may declare probes a host runs to answer "is this working?": vendor status, credential
+liveness, quota headroom. `Auth.test` already covers the credential case and is derived into that
+surface automatically, so **nothing is required of you today** — adding a `service` or `quota` check
+is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
 
 Four things to know:
 
-- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
-  a scope the credential may legitimately lack reports a working App as broken. Prefer a
-  dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
-  cheapest read available.
-- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
-  not be added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook
-  allowlist via `network.allow`, honoured only for an unsigned posture.
-- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no
-  hook is a first-class answer, and a better one than a silent gap. Give it
-  `severity: "informational"`, or the permanent `unknown` it reports will pin your App's
-  verdict there forever.
-- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it
-  with `feed` and the host fetches and parses it for you:
+- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs a scope
+  the credential may legitimately lack reports a working App as broken. Prefer a dedicated ping
+  (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the cheapest read available.
+- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must not be
+  added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook allowlist via
+  `network.allow`, honoured only for an unsigned posture.
+- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no hook is
+  a first-class answer, and a better one than a silent gap. Give it `severity: "informational"`, or
+  the permanent `unknown` it reports will pin your App's verdict there forever.
+- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it with
+  `feed` and the host fetches and parses it for you:
 
   ```ts
   const service: HealthCheckDefinition = {
     key: "service",
     title: "Platform status",
     kind: "service",
-    feed: { url: "https://status.example.com/feed.rss" },   // host fetches + parses
+    feed: { url: "https://status.example.com/feed.rss" }, // host fetches + parses
 
     check({ feed }, _ctx) {
       if (feed?.error) return { state: "unknown", message: feed.error };
@@ -523,11 +530,11 @@ Four things to know:
   };
   ```
 
-  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current
-  state**: most vendors emit one entry per *update*, so the newest entry for a resolved
-  incident still carries that incident's original title, and judging by it reports an
-  outage that ended days ago. `latest` is the host's fold to one entry per incident.
-  The feed's host is allowlisted implicitly, so do not restate it in `network.allow`.
+  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current state**:
+  most vendors emit one entry per _update_, so the newest entry for a resolved incident still
+  carries that incident's original title, and judging by it reports an outage that ended days ago.
+  `latest` is the host's fold to one entry per incident. The feed's host is allowlisted implicitly,
+  so do not restate it in `network.allow`.
 
 ## Triggers
 
@@ -569,8 +576,8 @@ triggers; the only exception is a vendor with neither, and then the README recor
 - [ ] Auth (if any): `test` present; `sign` injects the credential; secret fields use
       `type: "secret"`.
 - [ ] OAuth2 auth: refresh-token lifetime (`refreshTokenTtlSeconds`, sliding vs absolute) checked in
-      the vendor docs, `accessTokenTtlSeconds` set if the token response has no `expires_in`, and
-      no `refresh` hook unless the vendor's refresh is non-standard.
+      the vendor docs, `accessTokenTtlSeconds` set if the token response has no `expires_in`, and no
+      `refresh` hook unless the vendor's refresh is non-standard.
 - [ ] Unit tests pass (`deno task test` / `npm test`) and the manifest validates
       (`deno task validate`).
 - [ ] Imports keep `.ts` extensions.
@@ -584,8 +591,9 @@ triggers; the only exception is a vendor with neither, and then the README recor
 - RFCs: [app](../rfcs/app.md) · [action](../rfcs/action.md) · [auth](../rfcs/auth.md) ·
   [param](../rfcs/param.md) · [connection](../rfcs/connection.md) ·
   [invocation](../rfcs/invocation.md) · [hook-runtime](../rfcs/hook-runtime.md) ·
-  [credential](../rfcs/credential.md) ·
-  [categories](../rfcs/categories.md) · [trigger](../rfcs/trigger.md)
+  [credential](../rfcs/credential.md) · [categories](../rfcs/categories.md) ·
+  [trigger](../rfcs/trigger.md)
 - Working examples: [`fixtures/apps/hello`](../fixtures/apps/hello/) (no-auth) ·
   [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign) ·
-  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived token)
+  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived
+  token)

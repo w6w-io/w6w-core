@@ -38,7 +38,8 @@ export interface OAuth2Config {
   refreshUrl?: string;
   /**
    * Lifetime of the vendor's refresh token, in seconds, when it expires (sliding or absolute).
-   * Drives keep-alive cadence. Omit when refresh tokens do not expire. E.g. 2592000 (30 d).
+   * Drives keep-alive cadence; a `refresh_token_expires_in` in the token response takes
+   * precedence. Omit when refresh tokens do not expire. E.g. 2592000 (30 d).
    */
   refreshTokenTtlSeconds?: number;
   /**

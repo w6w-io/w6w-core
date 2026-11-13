@@ -8,9 +8,9 @@
  * own guarded egress and owns every write-back.
  */
 
-/** Refresh in the background when the access token expires in less than this. */
+/** Refresh in the background when the REFRESH token expires in less than this. */
 export const KEEPALIVE_LEAD_MS = 60 * 60 * 1000;
-/** Refresh at least this often even when the access token is far from expiry. */
+/** Refresh at least this often, whatever the refresh token's lifetime. */
 export const KEEPALIVE_DEFAULT_MAX_IDLE_MS = 7 * 86_400_000;
 /** A Connection whose refresh is failing is retried this often. */
 export const KEEPALIVE_FAILURE_RETRY_MS = 60 * 60 * 1000;
@@ -45,55 +45,125 @@ export function keepAliveMaxIdleMs(refreshTokenTtlSeconds?: number): number {
   return Math.min((refreshTokenTtlSeconds * 1000) / 3, KEEPALIVE_DEFAULT_MAX_IDLE_MS);
 }
 
-/** Everything {@link keepAliveDecision} reads. Every instant is epoch MILLISECONDS. */
+/**
+ * Everything {@link keepAliveDecision} reads. Every instant is epoch MILLISECONDS.
+ *
+ * The access token's expiry is deliberately NOT an input: keep-alive keeps the REFRESH token
+ * alive. A short-lived access token is the on-use refresh's job (`isExpiring`), so an idle
+ * Connection with 1 h access tokens is refreshed once per max-idle window, not every hour.
+ */
 export interface KeepAliveInput {
   now: number;
-  /** Access-token expiry. */
-  expiresAt?: number;
+  /**
+   * Refresh-token expiry, as the vendor's last token response stated it
+   * (`refresh_token_expires_in`, stored as {@link OAuthCredentialShape.refreshTokenExpiresAt}).
+   * Takes precedence over `refreshTokenTtlSeconds`.
+   */
+  refreshTokenExpiresAt?: number;
   /** Last successful refresh, or the original grant. */
   lastRefreshedAt?: number;
   /** Set while refreshes fail; cleared by the next success. */
   refreshFailingSince?: number;
   /** Last refresh attempt, success or failure. */
   lastAttemptAt?: number;
+  /** The auth's declared refresh-token lifetime (`oauth2.refreshTokenTtlSeconds`). */
   refreshTokenTtlSeconds?: number;
 }
 
+/**
+ * - `expiring` — the refresh token expires within {@link KEEPALIVE_LEAD_MS}.
+ * - `max_idle` — the longest allowed gap between refreshes has passed.
+ * - `retry` — failing, and the hourly retry is due.
+ * - `final_retry` — failing for {@link KEEPALIVE_GIVE_UP_MS} without an attempt since that mark
+ *   (the host was down, say): one more attempt. When IT fails the host gives up at once.
+ */
 export type KeepAliveDecision =
   | { due: false }
-  | { due: true; reason: "expiring" | "max_idle" | "retry" }
+  | { due: true; reason: "expiring" | "max_idle" | "retry" | "final_retry" }
   | { giveUp: true };
 
 /**
- * Is a background refresh due for one Connection?
+ * The refresh token's lifetime the cadence is planned from, in ms. Precedence: the vendor's last
+ * response (`refreshTokenExpiresAt − lastRefreshedAt`) > the declared `refreshTokenTtlSeconds` >
+ * unknown (undefined: {@link KEEPALIVE_DEFAULT_MAX_IDLE_MS} alone applies).
+ */
+function refreshTokenLifetimeMs(i: KeepAliveInput): number | undefined {
+  if (
+    i.refreshTokenExpiresAt !== undefined && Number.isFinite(i.refreshTokenExpiresAt) &&
+    i.lastRefreshedAt !== undefined && i.refreshTokenExpiresAt > i.lastRefreshedAt
+  ) {
+    return i.refreshTokenExpiresAt - i.lastRefreshedAt;
+  }
+  const s = i.refreshTokenTtlSeconds;
+  return s !== undefined && Number.isFinite(s) && s > 0 ? s * 1000 : undefined;
+}
+
+/** The max idle for this input: a third of {@link refreshTokenLifetimeMs}, capped at 7 d. */
+function maxIdleFor(i: KeepAliveInput): number {
+  const ms = refreshTokenLifetimeMs(i);
+  return ms === undefined ? KEEPALIVE_DEFAULT_MAX_IDLE_MS : keepAliveMaxIdleMs(ms / 1000);
+}
+
+/**
+ * Is a background refresh due for one Connection? Keep-alive exists to keep the REFRESH token
+ * alive; the access token's expiry never makes a Connection due (that is the on-use path's job).
  *
- * 1. Failing for at least {@link KEEPALIVE_GIVE_UP_MS} → `giveUp` (the host marks it `broken`).
- * 2. Still failing → due (`retry`) only once {@link KEEPALIVE_FAILURE_RETRY_MS} has passed since
- *    the last attempt (or since the failure began, when no attempt time is recorded); otherwise
- *    not due — a failing Connection never retries faster than hourly, expiring or not.
- * 3. Access token expires within {@link KEEPALIVE_LEAD_MS} → due (`expiring`).
- * 4. {@link keepAliveMaxIdleMs} has passed since the last refresh, or no refresh/grant time is
- *    known at all → due (`max_idle`).
- * 5. Otherwise not due.
+ * 1. Failing (`refreshFailingSince` set):
+ *    a. for at least {@link KEEPALIVE_GIVE_UP_MS}, AND an attempt has already failed at or past
+ *       that mark (`lastAttemptAt ≥ refreshFailingSince + 72 h`) → `giveUp` (the host marks it
+ *       `broken`);
+ *    b. for at least 72 h, but no attempt since the mark (the host was down) → due
+ *       (`final_retry`): one more real attempt; if it fails, the host gives up at once;
+ *    c. otherwise due (`retry`) only once {@link KEEPALIVE_FAILURE_RETRY_MS} has passed since the
+ *       last attempt (or since the failure began, when no attempt time is recorded).
+ * 2. The refresh token expires within {@link KEEPALIVE_LEAD_MS} → due (`expiring`).
+ * 3. The max idle has passed since the last refresh, or no refresh/grant time is known at all →
+ *    due (`max_idle`). Max idle = a third of the refresh token's lifetime (the vendor's last
+ *    response, else the declared TTL), capped at {@link KEEPALIVE_DEFAULT_MAX_IDLE_MS}.
+ * 4. Otherwise not due.
  */
 export function keepAliveDecision(i: KeepAliveInput): KeepAliveDecision {
   if (i.refreshFailingSince !== undefined) {
-    if (i.now - i.refreshFailingSince >= KEEPALIVE_GIVE_UP_MS) return { giveUp: true };
     const last = i.lastAttemptAt ?? i.refreshFailingSince;
+    if (i.now - i.refreshFailingSince >= KEEPALIVE_GIVE_UP_MS) {
+      return last - i.refreshFailingSince >= KEEPALIVE_GIVE_UP_MS
+        ? { giveUp: true }
+        : { due: true, reason: "final_retry" };
+    }
     return i.now - last >= KEEPALIVE_FAILURE_RETRY_MS
       ? { due: true, reason: "retry" }
       : { due: false };
   }
-  if (i.expiresAt !== undefined && i.expiresAt - KEEPALIVE_LEAD_MS <= i.now) {
+  if (
+    i.refreshTokenExpiresAt !== undefined &&
+    i.refreshTokenExpiresAt - KEEPALIVE_LEAD_MS <= i.now
+  ) {
     return { due: true, reason: "expiring" };
   }
-  if (
-    i.lastRefreshedAt === undefined ||
-    i.lastRefreshedAt + keepAliveMaxIdleMs(i.refreshTokenTtlSeconds) <= i.now
-  ) {
+  if (i.lastRefreshedAt === undefined || i.lastRefreshedAt + maxIdleFor(i) <= i.now) {
     return { due: true, reason: "max_idle" };
   }
   return { due: false };
+}
+
+/**
+ * The earliest instant (epoch ms) at which {@link keepAliveDecision} stops answering "not due" for
+ * this input, assuming nothing else changes — when a host that schedules its sweep per Connection
+ * should look at it next. It is `≤ now` when the Connection is due (or to be given up) right now.
+ */
+export function keepAliveNextCheckAt(i: KeepAliveInput): number {
+  if (i.refreshFailingSince !== undefined) {
+    const last = i.lastAttemptAt ?? i.refreshFailingSince;
+    const mark = i.refreshFailingSince + KEEPALIVE_GIVE_UP_MS;
+    if (last >= mark) return i.now;
+    return Math.min(last + KEEPALIVE_FAILURE_RETRY_MS, mark);
+  }
+  if (i.lastRefreshedAt === undefined) return i.now;
+  let at = i.lastRefreshedAt + maxIdleFor(i);
+  if (i.refreshTokenExpiresAt !== undefined) {
+    at = Math.min(at, i.refreshTokenExpiresAt - KEEPALIVE_LEAD_MS);
+  }
+  return at;
 }
 
 /** The stored OAuth2 credential the built-in refresh reads and writes. */
@@ -102,6 +172,11 @@ export interface OAuthCredentialShape {
   refreshToken?: string;
   /** Access-token expiry, epoch MILLISECONDS. */
   expiresAt?: number;
+  /**
+   * Refresh-token expiry, epoch MILLISECONDS: `now + refresh_token_expires_in` from the token
+   * response that issued (or re-confirmed) the refresh token. Unset when that response had none.
+   */
+  refreshTokenExpiresAt?: number;
   /** Space-separated scopes, as the vendor echoed them. */
   scope?: string;
   tokenType?: string;
@@ -176,6 +251,9 @@ function expiresInSeconds(v: unknown): number | undefined {
  * - `refreshToken` is replaced when the vendor rotates it, else the old one is kept.
  * - `expiresAt` = `now + expires_in`, else `now + accessTokenTtlSeconds`, else unset (never the
  *   previous value: that instant belongs to the old token).
+ * - `refreshTokenExpiresAt` = `now + refresh_token_expires_in`, else unset: only the latest
+ *   response is trusted, so the keep-alive cadence falls back to the declared TTL rather than plan
+ *   from an instant that may belong to a spent token (or to a sliding one the refresh just moved).
  * - `scope` / `tokenType` are replaced when the response carries them.
  * - Any other member of `prev` (vendor extras a hook stored) is kept untouched.
  */
@@ -209,5 +287,8 @@ export function mergeRefreshedCredential(
   const ttl = expiresInSeconds(r.expires_in) ?? expiresInSeconds(opts.accessTokenTtlSeconds);
   if (ttl !== undefined) out.expiresAt = opts.now + ttl * 1000;
   else delete out.expiresAt;
+  const rtTtl = expiresInSeconds(r.refresh_token_expires_in);
+  if (rtTtl !== undefined) out.refreshTokenExpiresAt = opts.now + rtTtl * 1000;
+  else delete out.refreshTokenExpiresAt;
   return out;
 }
