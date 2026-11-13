@@ -7,7 +7,7 @@
  * later slice; this covers the path that needs no hook execution.
  */
 import { isSection, type Param, type Validation } from "@w6w/types";
-import { effectiveParam } from "@w6w/expr";
+import { effectiveParam } from "./param-when.ts";
 import { W6WError } from "./errors.ts";
 
 function fail(message: string, details?: unknown): never {

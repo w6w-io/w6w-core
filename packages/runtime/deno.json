@@ -6,7 +6,6 @@
     "./author": "./author.ts"
   },
   "imports": {
-    "@w6w/types": "../types/mod.ts",
-    "@w6w/expr": "../expr/mod.ts"
+    "@w6w/types": "../types/mod.ts"
   }
 }
