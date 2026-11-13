@@ -98,12 +98,31 @@ export function mapGenericSource(
 
 export type CredentialStatus = "active" | "disabled" | "revoked";
 
+/**
+ * Who owns a credential or Connection: the whole account, or one end user of it.
+ * Independent of reuse (connection-private vs shared).
+ */
+export type AccessScope = "account" | "user";
+
+/**
+ * Ownership as a discriminated pair. `ownerSubject` is the verified subject string (never
+ * `users.id`), stamped by the host and present iff the scope is `"user"`.
+ */
+export type CredentialOwnership =
+  | { accessScope: "account"; ownerSubject?: undefined }
+  | { accessScope: "user"; ownerSubject: string };
+
 /** A credential as exposed to callers. There is never a payload or ciphertext member. */
 export interface CredentialRecord {
   id: string;
   tenant: string;
   account: string;
+  /** Attribution only; ownership is `accessScope` / `ownerSubject`. */
   createdBy: string;
+  /** Immutable after creation. */
+  accessScope: AccessScope;
+  /** Present iff `accessScope === "user"`. */
+  ownerSubject?: string;
   name: string;
   contract: string;
   revision: number;
@@ -235,6 +254,7 @@ export const CREDENTIAL_ERROR_CODES = [
   "auth_not_found",
   "jit_unavailable_in_background",
   "credential_invalid",
+  "user_context_required",
 ] as const;
 
 export type CredentialErrorCode = (typeof CREDENTIAL_ERROR_CODES)[number];

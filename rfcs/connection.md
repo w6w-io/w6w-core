@@ -243,6 +243,8 @@ the secret. A Credential has its **own** `tenant` and `account` ownership plus a
 attribution, and a `delegatedUser` (the user a service account impersonates) is a third, separate
 concept: not the `owner`, and not the acting principal's subject.
 
+> **Amended 2026-11-12:** a Connection also has an ownership scope (`accessScope`, `account` or `user`), distinct from the `owner` attribution — see [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
+
 ### Sharing
 
 A Credential can be shared by several Connections **within one tenant and account**, by
@@ -250,6 +252,8 @@ A Credential can be shared by several Connections **within one tenant and accoun
 Connection deletes it when no other Connection references it, and disconnecting a Connection never
 revokes or deletes a shared credential ([Credential RFC §Lifecycle policy](./credential.md#lifecycle-policy)).
 Cross-account and multi-owner sharing remains deferred.
+
+> **Amended 2026-11-12:** a `user`-scoped Connection has a single owner and is not sharing; a shared credential must have the same ownership as every Connection referencing it — see [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
 
 ### Import and `needs_refresh`
 
@@ -267,3 +271,40 @@ that carries the old revision and marks tests of the Connections that use it sta
 `bindingRevision` tracks the binding and is not changed by it. The "Credential rotation outside
 `refresh`" row above stays true only for a scheme that derives a per-request signature inside `sign`
 and never changes the stored credential: rotating a stored credential is an event the host sees.
+
+## Amendment — 2026-11-12: connection ownership
+
+> **Additive.** This section adds an ownership scope to the Connection. It edits none of the passages
+> above. `owner` stays host attribution (see [§Ownership](#ownership)), and the deferral of multi-owner
+> sharing stands: a user-scoped Connection has exactly **one** owner and is not sharing.
+
+### Scope
+
+A Connection has an optional host-populated `accessScope`: `account` or `user`. Absent means
+`account`. It is independent of reuse: a Connection is private to one credential or shares one by
+`credentialId` exactly as before, in either scope.
+
+A `user` Connection belongs to `(tenant, account, ownerSubject)`, where `ownerSubject` is the verified
+subject string, never `users.id`; the host stamps it from the authenticated principal and never takes
+it from the client. `Connection` has no `ownerSubject` member: `owner` remains attribution only and
+does not decide ownership. The scope is **immutable after creation**.
+
+### Identical ownership with the Credential
+
+A Connection and the Credential it references must have identical ownership: both `account`, or both
+`user` with the same `ownerSubject`. The host's storage enforces this; an attach that would cross
+scopes is refused.
+
+### Visibility and use
+
+A user-owned Connection is visible to and usable by its owner only, and only when the execution is an
+authenticated end user (not a service principal, operator, impersonated session or unattended or
+background run). A foreign id and an absent id are indistinguishable. The check precedes any decrypt,
+hook, token-store read or egress, including a cached authorization, and a refusal on those grounds is
+`user_context_required` ([Credential RFC §Amendment — 2026-11-12](./credential.md#amendment--2026-11-12-ownership-scope)).
+A user-owned Connection is never handed off to a spoke.
+
+### Redaction
+
+`accessScope` is host-side only. It is not part of `RedactedConnection`: userland code (Action
+`execute`, editor previews) never sees ownership.

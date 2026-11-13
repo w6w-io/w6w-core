@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1.0.0";
 import {
   acceptedContractsFor,
+  type AccessScope,
   type AfterConnectHook,
   type Auth,
   AUTH_TYPES,
@@ -9,6 +10,7 @@ import {
   type Connection,
   CREDENTIAL_CONTRACT_ID_RE,
   CREDENTIAL_ERROR_CODES,
+  type CredentialOwnership,
   type CredentialRecord,
   genericContractFor,
   isLegacyContractId,
@@ -35,7 +37,7 @@ Deno.test("AUTH_TYPES pins the canonical order", () => {
   ]);
 });
 
-Deno.test("CREDENTIAL_ERROR_CODES are exactly the nine resolution-time codes, in order", () => {
+Deno.test("CREDENTIAL_ERROR_CODES are exactly the ten resolution-time codes, in order", () => {
   assertEquals([...CREDENTIAL_ERROR_CODES], [
     "credential_disabled",
     "credential_missing",
@@ -46,8 +48,9 @@ Deno.test("CREDENTIAL_ERROR_CODES are exactly the nine resolution-time codes, in
     "auth_not_found",
     "jit_unavailable_in_background",
     "credential_invalid",
+    "user_context_required",
   ]);
-  assertEquals(CREDENTIAL_ERROR_CODES.length, 9);
+  assertEquals(CREDENTIAL_ERROR_CODES.length, 10);
 });
 
 Deno.test("legacy contract ids", () => {
@@ -105,6 +108,7 @@ Deno.test("type shapes are pinned", () => {
     tenant: "t",
     account: "a",
     createdBy: "u",
+    accessScope: "account",
     name: "n",
     contract: "google-service-account.v1",
     revision: 1,
@@ -129,6 +133,34 @@ Deno.test("type shapes are pinned", () => {
     expiresAt: 1,
   };
   assert(a && b && jit && rec2 && d);
+});
+
+Deno.test("CredentialRecord requires accessScope; a user record carries ownerSubject", () => {
+  const base = {
+    id: "c",
+    tenant: "t",
+    account: "a",
+    createdBy: "u",
+    name: "n",
+    contract: "bearer.v1",
+    revision: 1,
+    refreshSeq: 0,
+    status: "active" as const,
+    display: {},
+    ownerConnectionId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  // @ts-expect-error accessScope is required
+  const missing: CredentialRecord = { ...base };
+  const user: CredentialRecord = { ...base, accessScope: "user", ownerSubject: "sub_1" };
+  const own: CredentialOwnership = { accessScope: "user", ownerSubject: "sub_1" };
+  // @ts-expect-error a user-scoped ownership needs ownerSubject
+  const bad: CredentialOwnership = { accessScope: "user" };
+  const acct: CredentialOwnership = { accessScope: "account" };
+  const scope: AccessScope = user.accessScope;
+  assertEquals(user.ownerSubject, "sub_1");
+  assert(missing && own && bad && acct && scope);
 });
 
 const FULL: Connection = {

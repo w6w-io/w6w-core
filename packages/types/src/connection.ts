@@ -2,7 +2,7 @@
  * Connection — the stored, per-user result of a completed Auth flow.
  * See rfcs/connection.md.
  */
-import type { ApprovedBinding, ConnectionBinding } from "./credential.ts";
+import type { AccessScope, ApprovedBinding, ConnectionBinding } from "./credential.ts";
 
 /**
  * `needs_refresh` is not used for a provider-derived (`serviceAccount`) credential:
@@ -71,6 +71,11 @@ export interface Connection {
   approved?: ApprovedBinding;
   /** Bumped whenever the binding's scopes or delegated user change. */
   bindingRevision?: number;
+  /**
+   * Host-populated ownership scope; absent means `"account"`. Not part of the redacted
+   * projection: userland never sees ownership. `owner` stays attribution only.
+   */
+  accessScope?: AccessScope;
 }
 
 /**
