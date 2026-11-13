@@ -42,6 +42,24 @@ export type {
   CredentialPurpose,
   CredentialResolver,
 } from "./src/authorization.ts";
+export {
+  isRefreshable,
+  KEEPALIVE_DEFAULT_MAX_IDLE_MS,
+  KEEPALIVE_FAILURE_RETRY_MS,
+  KEEPALIVE_GIVE_UP_MS,
+  KEEPALIVE_LEAD_MS,
+  keepAliveDecision,
+  keepAliveMaxIdleMs,
+  mergeRefreshedCredential,
+  oauth2RefreshRequest,
+  OAuthRefreshError,
+} from "./src/refresh-policy.ts";
+export type {
+  KeepAliveDecision,
+  KeepAliveInput,
+  OAuth2RefreshRequestInput,
+  OAuthCredentialShape,
+} from "./src/refresh-policy.ts";
 export type {
   AppDescription,
   CredentialHookKind,
