@@ -22,6 +22,7 @@ import {
 import { inlineAssets } from "./assets.ts";
 import { BuildError, isInside } from "./errors.ts";
 import { assertGraph, resolveTypesRoot, runDeno } from "./graph.ts";
+import type { Resolution } from "./registry.ts";
 import { computeSourceDigest } from "./source-digest.ts";
 import { resolveSharedRoots } from "./shared.ts";
 import pkgConfig from "../deno.json" with { type: "json" };
@@ -40,6 +41,8 @@ export interface BuildOptions {
   maxAssetBytes?: number;
   /** Per-app inlined-asset byte cap. Default {@link MAX_APP_ASSET_BYTES}. */
   maxAppAssetBytes?: number;
+  /** How `@w6w/*` imports resolve. Default `"sibling"`. */
+  resolution?: Resolution;
 }
 
 export interface BuildResult {
