@@ -1,5 +1,5 @@
 /**
- * A local JSR mirror for `@w6w/app-build` tests — no network, no real jsr.io.
+ * A local JSR mirror for `@w6w/app-build` tests — a standalone `JSR_URL`.
  *
  * `startMirror()` stages packages into a temp dir laid out exactly as JSR serves
  * them, then serves that dir on `127.0.0.1:0`:
@@ -13,12 +13,19 @@
  * The staged packages are the lane's own `@w6w/types` and `@w6w/runtime`
  * (only the `./author` entry, reached as `jsr:@w6w/runtime@<v>/author`), with
  * their bare `@w6w/*` imports rewritten to `jsr:` specifiers the way
- * `deno publish` rewrites them, plus a SYNTHETIC `@w6w/app-kit` that carries
- * nothing but the pinned P3 `./poll` and `./webhook` entrypoints (the real kit
- * is another node's deliverable).
+ * `deno publish` rewrites them, plus `@w6w/app-kit`: the REAL
+ * `apps/apps/_shared/{poll,webhook}/mod.ts` sources when that sibling checkout
+ * exists, and the synthetic pinned P3 interface when it does not.
+ *
+ * Anything the mirror does not serve itself — every package outside the `@w6w`
+ * scope, and any `@w6w` path it lacks — is passed through to the real JSR
+ * (`https://jsr.io`), so the mirror is a drop-in `JSR_URL` for a manual
+ * standalone-build rehearsal. `JSR_MIRROR_OFFLINE=1` turns that pass-through
+ * into a plain 404 instead; `startMirror()` defaults to offline so no test gate
+ * needs network, and `offline: false` opts a caller back in.
  *
  * Run as a main module it stages, prints one line `JSR_URL=<url>` on stdout and
- * serves until killed, so a shell gate can point builds at it:
+ * serves until killed, so a shell gate (or a person) can point builds at it:
  *
  * ```sh
  * deno run -A --no-lock packages/app-build/tests/jsr-mirror.ts
@@ -33,6 +40,25 @@ import { P3_SPECS } from "../src/registry.ts";
 
 /** Where the lane's packages live (`core/packages`), one level above this package. */
 const PACKAGES_DIR = join(import.meta.dirname!, "..", "..");
+
+/**
+ * The real `@w6w/app-kit` sources: the `apps` sibling checkout next to `core`,
+ * i.e. `<lane>/apps/apps/_shared` (a symlink in a task lane, absent in a lone
+ * `core` checkout — then the synthetic kit is staged instead).
+ */
+export const REAL_APP_KIT_DIR = join(PACKAGES_DIR, "..", "..", "apps", "apps", "_shared");
+
+/** True iff `dir` holds the real kit: `deno.json` plus both entry modules. */
+export async function hasRealAppKit(dir: string = REAL_APP_KIT_DIR): Promise<boolean> {
+  for (const rel of ["deno.json", "poll/mod.ts", "webhook/mod.ts"]) {
+    try {
+      if (!(await Deno.stat(join(dir, rel))).isFile) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
 
 /** A package staged into the mirror. */
 export interface MirrorPackage {
@@ -50,6 +76,19 @@ export interface StartMirrorOptions {
   packages?: MirrorPackage[];
   /** Root holding the lane's `types`/`runtime` packages; defaults to `core/packages`. */
   packagesDir?: string;
+  /**
+   * Dir holding the real `@w6w/app-kit` (`poll/`, `webhook/`); defaults to
+   * `REAL_APP_KIT_DIR`. When it is not a real kit, the synthetic one is staged.
+   */
+  appKitDir?: string;
+  /**
+   * `true` answers every unserved path with 404; `false` passes it through to
+   * `upstream`. Defaults to `JSR_MIRROR_OFFLINE=1` when the env var is set, else
+   * `true` — tests stay offline unless they ask otherwise.
+   */
+  offline?: boolean;
+  /** Pass-through base URL; defaults to `https://jsr.io/`. */
+  upstream?: string;
 }
 
 /** A running mirror. */
@@ -60,6 +99,8 @@ export interface LocalMirror {
   dir: string;
   /** Packages served, in staging order. */
   packages: { name: string; version: string }[];
+  /** Whether unserved paths 404 (`true`) or pass through to `upstream` (`false`). */
+  offline: boolean;
   /** Stop serving and remove the staged tree. Idempotent. */
   close(): Promise<void>;
 }
@@ -142,7 +183,7 @@ async function stageRuntime(packagesDir: string): Promise<MirrorPackage> {
 }
 
 /** Stage the synthetic `@w6w/app-kit`: the pinned P3 interface only, a few lines each. */
-function stageAppKit(): MirrorPackage {
+function syntheticAppKit(): MirrorPackage {
   const version = parseP3(P3_SPECS["@w6w/app-kit/poll"], "@w6w/app-kit/poll").version;
   const poll = `/**
  * Synthetic \`@w6w/app-kit/poll\` — the pinned P3 entrypoint only. The real kit is
@@ -183,6 +224,42 @@ export function webhookTrigger(options: WebhookTriggerOptions): WebhookTriggerOp
       ["/webhook.ts", encoder.encode(webhook)],
     ]),
   };
+}
+
+/**
+ * Stage the REAL `@w6w/app-kit` from `dir` (`apps/apps/_shared`): every file under
+ * its `poll/` and `webhook/` trees, keyed by the package's own export map, so
+ * `jsr:@w6w/app-kit@<v>/poll` serves `poll/mod.ts` exactly as `deno publish`
+ * would. `published()` rewrites the bare `@w6w/types` import to its P3 specifier
+ * and the manifest's checksums cover those rewritten bytes.
+ */
+async function realAppKit(dir: string): Promise<MirrorPackage> {
+  const cfg = await packageConfig(dir);
+  const expected = parseP3(P3_SPECS["@w6w/app-kit/poll"], "@w6w/app-kit/poll");
+  if (cfg.name !== "@w6w/app-kit") {
+    throw new Error(`jsr-mirror: ${dir}/deno.json is ${cfg.name}, expected @w6w/app-kit`);
+  }
+  if (cfg.version !== expected.version) {
+    throw new Error(
+      `jsr-mirror: ${dir}/deno.json is ${cfg.version} but P3 pins @w6w/app-kit@${expected.version}`,
+    );
+  }
+  const entries = ["poll", "webhook"] as const;
+  for (const entry of entries) {
+    if (!cfg.exports[`./${entry}`]) {
+      throw new Error(`jsr-mirror: ${dir}/deno.json must export "./${entry}"`);
+    }
+  }
+  const files = new Map<string, Uint8Array>();
+  for (const entry of entries) {
+    for (const [path, bytes] of await collect(dir, join(dir, entry))) files.set(path, bytes);
+  }
+  return { name: "app-kit", version: cfg.version, exports: cfg.exports, files };
+}
+
+/** `@w6w/app-kit`: the real `_shared` sources when they exist, else the synthetic kit. */
+async function stageAppKit(dir: string): Promise<MirrorPackage> {
+  return await hasRealAppKit(dir) ? await realAppKit(dir) : syntheticAppKit();
 }
 
 /**
@@ -277,6 +354,47 @@ async function stage(root: string, pkg: MirrorPackage): Promise<void> {
 }
 
 /**
+ * `JSR_MIRROR_OFFLINE=1` (or `true`) -> offline, `0`/`false` -> pass-through,
+ * unset/empty -> `undefined` so the caller's default wins.
+ */
+function envOffline(): boolean | undefined {
+  let value: string | undefined;
+  try {
+    value = Deno.env.get("JSR_MIRROR_OFFLINE");
+  } catch { /* no env permission: the caller's default */ }
+  if (value === undefined || value === "") return undefined;
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+/** The mirror's own 404; also what offline mode answers for anything it does not stage. */
+function notFound(pathname: string): Response {
+  return new Response(`not found: ${pathname}\n`, { status: 404 });
+}
+
+/**
+ * Pass an unserved path through to the real JSR, so the mirror is a drop-in
+ * `JSR_URL` for a manual rehearsal: `@std/*` and every other package outside the
+ * `@w6w` scope (and any `@w6w` path the mirror lacks) are the upstream's.
+ */
+async function passThrough(req: Request, upstream: string, pathname: string): Promise<Response> {
+  const target = new URL(pathname.replace(/^\/+/, ""), upstream);
+  const headers = new Headers(req.headers);
+  headers.delete("host");
+  try {
+    const res = await fetch(target, { method: req.method, headers });
+    return new Response(res.body, {
+      status: res.status,
+      headers: { "content-type": res.headers.get("content-type") ?? "application/octet-stream" },
+    });
+  } catch (error) {
+    return new Response(`jsr-mirror: pass-through to ${target} failed: ${error}\n`, {
+      status: 502,
+      headers: { "content-type": "text/plain" },
+    });
+  }
+}
+
+/**
  * Stage the mirror and start serving it on `127.0.0.1:0`.
  *
  * The returned `url` goes into `JSR_URL` for any deno command that must resolve
@@ -284,10 +402,13 @@ async function stage(root: string, pkg: MirrorPackage): Promise<void> {
  */
 export async function startMirror(opts: StartMirrorOptions = {}): Promise<LocalMirror> {
   const packagesDir = opts.packagesDir ?? PACKAGES_DIR;
+  const offline = opts.offline ?? envOffline() ?? true;
+  const upstream = opts.upstream ?? "https://jsr.io/";
+  const base = upstream.endsWith("/") ? upstream : `${upstream}/`;
   const packages = [
     await stageTypes(packagesDir),
     await stageRuntime(packagesDir),
-    stageAppKit(),
+    await stageAppKit(opts.appKitDir ?? REAL_APP_KIT_DIR),
     ...(opts.packages ?? []),
   ].map(published);
 
@@ -300,17 +421,13 @@ export async function startMirror(opts: StartMirrorOptions = {}): Promise<LocalM
     async (req: Request): Promise<Response> => {
       const { pathname } = new URL(req.url);
       const path = decodeURIComponent(pathname).replace(/^\/+/, "");
-      if (!path || path.includes("..")) {
-        return new Response(`not found: ${pathname}\n`, { status: 404 });
-      }
+      if (!path || path.includes("..")) return notFound(pathname);
       try {
         const bytes = await Deno.readFile(join(dir, path));
         return new Response(bytes, { headers: { "content-type": contentType(path) } });
       } catch (error) {
-        if (error instanceof Deno.errors.NotFound) {
-          return new Response(`not found: ${pathname}\n`, { status: 404 });
-        }
-        throw error;
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+        return offline ? notFound(pathname) : await passThrough(req, base, pathname);
       }
     },
   );
@@ -320,6 +437,7 @@ export async function startMirror(opts: StartMirrorOptions = {}): Promise<LocalM
     url: `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}/`,
     dir,
     packages: packages.map((pkg) => ({ name: pkg.name, version: pkg.version })),
+    offline,
     close(): Promise<void> {
       closed ??= (async () => {
         await server.shutdown();
@@ -333,7 +451,8 @@ export async function startMirror(opts: StartMirrorOptions = {}): Promise<LocalM
 }
 
 if (import.meta.main) {
-  const mirror = await startMirror();
+  // A person's mirror: real JSR unless they say otherwise, unlike the tests.
+  const mirror = await startMirror({ offline: envOffline() ?? false });
   console.log(`JSR_URL=${mirror.url}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     try {
