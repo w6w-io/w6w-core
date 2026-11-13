@@ -1,11 +1,12 @@
 /**
- * OAuth2 refresh lifecycle — the pure half of rfcs/auth.md §Refresh lifecycle.
+ * Credential refresh lifecycle — the pure half of rfcs/auth.md §Refresh lifecycle.
  *
  * The host is the ONE refresher (ADR-0003 D-C2): it refreshes on use (`isExpiring`,
- * `TOKEN_SKEW_MS`) and on a background keep-alive schedule. This module decides WHEN a
- * keep-alive refresh is due, builds the built-in `grant_type=refresh_token` request, and merges
- * the vendor's answer into the stored credential. No I/O: the host sends the request through its
- * own guarded egress and owns every write-back.
+ * `TOKEN_SKEW_MS`) and on a background keep-alive schedule, by an auth's `refresh` hook (any
+ * auth with a stored credential) or by the built-in OAuth2 grant. This module decides WHEN a
+ * keep-alive refresh is due, builds the built-in `grant_type=refresh_token` request, merges the
+ * vendor's answer into the stored credential, and normalizes a `refresh` hook's result. No I/O:
+ * the host sends the request through its own guarded egress and owns every write-back.
  */
 
 /** Refresh in the background when the REFRESH token expires in less than this. */
@@ -18,16 +19,25 @@ export const KEEPALIVE_FAILURE_RETRY_MS = 60 * 60 * 1000;
 export const KEEPALIVE_GIVE_UP_MS = 72 * 60 * 60 * 1000;
 
 /**
- * True when an OAuth2 auth can be refreshed by the host: it defines a `refresh` hook, or the
- * built-in refresh is not disabled (`oauth2.builtinRefresh: false`). Any other auth type: false.
- * Whether the stored credential actually carries a refresh token is the caller's check.
+ * Auth types whose credential is never stored, or is derived by a host credential provider from a
+ * stored key: nothing for a refresh (hook or built-in) to renew, so never refreshable.
+ */
+const NEVER_REFRESHABLE = new Set(["jit", "tenantAuth", "serviceAccount"]);
+
+/**
+ * True when the host can refresh an auth's stored credential: the auth defines a `refresh` hook
+ * (any type with a stored credential — `oauth2`, `bearer`, `custom`, `apiKey`, `basic`), or it is
+ * `oauth2` and the built-in refresh is not disabled (`oauth2.builtinRefresh: false`). `jit`,
+ * `tenantAuth` and `serviceAccount`: never. Whether the stored credential actually carries a
+ * refresh token (which only the built-in refresh needs) is the caller's check.
  */
 export function isRefreshable(
   auth: { type: string; oauth2?: { builtinRefresh?: boolean } },
   hasRefreshHook: boolean,
 ): boolean {
-  if (auth.type !== "oauth2") return false;
-  return hasRefreshHook || auth.oauth2?.builtinRefresh !== false;
+  if (NEVER_REFRESHABLE.has(auth.type)) return false;
+  if (hasRefreshHook) return true;
+  return auth.type === "oauth2" && auth.oauth2?.builtinRefresh !== false;
 }
 
 /**
@@ -55,9 +65,9 @@ export function keepAliveMaxIdleMs(refreshTokenTtlSeconds?: number): number {
 export interface KeepAliveInput {
   now: number;
   /**
-   * Refresh-token expiry, as the vendor's last token response stated it
-   * (`refresh_token_expires_in`, stored as {@link OAuthCredentialShape.refreshTokenExpiresAt}).
-   * Takes precedence over `refreshTokenTtlSeconds`.
+   * Refresh-token expiry, as the last refresh (or the connect) stated it: an OAuth2
+   * `refresh_token_expires_in` (stored as {@link OAuthCredentialShape.refreshTokenExpiresAt}) or
+   * a `refresh` hook's `refreshTokenExpiresAt`. Takes precedence over `refreshTokenTtlSeconds`.
    */
   refreshTokenExpiresAt?: number;
   /** Last successful refresh, or the original grant. */
@@ -66,7 +76,7 @@ export interface KeepAliveInput {
   refreshFailingSince?: number;
   /** Last refresh attempt, success or failure. */
   lastAttemptAt?: number;
-  /** The auth's declared refresh-token lifetime (`oauth2.refreshTokenTtlSeconds`). */
+  /** The auth's declared refresh-token lifetime (auth-level `refreshTokenTtlSeconds`). */
   refreshTokenTtlSeconds?: number;
 }
 
@@ -290,5 +300,56 @@ export function mergeRefreshedCredential(
   const rtTtl = expiresInSeconds(r.refresh_token_expires_in);
   if (rtTtl !== undefined) out.refreshTokenExpiresAt = opts.now + rtTtl * 1000;
   else delete out.refreshTokenExpiresAt;
+  return out;
+}
+
+/** An instant given as epoch ms or an ISO 8601 string, as epoch ms; undefined when neither. */
+export function instantMs(v: unknown): number | undefined {
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v === "string" && v.trim() !== "") {
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? undefined : t;
+  }
+  return undefined;
+}
+
+/**
+ * The host's normalization of a `refresh` hook's result (rfcs/auth.md §Which refresh runs). The
+ * hook returns the COMPLETE new credential and it replaces the stored one: nothing is merged from
+ * the old credential, so a hook that wants to keep a member (a non-rotating refresh token, a stored
+ * login) returns it. Only the two instants the host plans from are normalized, both to epoch ms:
+ *
+ * - `expiresAt` — the hook's, when it gives a NEW one. When it gives none, or carries the old
+ *   credential's value over unchanged (`{ ...credential, token }`), the old instant belonged to the
+ *   old token: `now + accessTokenTtlSeconds` when declared, else unset (never treated as expiring).
+ * - `refreshTokenExpiresAt` — the hook's, when it states one. When the refresh token rotated
+ *   (`refreshToken` changed) but the expiry was carried over unchanged, it described the old token:
+ *   unset, so the cadence falls back to `refreshTokenTtlSeconds`. A non-rotating refresh token keeps
+ *   its expiry (an absolute lifetime does not move).
+ *
+ * An unparseable instant counts as absent. Every other member is returned as the hook gave it.
+ */
+export function normalizeHookRefreshedCredential(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+  opts: { now: number; accessTokenTtlSeconds?: number },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...next };
+  const prevExp = instantMs(prev.expiresAt);
+  const exp = instantMs(next.expiresAt);
+  if (exp !== undefined && exp !== prevExp) {
+    out.expiresAt = exp;
+  } else {
+    const ttl = opts.accessTokenTtlSeconds;
+    if (ttl !== undefined && Number.isFinite(ttl) && ttl > 0) out.expiresAt = opts.now + ttl * 1000;
+    else delete out.expiresAt;
+  }
+  const rtExp = instantMs(next.refreshTokenExpiresAt);
+  const rotated = next.refreshToken !== prev.refreshToken;
+  if (rtExp === undefined || (rotated && rtExp === instantMs(prev.refreshTokenExpiresAt))) {
+    delete out.refreshTokenExpiresAt;
+  } else {
+    out.refreshTokenExpiresAt = rtExp;
+  }
   return out;
 }

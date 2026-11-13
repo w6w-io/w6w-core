@@ -57,6 +57,8 @@ const AUTH_KEYS: Record<keyof Auth, true> = {
   tenantAuth: true,
   jit: true,
   serviceAccount: true,
+  refreshTokenTtlSeconds: true,
+  accessTokenTtlSeconds: true,
 };
 const OAUTH2_KEYS: Record<keyof OAuth2Config, true> = {
   authorizationUrl: true,
@@ -64,8 +66,6 @@ const OAUTH2_KEYS: Record<keyof OAuth2Config, true> = {
   tokenAuthMethod: true,
   tokenBodyFormat: true,
   refreshUrl: true,
-  refreshTokenTtlSeconds: true,
-  accessTokenTtlSeconds: true,
   builtinRefresh: true,
   revokeUrl: true,
   scopes: true,

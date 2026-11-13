@@ -688,6 +688,20 @@ function validateAuthInto(
   ctx.reqString(auth.displayName, `${path}.displayName`);
   checkParams(ctx, auth.fields, `${path}.fields`);
 
+  // Credential lifetimes (keep-alive): auth-level, for any auth whose stored credential the host
+  // refreshes. A host-sourced or provider-derived credential has nothing stored to keep alive.
+  for (const k of ["refreshTokenTtlSeconds", "accessTokenTtlSeconds"] as const) {
+    const v = (auth as Record<string, unknown>)[k];
+    if (v === undefined) continue;
+    if (!Number.isInteger(v) || (v as number) < 1) {
+      ctx.err(`${path}.${k}`, "must be a positive integer (seconds)");
+    } else if (
+      auth.type === "jit" || auth.type === "tenantAuth" || auth.type === "serviceAccount"
+    ) {
+      ctx.err(`${path}.${k}`, `does not apply to a ${auth.type} auth (nothing stored to refresh)`);
+    }
+  }
+
   if (auth.type === "oauth2") {
     const o = auth.oauth2;
     if (!isObject(o)) {
@@ -704,12 +718,6 @@ function validateAuthInto(
       }
       if (o.tokenBodyFormat !== undefined) {
         ctx.enum(o.tokenBodyFormat, ["form", "json"], `${path}.oauth2.tokenBodyFormat`);
-      }
-      for (const k of ["refreshTokenTtlSeconds", "accessTokenTtlSeconds"] as const) {
-        const v = o[k];
-        if (v !== undefined && (!Number.isInteger(v) || (v as number) < 1)) {
-          ctx.err(`${path}.oauth2.${k}`, "must be a positive integer (seconds)");
-        }
       }
       if (o.builtinRefresh !== undefined && typeof o.builtinRefresh !== "boolean") {
         ctx.err(`${path}.oauth2.builtinRefresh`, "must be a boolean");

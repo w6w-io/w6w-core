@@ -43,6 +43,7 @@ export type {
   CredentialResolver,
 } from "./src/authorization.ts";
 export {
+  instantMs,
   isRefreshable,
   KEEPALIVE_DEFAULT_MAX_IDLE_MS,
   KEEPALIVE_FAILURE_RETRY_MS,
@@ -52,6 +53,7 @@ export {
   keepAliveMaxIdleMs,
   keepAliveNextCheckAt,
   mergeRefreshedCredential,
+  normalizeHookRefreshedCredential,
   oauth2RefreshRequest,
   OAuthRefreshError,
 } from "./src/refresh-policy.ts";

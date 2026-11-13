@@ -63,6 +63,14 @@
         }
       }
     },
+    "refreshTokenTtlSeconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "accessTokenTtlSeconds": {
+      "type": "integer",
+      "minimum": 1
+    },
     "oauth2": {
       "type": "object",
       "required": [
@@ -82,14 +90,6 @@
         "refreshUrl": {
           "type": "string",
           "minLength": 1
-        },
-        "refreshTokenTtlSeconds": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "accessTokenTtlSeconds": {
-          "type": "integer",
-          "minimum": 1
         },
         "builtinRefresh": {
           "type": "boolean"

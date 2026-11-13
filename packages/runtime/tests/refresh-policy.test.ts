@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1.0.0";
 import {
+  instantMs,
   isRefreshable,
   KEEPALIVE_DEFAULT_MAX_IDLE_MS,
   KEEPALIVE_FAILURE_RETRY_MS,
@@ -9,6 +10,7 @@ import {
   keepAliveMaxIdleMs,
   keepAliveNextCheckAt,
   mergeRefreshedCredential,
+  normalizeHookRefreshedCredential,
   oauth2RefreshRequest,
   OAuthRefreshError,
 } from "../mod.ts";
@@ -26,14 +28,22 @@ Deno.test("keep-alive constants are the contract's values", () => {
   assertEquals(KEEPALIVE_GIVE_UP_MS, 72 * H);
 });
 
-Deno.test("isRefreshable: oauth2 only; a hook always counts; builtinRefresh:false disables built-in", () => {
+Deno.test("isRefreshable: a refresh hook on any stored-credential type; oauth2 built-in unless disabled", () => {
   assert(isRefreshable({ type: "oauth2" }, false));
   assert(isRefreshable({ type: "oauth2", oauth2: {} }, false));
   assert(isRefreshable({ type: "oauth2", oauth2: { builtinRefresh: true } }, false));
   assert(!isRefreshable({ type: "oauth2", oauth2: { builtinRefresh: false } }, false));
   assert(isRefreshable({ type: "oauth2", oauth2: { builtinRefresh: false } }, true));
-  assert(!isRefreshable({ type: "apiKey" }, false));
-  assert(!isRefreshable({ type: "custom" }, true));
+  // A bearer / custom / apiKey / basic auth is refreshable exactly when it has a refresh hook.
+  for (const type of ["bearer", "custom", "apiKey", "basic"]) {
+    assert(isRefreshable({ type }, true), type);
+    assert(!isRefreshable({ type }, false), type);
+  }
+  // Nothing stored to renew: never, hook or not.
+  for (const type of ["jit", "tenantAuth", "serviceAccount"]) {
+    assert(!isRefreshable({ type }, true), type);
+    assert(!isRefreshable({ type }, false), type);
+  }
 });
 
 Deno.test("keepAliveMaxIdleMs: a third of the refresh-token TTL, capped at a week", () => {
@@ -400,4 +410,85 @@ Deno.test("mergeRefreshedCredential: unusable responses throw a service-authored
   );
   assertEquals(bad.code, undefined);
   assert(!bad.message.includes("leak"));
+});
+
+Deno.test("instantMs: epoch ms or ISO 8601; anything else is absent", () => {
+  assertEquals(instantMs(NOW), NOW);
+  assertEquals(instantMs(new Date(NOW).toISOString()), NOW);
+  for (const v of [undefined, null, "", "soon", NaN, Infinity, {}, true]) {
+    assertEquals(instantMs(v), undefined, String(v));
+  }
+});
+
+Deno.test("normalizeHookRefreshedCredential: the hook's new instants are kept, as epoch ms", () => {
+  const prev = { token: "t0", refreshToken: "r0", expiresAt: NOW - H };
+  const out = normalizeHookRefreshedCredential(prev, {
+    token: "t1",
+    refreshToken: "r1",
+    expiresAt: new Date(NOW + 7 * D).toISOString(),
+    refreshTokenExpiresAt: NOW + 30 * D,
+  }, { now: NOW, accessTokenTtlSeconds: 3600 });
+  assertEquals(out, {
+    token: "t1",
+    refreshToken: "r1",
+    expiresAt: NOW + 7 * D,
+    refreshTokenExpiresAt: NOW + 30 * D,
+  });
+});
+
+Deno.test("normalizeHookRefreshedCredential: no new expiresAt → now + accessTokenTtlSeconds, else unset", () => {
+  const prev = { token: "t0", refreshToken: "r0", expiresAt: NOW - H };
+  // Omitted.
+  assertEquals(
+    normalizeHookRefreshedCredential(prev, { token: "t1", refreshToken: "r1" }, {
+      now: NOW,
+      accessTokenTtlSeconds: AT_TTL_7D,
+    }).expiresAt,
+    NOW + 7 * D,
+  );
+  // Carried over from the old credential by a spread: it was the OLD token's instant.
+  assertEquals(
+    normalizeHookRefreshedCredential(prev, { ...prev, token: "t1" }, {
+      now: NOW,
+      accessTokenTtlSeconds: AT_TTL_7D,
+    }).expiresAt,
+    NOW + 7 * D,
+  );
+  // Unparseable counts as omitted.
+  assertEquals(
+    normalizeHookRefreshedCredential(prev, { token: "t1", expiresAt: "later" }, {
+      now: NOW,
+      accessTokenTtlSeconds: AT_TTL_7D,
+    }).expiresAt,
+    NOW + 7 * D,
+  );
+  // No TTL declared: unset, never a stale instant.
+  const out = normalizeHookRefreshedCredential(prev, { ...prev, token: "t1" }, { now: NOW });
+  assert(!("expiresAt" in out));
+});
+
+Deno.test("normalizeHookRefreshedCredential: a carried-over refresh-token expiry is dropped only on rotation", () => {
+  const prev = {
+    token: "t0",
+    refreshToken: "r0",
+    refreshTokenExpiresAt: new Date(NOW + 2 * D).toISOString(),
+  };
+  // Rotated, expiry copied by the spread: it described r0, not r1.
+  const rotated = normalizeHookRefreshedCredential(prev, {
+    ...prev,
+    token: "t1",
+    refreshToken: "r1",
+  }, { now: NOW });
+  assert(!("refreshTokenExpiresAt" in rotated));
+  assertEquals(rotated.refreshToken, "r1");
+  // Not rotated: the same refresh token keeps its (absolute) expiry.
+  const kept = normalizeHookRefreshedCredential(prev, { ...prev, token: "t1" }, { now: NOW });
+  assertEquals(kept.refreshTokenExpiresAt, NOW + 2 * D);
+});
+
+Deno.test("normalizeHookRefreshedCredential: the result REPLACES the credential; nothing is merged back", () => {
+  const prev = { token: "t0", refreshToken: "r0", extra: "kept-only-if-returned" };
+  const out = normalizeHookRefreshedCredential(prev, { token: "t1" }, { now: NOW });
+  assertEquals(out, { token: "t1" });
+  assertEquals(prev.token, "t0"); // input not mutated
 });

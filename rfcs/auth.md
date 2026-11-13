@@ -319,28 +319,30 @@ Hooks make these first-class instead of workarounds.
 > `serviceAccount` block is defined in the amendment — see
 > [§Amendment — 2026-10-27](#amendment--2026-10-27-serviceaccount-strict-auth-keys-and-refined-opacity).
 
+> **Amended 2026-11-13:** two optional top-level fields, `refreshTokenTtlSeconds` and
+> `accessTokenTtlSeconds` (positive integers, seconds), describe the stored credential's lifetimes
+> for any refreshable auth. They are not valid on `jit`, `tenantAuth` or `serviceAccount` — see
+> [§Amendment — 2026-11-13](#credential-lifetimes).
+
 ### `oauth2`
 
-| Field                    | Type     | Required | Description                                                                                                                                                                                                                        |
-| ------------------------ | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `authorizationUrl`       | URL      | ✅       | Authorization endpoint.                                                                                                                                                                                                            |
-| `tokenUrl`               | URL      | ✅       | Token exchange endpoint.                                                                                                                                                                                                           |
-| `tokenAuthMethod`        | string   | ⬜       | `client_secret_post` (default) or `client_secret_basic` for host token exchange.                                                                                                                                                   |
-| `tokenBodyFormat`        | string   | ⬜       | `form` (default) or `json` for the token request body.                                                                                                                                                                             |
-| `refreshUrl`             | URL      | ⬜       | Refresh endpoint (defaults to `tokenUrl` if omitted).                                                                                                                                                                              |
-| `refreshTokenTtlSeconds` | integer  | ⬜       | Lifetime of the vendor's refresh token, in seconds, when it expires (sliding or absolute). Drives keep-alive cadence; a `refresh_token_expires_in` in the token response takes precedence. Omit when refresh tokens do not expire. |
-| `accessTokenTtlSeconds`  | integer  | ⬜       | Access-token lifetime to assume when a token response has no `expires_in`. Without it such a token is never treated as expiring.                                                                                                   |
-| `builtinRefresh`         | boolean  | ⬜       | `false` disables the built-in refresh for a vendor with no refresh grant. Defaults to `true`. A `refresh` hook always wins.                                                                                                        |
-| `revokeUrl`              | URL      | ⬜       | Revocation endpoint used on disconnect.                                                                                                                                                                                            |
-| `scopes`                 | string[] | ⬜       | Default scopes requested.                                                                                                                                                                                                          |
-| `scopeSeparator`         | string   | ⬜       | Separator used when joining scopes. Defaults to `" "`.                                                                                                                                                                             |
-| `pkce`                   | boolean  | ⬜       | Enable PKCE. Defaults to `true`.                                                                                                                                                                                                   |
-| `extraAuthParams`        | object   | ⬜       | Extra query params appended to the authorization URL.                                                                                                                                                                              |
-| `setup`                  | object   | ⬜       | Display-only client-registration guidance; see [`oauth2.setup`](#oauth2setup).                                                                                                                                                     |
+| Field              | Type     | Required | Description                                                                                                                 |
+| ------------------ | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `authorizationUrl` | URL      | ✅       | Authorization endpoint.                                                                                                     |
+| `tokenUrl`         | URL      | ✅       | Token exchange endpoint.                                                                                                    |
+| `tokenAuthMethod`  | string   | ⬜       | `client_secret_post` (default) or `client_secret_basic` for host token exchange.                                            |
+| `tokenBodyFormat`  | string   | ⬜       | `form` (default) or `json` for the token request body.                                                                      |
+| `refreshUrl`       | URL      | ⬜       | Refresh endpoint (defaults to `tokenUrl` if omitted).                                                                       |
+| `builtinRefresh`   | boolean  | ⬜       | `false` disables the built-in refresh for a vendor with no refresh grant. Defaults to `true`. A `refresh` hook always wins. |
+| `revokeUrl`        | URL      | ⬜       | Revocation endpoint used on disconnect.                                                                                     |
+| `scopes`           | string[] | ⬜       | Default scopes requested.                                                                                                   |
+| `scopeSeparator`   | string   | ⬜       | Separator used when joining scopes. Defaults to `" "`.                                                                      |
+| `pkce`             | boolean  | ⬜       | Enable PKCE. Defaults to `true`.                                                                                            |
+| `extraAuthParams`  | object   | ⬜       | Extra query params appended to the authorization URL.                                                                       |
+| `setup`            | object   | ⬜       | Display-only client-registration guidance; see [`oauth2.setup`](#oauth2setup).                                              |
 
-> **Amended 2026-11-13:** `refreshTokenTtlSeconds`, `accessTokenTtlSeconds` and `builtinRefresh` are
-> new; `refreshUrl` is where the built-in refresh posts — see
-> [§Amendment — 2026-11-13](#amendment--2026-11-13-refresh-lifecycle).
+> **Amended 2026-11-13:** `builtinRefresh` is new; `refreshUrl` is where the built-in refresh posts
+> — see [§Amendment — 2026-11-13](#amendment--2026-11-13-refresh-lifecycle).
 
 #### `oauth2.setup`
 
@@ -546,21 +548,24 @@ appears in inbound data, so a manifest cannot widen what a credential may be att
 
 ## Amendment — 2026-11-13: Refresh lifecycle
 
-> **Additive, with one refinement.** This section specifies when and how a host refreshes an
-> `oauth2` credential, including a built-in refresh that needs no hook and a background keep-alive.
-> It refines exactly the Lifecycle table's `refresh` row (pointer below the table) and adds three
-> optional `oauth2` fields (pointer below the field table). Everything else in this RFC stands. The
-> pure policy lives in `@w6w/runtime` (`packages/runtime/src/refresh-policy.ts`); the Connection
-> fields it reads are in
+> **Additive, with one refinement.** This section specifies when and how a host refreshes a stored
+> credential: by an auth's `refresh` hook (any auth type with a stored credential), or, for
+> `oauth2`, by a built-in refresh that needs no hook; and a background keep-alive for both. It
+> refines exactly the Lifecycle table's `refresh` row (pointer below the table), adds one optional
+> `oauth2` field (`builtinRefresh`) and two optional top-level fields (`refreshTokenTtlSeconds`,
+> `accessTokenTtlSeconds`), each with a pointer below its field table. Everything else in this RFC
+> stands. The pure policy lives in `@w6w/runtime` (`packages/runtime/src/refresh-policy.ts`); the
+> Connection fields it reads are in
 > [Connection RFC §Amendment — 2026-11-13](./connection.md#amendment--2026-11-13-auto-refresh).
 
 ### Why
 
-An OAuth2 refresh token often expires too, either a fixed time after consent (absolute) or a fixed
-time after its last use (sliding). A host that refreshes only when a call needs a token loses every
-sliding refresh token whose Connection sits idle longer than that lifetime, and the user has to
-reconnect. A vendor with 7-day access tokens and 30-day refresh tokens disconnects an account that
-sees no activity for a month. Refreshing on a schedule keeps it alive.
+A refresh token (OAuth2's, or a non-OAuth vendor's renewal token that an auth's `refresh` hook
+spends) often expires too, either a fixed time after consent (absolute) or a fixed time after its
+last use (sliding). A host that refreshes only when a call needs a token loses every sliding refresh
+token whose Connection sits idle longer than that lifetime, and the user has to reconnect. A vendor
+with 7-day access tokens and 30-day refresh tokens disconnects an account that sees no activity for
+a month. Refreshing on a schedule keeps it alive.
 
 ### Who refreshes
 
@@ -579,19 +584,57 @@ non-idempotent action is unsafe, and this amendment does not add it.
 
 ### Which refresh runs
 
-For an `oauth2` auth, in order:
+`jit`, `tenantAuth` and `serviceAccount` auths are never refreshed: a `jit` or `tenantAuth` value is
+never stored, and a `serviceAccount` token is derived by a host credential provider from a stored
+key. For every other auth type, in order:
 
-1. If the auth defines a **`refresh` hook**, the hook runs and the built-in refresh never does, even
-   with `builtinRefresh: true`. Input: `{ credential }`, the stored credential. Output: the complete
-   new credential, as a non-empty plain object. The host writes it back in place of the old one. A
-   throw, or a non-object or empty result, fails the refresh and leaves the stored credential as it
-   was.
-2. Otherwise, if `oauth2.builtinRefresh` is not `false` **and** the stored credential has a
-   `refreshToken`, the host runs the **built-in refresh** below.
+1. If the auth defines a **`refresh` hook**, the hook runs (see
+   [The `refresh` hook](#the-refresh-hook)). For `oauth2` the built-in refresh then never runs, even
+   with `builtinRefresh: true`. This is the only way to refresh a `bearer`, `custom`, `apiKey` or
+   `basic` credential.
+2. Otherwise, for an `oauth2` auth, if `oauth2.builtinRefresh` is not `false` **and** the stored
+   credential has a `refreshToken`, the host runs the **built-in refresh** below.
 3. Otherwise the credential is not refreshable. It is used as stored until it expires.
 
 `isRefreshable(auth, hasRefreshHook)` from `@w6w/runtime` answers steps 1 and 2 without looking at
 the credential. A host shows the result as `refreshable` on the auth listings its connect UI reads.
+
+### Credential lifetimes
+
+Two optional top-level auth fields describe the stored credential, whatever the auth type:
+
+| Field                    | Type    | Description                                                                                                                                                                                                                                                                     |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshTokenTtlSeconds` | integer | Lifetime of the refresh token (or whatever the `refresh` hook renews from), in seconds, when it expires (sliding or absolute). Drives keep-alive cadence. A stated expiry takes precedence (below). Omit when it does not expire.                                               |
+| `accessTokenTtlSeconds`  | integer | Access-token lifetime to assume when a new credential states none: an OAuth2 token response without `expires_in`, a `refresh` hook result without a new `expiresAt`, or a Connection created with no `expiresAt`. The host then sets `expiresAt = now + accessTokenTtlSeconds`. |
+
+Both are positive integers and are invalid on `jit`, `tenantAuth` and `serviceAccount`. Without
+`accessTokenTtlSeconds`, a credential with no `expiresAt` is never treated as expiring on use.
+
+At connect, when the stored credential has no `expiresAt` and the auth declares
+`accessTokenTtlSeconds`, the host sets `expiresAt = now + accessTokenTtlSeconds`. The same applies
+when a Connection's credential is replaced. The connect (or replacement) time is the Connection's
+first `lastRefreshedAt`, so the keep-alive clock starts then. A credential the user pastes, such as
+`{ token, refreshToken }` from a vendor's settings page, is kept alive from its first day.
+
+### The `refresh` hook
+
+- **Input:** `{ credential }`, the whole stored credential.
+- **Output:** the **complete** new credential, as a non-empty plain object. It **replaces** the
+  stored one; nothing is merged back from the old credential, so a hook that wants to keep a member
+  (a non-rotating refresh token, a stored login) returns it. A throw, or a non-object or empty
+  result, fails the refresh and leaves the stored credential as it was.
+- **`expiresAt`** (epoch ms or ISO 8601): the new access token's expiry. When the result has none,
+  or carries the old credential's value over unchanged, the old instant belonged to the old token:
+  the host sets `now + accessTokenTtlSeconds`, or leaves it unset when that is not declared.
+- **`refreshTokenExpiresAt`** (optional, epoch ms or ISO 8601): when the new refresh token expires,
+  if the vendor says. It outranks `refreshTokenTtlSeconds` for the keep-alive cadence. When
+  `refreshToken` changed but this value was carried over unchanged, it described the old token and
+  is dropped.
+
+`normalizeHookRefreshedCredential(prev, next, { now, accessTokenTtlSeconds })` from `@w6w/runtime`
+applies these two rules; every other member is stored as the hook returned it. A host may store the
+two instants in its own format (the reference host stores ISO 8601).
 
 The built-in refresh needs the host's OAuth client, so it runs only where a resolver runs. An
 embedder that uses the in-core path (no resolver) has only the hook.
@@ -614,14 +657,14 @@ The grant follows RFC 6749 §6. `oauth2RefreshRequest` from `@w6w/runtime` build
 
 `mergeRefreshedCredential` merges the response into the stored credential:
 
-| Stored member                      | After a successful refresh                                                                                                                                                                    |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accessToken`                      | The response's `access_token`. A response without one fails the refresh.                                                                                                                      |
-| `refreshToken`                     | **Rotation:** the response's `refresh_token` when it has a non-empty one. Otherwise the old value is kept, because a vendor that does not rotate leaves the old token valid.                  |
-| `expiresAt` (epoch ms)             | `now + expires_in` (a number or numeric string, seconds). Without `expires_in`, `now + accessTokenTtlSeconds`. Without either, unset, because the old instant belonged to the old token.      |
-| `refreshTokenExpiresAt` (epoch ms) | `now + refresh_token_expires_in` (seconds) when the response has it. Otherwise unset: only the latest response's statement is trusted, so the cadence falls back to `refreshTokenTtlSeconds`. |
-| `scope`, `tokenType`               | Replaced when the response carries `scope` / `token_type`, kept otherwise.                                                                                                                    |
-| anything else                      | Kept unchanged (for example vendor extras that an `exchange` hook stored).                                                                                                                    |
+| Stored member                      | After a successful refresh                                                                                                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accessToken`                      | The response's `access_token`. A response without one fails the refresh.                                                                                                                              |
+| `refreshToken`                     | **Rotation:** the response's `refresh_token` when it has a non-empty one. Otherwise the old value is kept, because a vendor that does not rotate leaves the old token valid.                          |
+| `expiresAt` (epoch ms)             | `now + expires_in` (a number or numeric string, seconds). Without `expires_in`, `now + accessTokenTtlSeconds` (auth-level). Without either, unset, because the old instant belonged to the old token. |
+| `refreshTokenExpiresAt` (epoch ms) | `now + refresh_token_expires_in` (seconds) when the response has it. Otherwise unset: only the latest response's statement is trusted, so the cadence falls back to `refreshTokenTtlSeconds`.         |
+| `scope`, `tokenType`               | Replaced when the response carries `scope` / `token_type`, kept otherwise.                                                                                                                            |
+| anything else                      | Kept unchanged (for example vendor extras that an `exchange` hook stored).                                                                                                                            |
 
 `accessTokenTtlSeconds` applies the same way at connect time, when the code exchange's response has
 no `expires_in`, and `refresh_token_expires_in` in the code exchange's response sets
@@ -656,10 +699,10 @@ for a host that schedules each Connection's next visit.
 
 The refresh token's lifetime comes from, in order of precedence:
 
-1. the vendor's last token response: `refreshTokenExpiresAt − lastRefreshedAt`, where
-   `refreshTokenExpiresAt` is `now + refresh_token_expires_in` as stored by the code exchange or the
-   last refresh;
-2. the auth's declared `refreshTokenTtlSeconds`;
+1. the stored `refreshTokenExpiresAt`, as `refreshTokenExpiresAt − lastRefreshedAt`: for `oauth2` it
+   is `now + refresh_token_expires_in` from the code exchange or the last refresh; for a hook it is
+   the hook's own `refreshTokenExpiresAt`;
+2. the auth's declared `refreshTokenTtlSeconds` (top level);
 3. unknown.
 
 The maximum idle time is a third of that lifetime, capped at 7 d (`keepAliveMaxIdleMs`), and 7 d
@@ -686,9 +729,11 @@ The sweep considers a Connection only when all of these hold:
 
 - `autoRefresh` is not `false`;
 - its state is `connected` or `needs_refresh`;
-- its auth is `oauth2` and refreshable;
-- its stored credential has a `refreshToken`;
-- it is not `jit` (a `jit` token is never persisted).
+- its auth is refreshable (`isRefreshable`): it has a `refresh` hook, or it is `oauth2` with the
+  built-in refresh enabled;
+- for the built-in refresh only, its stored credential has a `refreshToken` (a hook decides for
+  itself what it renews from);
+- it is not `jit`, `tenantAuth` or `serviceAccount`.
 
 A `needs_refresh` Connection that passes those checks is due at once (unless it is failing, when the
 failure rules apply), and a successful refresh moves it back to `connected`.
@@ -696,10 +741,12 @@ failure rules apply), and a successful refresh moves it back to `connected`.
 The sweep must reach every such Connection within a bounded time however many exist: the reference
 host stores each Connection's next check instant (`keepAliveNextCheckAt`) and, every 15 minutes,
 pages through the Connections whose instant has passed, most overdue first, under a per-sweep count
-and time budget. How often the sweep runs is up to the host, but it has to run much more often than
-`KEEPALIVE_LEAD_MS`. Keep-alive is maintenance, not a use of the Connection: no Action runs and
-nothing is signed. A user-owned Connection is therefore kept alive like an account one, without
-making it usable by anyone else.
+and time budget. Which auth a row uses, and whether it has a hook, live in the app, not the row: a
+row found not refreshable is given a next check days away instead of being re-read every sweep. How
+often the sweep runs is up to the host, but it has to run much more often than `KEEPALIVE_LEAD_MS`.
+Keep-alive is maintenance, not a use of the Connection: no Action runs and nothing is signed. A
+user-owned Connection is therefore kept alive like an account one, without making it usable by
+anyone else.
 
 **Sliding vs absolute.** Keep-alive extends a **sliding** refresh token, because each refresh issues
 a new one or restarts its clock. An **absolute** lifetime counts from consent, and no refresh can
@@ -712,6 +759,10 @@ Worked example (`accessTokenTtlSeconds: 604800`, `refreshTokenTtlSeconds: 259200
 refresh issues a fresh 30-day refresh token, so a Connection that nothing uses stays connected
 indefinitely. With 1-hour access tokens and the same refresh token, keep-alive still refreshes only
 at day 7, 14, …; a call in between refreshes the access token on use.
+
+The same holds for a `bearer` auth whose user pastes `{ token, refreshToken }` at connect and whose
+`refresh` hook returns a new token and a rotated refresh token: the host sets `expiresAt` at connect
+from `accessTokenTtlSeconds`, and the hook runs at day 7, 14, ….
 
 ### Failure policy
 

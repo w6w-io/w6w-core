@@ -349,30 +349,45 @@ Deno.test("validateAuth checks optional OAuth token authentication and encoding"
   );
 });
 
-Deno.test("validateAuth checks the optional OAuth refresh lifetimes and builtinRefresh", () => {
+Deno.test("validateAuth checks the auth-level credential lifetimes and oauth2.builtinRefresh", () => {
   const auth = {
     key: "oauth",
     type: "oauth2",
     displayName: "OAuth",
+    refreshTokenTtlSeconds: 2592000,
+    accessTokenTtlSeconds: 604800,
     oauth2: {
       authorizationUrl: "https://example.com/oauth/authorize",
       tokenUrl: "https://example.com/oauth/token",
-      refreshTokenTtlSeconds: 2592000,
-      accessTokenTtlSeconds: 604800,
       builtinRefresh: true,
     },
   };
   assertEquals(validateAuth(auth).ok, true);
+  // Any type with a stored credential may declare them (a bearer auth refreshed by its hook).
+  const bearer = {
+    key: "session",
+    type: "bearer",
+    displayName: "Session",
+    refreshTokenTtlSeconds: 2592000,
+    accessTokenTtlSeconds: 604800,
+  };
+  assertEquals(validateAuth(bearer).ok, true);
+  assertEquals(validateAuth({ ...bearer, type: "custom" }).ok, true);
   for (const bad of [0, -1, 1.5, "3600"]) {
-    assertEquals(
-      validateAuth({ ...auth, oauth2: { ...auth.oauth2, refreshTokenTtlSeconds: bad } }).ok,
-      false,
-    );
-    assertEquals(
-      validateAuth({ ...auth, oauth2: { ...auth.oauth2, accessTokenTtlSeconds: bad } }).ok,
-      false,
-    );
+    assertEquals(validateAuth({ ...auth, refreshTokenTtlSeconds: bad }).ok, false);
+    assertEquals(validateAuth({ ...auth, accessTokenTtlSeconds: bad }).ok, false);
+    assertEquals(validateAuth({ ...bearer, accessTokenTtlSeconds: bad }).ok, false);
   }
+  // A host-sourced credential has nothing stored to keep alive.
+  assertEquals(
+    validateAuth({ key: "j", type: "jit", displayName: "J", refreshTokenTtlSeconds: 60 }).ok,
+    false,
+  );
+  assertEquals(
+    validateAuth({ key: "t", type: "tenantAuth", displayName: "T", accessTokenTtlSeconds: 60 })
+      .ok,
+    false,
+  );
   assertEquals(
     validateAuth({ ...auth, oauth2: { ...auth.oauth2, builtinRefresh: "no" } }).ok,
     false,
