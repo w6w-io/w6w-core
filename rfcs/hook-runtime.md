@@ -347,6 +347,8 @@ This table is closed for `manifestVersion: "1"`. New codes require an RFC bump.
 
 > **Amended 2026-10-04:** the `hook_failed` row above and its two prose mentions (§Result envelope, §Resource limits) were first published as `hook_threw`. The reference runtime (`run-hook.ts`), the MCP error taxonomy and the conformance tests emit `hook_failed`, so the text was corrected to match; the code itself, its phase and its meaning are unchanged, and no code was added to the table.
 
+> **Amended 2026-11-12:** a tenth credential code, `user_context_required` (phase `auth`), joins the closed code set — see [Credential RFC §Amendment — 2026-11-12](./credential.md#amendment--2026-11-12-ownership-scope).
+
 > **Amended 2026-10-27:** the nine `CREDENTIAL_ERROR_CODES` join the closed code set, phase `auth` — see [§Amendment — 2026-10-27](#amendment--2026-10-27-who-orchestrates-per-hook-secret-access-and-the-credential-codes).
 
 ## Timeouts and cancellation
@@ -588,6 +590,8 @@ in the "Sign / handshake sandbox" column; what `input.credential` holds there is
 the source. No other cell changes.
 
 ### Credential codes
+
+> **Amended 2026-11-12:** "nine" below is the 2026-10-27 count; `CREDENTIAL_ERROR_CODES` now has ten, the tenth being `user_context_required` (phase `auth`, raised when a user-owned credential is refused because the execution is not an authenticated end user) — see [Credential RFC §Amendment — 2026-11-12](./credential.md#amendment--2026-11-12-ownership-scope).
 
 The nine `CREDENTIAL_ERROR_CODES` ([Credential RFC §Error codes](./credential.md#error-codes)) join the
 closed code set of the Codes table above through this amendment, all in phase `auth`:
