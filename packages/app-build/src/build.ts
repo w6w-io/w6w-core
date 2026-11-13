@@ -22,6 +22,7 @@ import {
 import { inlineAssets } from "./assets.ts";
 import { BuildError, isInside } from "./errors.ts";
 import { assertGraph, resolveTypesRoot, runDeno } from "./graph.ts";
+import { readRegistryMap, type Resolution } from "./registry.ts";
 import { computeSourceDigest } from "./source-digest.ts";
 import { resolveSharedRoots } from "./shared.ts";
 import pkgConfig from "../deno.json" with { type: "json" };
@@ -40,6 +41,8 @@ export interface BuildOptions {
   maxAssetBytes?: number;
   /** Per-app inlined-asset byte cap. Default {@link MAX_APP_ASSET_BYTES}. */
   maxAppAssetBytes?: number;
+  /** How `@w6w/*` imports resolve. Default `"sibling"`. */
+  resolution?: Resolution;
 }
 
 export interface BuildResult {
@@ -138,9 +141,13 @@ async function bundle(
   tmp: string,
   minify: boolean,
   sourcemap: boolean,
+  resolution: Resolution,
 ): Promise<{ js: Uint8Array; map?: string }> {
   const out = join(tmp, "app.js");
-  const args = ["bundle", "-q", "--no-remote", "--no-npm", "--no-lock", "--config", "deno.json"];
+  const args = ["bundle", "-q"];
+  // Sibling mode is offline-only; registry mode resolves the mapped `@w6w/*` packages remotely.
+  if (resolution === "sibling") args.push("--no-remote");
+  args.push("--no-npm", "--no-lock", "--config", "deno.json");
   if (minify) args.push("--minify");
   if (sourcemap) args.push("--sourcemap=external");
   args.push("-o", out, entryRel);
@@ -195,7 +202,7 @@ async function bundle(
  * - identity: `app_dir_invalid`, `invalid_package`, `manifest_file_forbidden`,
  *   `invalid_manifest`, `invalid_id`, `invalid_version`, `npm_dependencies`,
  *   `entry_outside_app`, `entry_missing`, `config_missing`, `config_invalid`,
- *   `types_root_invalid`, `shared_path_invalid`
+ *   `types_root_invalid`, `shared_path_invalid`, `registry_spec_invalid` (registry mode only)
  * - graph: `graph_failed`, `graph_npm`, `graph_jsr`, `graph_remote`, `graph_non_file`,
  *   `graph_module_error`, `graph_outside_app`, `graph_tests`
  * - bundle: `bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`
@@ -272,16 +279,27 @@ export async function buildApp(
   } catch {
     fail("config_missing", "the app has no deno.json (its import map is required)");
   }
-  const typesRoot = await resolveTypesRoot(realAppDir, appDir);
+  const resolution = opts.resolution ?? "sibling";
+  // Registry mode: enforce the P3 allowlist BEFORE any subprocess resolves an import.
+  const registry = resolution === "registry" ? await readRegistryMap(realAppDir, appDir) : null;
+  const typesRoot = await resolveTypesRoot(realAppDir, appDir, resolution);
   const sharedRoots = await resolveSharedRoots(realAppDir);
 
   // ---- graph: the real refusal ----
-  await assertGraph(realAppDir, appDir, entryRel, typesRoot, sharedRoots);
+  await assertGraph(realAppDir, appDir, entryRel, typesRoot, sharedRoots, registry);
 
   const tmp = await Deno.realPath(await Deno.makeTempDir({ prefix: "w6w-app-build-" }));
   try {
     // ---- bundle ----
-    const { js, map } = await bundle(realAppDir, appDir, entryRel, tmp, minify, sourcemap);
+    const { js, map } = await bundle(
+      realAppDir,
+      appDir,
+      entryRel,
+      tmp,
+      minify,
+      sourcemap,
+      resolution,
+    );
     const code = new TextDecoder("utf-8", { fatal: true }).decode(js);
 
     // ---- describe ----

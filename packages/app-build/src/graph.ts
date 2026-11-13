@@ -5,6 +5,7 @@
  */
 import { fromFileUrl, relative, resolve } from "jsr:@std/path@^1.0.0";
 import { BuildError, isInside, isTestPath } from "./errors.ts";
+import { jsrHost, moduleAllowed, P3_SPECS, type RegistryMap, type Resolution } from "./registry.ts";
 
 export interface DenoRun {
   code: number;
@@ -32,6 +33,7 @@ export async function runDeno(args: string[], cwd: string): Promise<DenoRun> {
 export async function resolveTypesRoot(
   realAppDir: string,
   appDir: string,
+  resolution: Resolution = "sibling",
 ): Promise<string | null> {
   let cfg: { imports?: Record<string, unknown> };
   try {
@@ -45,6 +47,8 @@ export async function resolveTypesRoot(
   }
   const target = cfg.imports?.["@w6w/types"];
   if (target === undefined) return null;
+  // Registry mode: the P3 `jsr:` value is resolved by the registry, not from a local directory.
+  if (resolution === "registry" && target === P3_SPECS["@w6w/types"]) return null;
   if (typeof target !== "string" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target)) {
     throw new BuildError(
       "types_root_invalid",
@@ -97,12 +101,26 @@ export async function assertGraph(
   entryRel: string,
   typesRoot: string | null,
   sharedRoots: string[] = [],
+  registry: RegistryMap | null = null,
 ): Promise<void> {
   const fail = (code: string, msg: string): never => {
     throw new BuildError(code, msg, appDir);
   };
+  // Registry mode allows remote resolution, but only for the mapped `@w6w/*` packages
+  // (checked per module below). Sibling mode keeps `--no-remote` and today's refusals.
   const r = await runDeno(
-    ["info", "--json", "--no-remote", "--no-npm", "--no-lock", "--config", "deno.json", entryRel],
+    registry === null
+      ? [
+        "info",
+        "--json",
+        "--no-remote",
+        "--no-npm",
+        "--no-lock",
+        "--config",
+        "deno.json",
+        entryRel,
+      ]
+      : ["info", "--json", "--no-npm", "--no-lock", "--config", "deno.json", entryRel],
     realAppDir,
   );
   if (r.code !== 0) fail("graph_failed", `deno info failed: ${r.stderr.trim().slice(0, 400)}`);
@@ -128,6 +146,8 @@ export async function assertGraph(
       }
     }
     if (!m.specifier.startsWith("file:")) {
+      // The one exception: a module served by the JSR host for a (pkg, version) the app mapped.
+      if (registry !== null && moduleAllowed(m.specifier, registry.pairs, jsrHost())) continue;
       fail(
         schemeCode(m.specifier) ?? "graph_non_file",
         `module outside the file system is not allowed: ${m.specifier}`,
