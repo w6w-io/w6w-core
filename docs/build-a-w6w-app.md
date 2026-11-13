@@ -446,8 +446,9 @@ const SIGN_IN_AGAIN = new Set([
 
 async function errorCode(res: Response): Promise<string | undefined> {
   // Read only the code. Never log the body or a token.
-  const body = await res.json().catch(() => undefined) as { error?: unknown } | undefined;
-  return typeof body?.error === "string" ? body.error : undefined;
+  // The vendor's errors look like `{ success: false, code: "refresh_token_reused", message }`.
+  const body = await res.json().catch(() => undefined) as { code?: unknown } | undefined;
+  return typeof body?.code === "string" ? body.code : undefined;
 }
 
 const session: AuthDefinition = {
