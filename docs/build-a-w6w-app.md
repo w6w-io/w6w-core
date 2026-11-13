@@ -208,7 +208,8 @@ Full Auth hook lifecycle (all optional except `test`): `preflight` → `exchange
 opaque credential) → `test` → `afterConnect` (fetch label data) → `sign` (per request) → `refresh`
 (renew expired credential) → `revoke` (on disconnect). For OAuth2, set `type: "oauth2"` and the
 `oauth2` config (`authorizationUrl`, `tokenUrl`, `scopes`, `pkce`); see
-[`rfcs/auth.md`](../rfcs/auth.md).
+[`rfcs/auth.md`](../rfcs/auth.md). An OAuth2 auth gets token refresh **without** a `refresh` hook —
+see [OAuth2 refresh & keep-alive](#oauth2-refresh--keep-alive).
 
 **Host-sourced credentials (no user fields).** Two auth types carry no `fields` and no connect flow
 — the host supplies the credential and hands it to `sign` as a bearer. Use them for an App that
@@ -269,6 +270,135 @@ non-secret `binding` and `credentialDisplay` (such as the service-account email)
 A host that supplies no credential resolver refuses a `serviceAccount` auth with `provider_unsupported`.
 See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
 [`fixtures/apps/service-account`](../fixtures/apps/service-account/).
+
+## OAuth2 refresh & keep-alive
+
+For a `type: "oauth2"` auth, the host refreshes the token itself. You do **not** write a `refresh`
+hook for a standard OAuth2 vendor. Your job is to describe the vendor's token lifetimes so the host
+can keep the Connection alive. The spec is
+[`rfcs/auth.md` §Amendment — 2026-11-13](../rfcs/auth.md#amendment--2026-11-13-refresh-lifecycle).
+
+**What the host does.**
+
+- **Refresh on use.** When a call needs the token and it expires within 60 s, the host refreshes it
+  first.
+- **Keep-alive.** A background sweep also refreshes a Connection nobody is using: when its access
+  token expires within an hour, or when the longest allowed gap between refreshes has passed
+  (a third of the refresh token's lifetime, at most 7 days). This stops an idle Connection's
+  refresh token from lapsing.
+- **Built-in grant.** The host POSTs `grant_type=refresh_token` and the stored `refresh_token` to
+  `oauth2.refreshUrl`, or to `tokenUrl` when `refreshUrl` is not set. It authenticates with the same
+  OAuth client and method as the code exchange (`tokenAuthMethod`), and encodes the body per
+  `tokenBodyFormat`.
+- **Rotation.** If the response has a new `refresh_token`, the host stores it. If not, it keeps the
+  old one. `expiresAt` comes from `expires_in`.
+- **Failures.** A Connection whose refreshes keep failing is retried hourly. After 72 hours it is
+  marked `broken` and the user is asked to reconnect.
+
+The user can turn keep-alive off per Connection ("Keep connected"); it is on by default.
+
+**What to declare** in `oauth2`:
+
+| Field | When | Value |
+|---|---|---|
+| `refreshTokenTtlSeconds` | The vendor's refresh tokens expire | Their lifetime in seconds. This sets how often keep-alive refreshes. Omit when refresh tokens never expire. |
+| `accessTokenTtlSeconds` | The token response has **no** `expires_in` | The access-token lifetime in seconds. Without it such a token is never treated as expiring and is only refreshed on the 7-day cadence. |
+| `refreshUrl` | The refresh endpoint is **not** the `tokenUrl` | The refresh endpoint. Leave it unset otherwise. |
+| `builtinRefresh: false` | The vendor has **no** refresh grant (tokens never expire, or the user must reconnect) | Turns the built-in refresh off. The Connection is then never refreshed and keep-alive skips it. |
+
+Leave `builtinRefresh` unset in every other case; it defaults to `true`.
+
+**Find the lifetimes in the vendor's docs** (search "refresh token expiration", "token lifetime",
+"offline access"). Record three facts in a comment next to the fields:
+
+1. The access-token lifetime, and whether the token response includes `expires_in`.
+2. The refresh-token lifetime, or "does not expire".
+3. Whether that lifetime is **sliding** (each refresh issues a new refresh token, or restarts the
+   clock) or **absolute** (counted from the user's consent, and no refresh extends it). Keep-alive
+   only helps a sliding token. With an absolute lifetime the user has to reconnect when it ends, so
+   say so in the auth's `description`.
+
+If the docs don't say, test it: connect, refresh twice with a sandbox account, and check whether the
+`refresh_token` changes.
+
+**Worked example.** Access tokens live 7 days, and the token response has no `expires_in`.
+Refresh tokens live 30 days and are sliding: every refresh issues a new one.
+
+```ts
+import type { AuthDefinition } from "@w6w/types";
+
+const oauth2: AuthDefinition = {
+  key: "oauth2",
+  type: "oauth2",
+  displayName: "Sign in with Example",
+  oauth2: {
+    authorizationUrl: "https://vendor.example/oauth/authorize",
+    tokenUrl: "https://vendor.example/oauth/token", // also used for refresh: no refreshUrl
+    scopes: ["events:read"],
+    // Vendor docs: access token 7 d (no expires_in); refresh token 30 d, rotated on refresh.
+    accessTokenTtlSeconds: 604_800,
+    refreshTokenTtlSeconds: 2_592_000,
+  },
+  sign({ request, credential }) {
+    const { accessToken } = credential as { accessToken: string };
+    request.headers["authorization"] = `Bearer ${accessToken}`;
+    return request;
+  },
+  async test({ credential }, ctx) {
+    const { accessToken } = credential as { accessToken: string };
+    const res = await ctx.fetch("https://vendor.example/api/me", {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    return { ok: res.ok };
+  },
+};
+export default oauth2;
+```
+
+The host refreshes about an hour before day 7. Each refresh issues a new 30-day refresh token, so a
+Connection with no activity for months stays connected. (The URLs above are placeholders; use the
+vendor's real ones.)
+
+**When to write a `refresh` hook instead.** Only when the built-in grant cannot work, because the
+vendor's refresh is non-standard:
+
+- the refresh is not `grant_type=refresh_token` (a custom grant or a different endpoint shape);
+- it needs extra parameters or headers the built-in grant does not send;
+- the response is not the standard `{ access_token, refresh_token?, expires_in? }` JSON (for example
+  nested, or with a different field name).
+
+If the auth defines a hook, the host runs it and never runs the built-in refresh. The hook's
+contract:
+
+- **Input:** `{ credential }`, the whole stored credential. For the host's own OAuth exchange that is
+  `{ accessToken, refreshToken?, expiresAt?, scope?, tokenType? }`, or whatever your `exchange` hook
+  returned.
+- **Context:** `ctx.fetch`, allowed to reach the hosts of `tokenUrl` / `refreshUrl`. The hook does
+  **not** receive the OAuth client id or secret, so a hook works only for a vendor whose refresh does
+  not need them.
+- **Output:** the **complete** new credential as a non-empty plain object. It replaces the stored one,
+  so carry forward everything you still need: keep the old `refreshToken` when the vendor did not
+  send a new one, and set `expiresAt` (epoch ms) yourself.
+- **Errors:** throw. The host keeps the old credential, and never surfaces your message to users.
+
+```ts
+async refresh({ credential }, ctx) {
+  const prev = credential as { accessToken: string; refreshToken: string };
+  const res = await ctx.fetch("https://vendor.example/oauth/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: prev.refreshToken }),
+  });
+  if (!res.ok) throw new Error(`refresh failed: ${res.status}`);
+  const body = await res.json() as { data: { token: string; renew: string; ttl: number } };
+  return {
+    ...prev,
+    accessToken: body.data.token,
+    refreshToken: body.data.renew || prev.refreshToken,
+    expiresAt: Date.now() + body.data.ttl * 1000,
+  };
+},
+```
 
 ## `HookContext` (`ctx`) — the ambient API
 
@@ -438,6 +568,9 @@ triggers; the only exception is a vendor with neither, and then the README recor
       `ctx.fetch`, no credentials.
 - [ ] Auth (if any): `test` present; `sign` injects the credential; secret fields use
       `type: "secret"`.
+- [ ] OAuth2 auth: refresh-token lifetime (`refreshTokenTtlSeconds`, sliding vs absolute) checked in
+      the vendor docs, `accessTokenTtlSeconds` set if the token response has no `expires_in`, and
+      no `refresh` hook unless the vendor's refresh is non-standard.
 - [ ] Unit tests pass (`deno task test` / `npm test`) and the manifest validates
       (`deno task validate`).
 - [ ] Imports keep `.ts` extensions.
