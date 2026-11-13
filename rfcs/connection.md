@@ -61,6 +61,8 @@ never folded into the opaque `credential` blob it sits beside.
 
 > **Amended 2026-10-27:** `needs_refresh` is not used for a provider-derived source, which is re-derived by expiry at use — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
+> **Amended 2026-11-13:** for an `oauth2` Connection, "`refresh` failed" means background refreshes have failed for 72 hours. A single failure, on use or in the background, does not enter `broken` — see [§Amendment — 2026-11-13](#amendment--2026-11-13-auto-refresh).
+
 Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`. Hosts may not invent additional transitions.
 
 ## Shape
@@ -143,6 +145,8 @@ Only Auth `sign` / `refresh` / `revoke` hooks ever receive the unredacted record
 | `lastRefreshedAt` | timestamp | ⬜ | Last successful `refresh`. Redacted in the projection. |
 | `expiresAt` | timestamp | ⬜ | When known (e.g. OAuth `expires_in`). Drives proactive refresh scheduling. |
 | `target` | [`ConnectionTarget`](../packages/types/src/connection.ts) | ⬜ | Non-secret connect target (`host`/`port`/`database`/`tlsMode`/`caCert`/`allowPrivate`) for a socket-backed Connection. **Not** secret and **present in the redacted projection** — unlike `credential`, the host must be able to read it to run the [pre-connect target check](./hook-runtime.md#the-target-check). |
+
+> **Amended 2026-11-13:** adds `autoRefresh` and `refreshFailingSince`; `lastRefreshedAt` also covers the original grant, and a host may show it to the Connection's owner — see [§Amendment — 2026-11-13](#amendment--2026-11-13-auto-refresh).
 
 > **Amended 2026-10-27:** `owner` is host attribution only; a Credential has its own tenant, account and `createdBy`, `delegatedUser` is a separate concept, `auth` names an auth `key` rather than a path, and `credential` is the legacy runtime-input shape — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
@@ -308,3 +312,44 @@ A user-owned Connection is never handed off to a spoke.
 
 `accessScope` is host-side only. It is not part of `RedactedConnection`: userland code (Action
 `execute`, editor previews) never sees ownership.
+
+## Amendment — 2026-11-13: auto-refresh
+
+> **Additive.** This section adds the `autoRefresh` setting and the refresh status a host keeps on a
+> Connection, which the keep-alive in
+> [Auth RFC §Amendment — 2026-11-13](./auth.md#amendment--2026-11-13-refresh-lifecycle) reads and
+> writes. It qualifies the Lifecycle table's "`refresh` failed" entry into `broken` and the Field
+> reference's `lastRefreshedAt` row, each with a pointer. Everything else in this RFC stands.
+
+### `autoRefresh`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `autoRefresh` | boolean | ⬜ | Keep the credential alive with background refresh. Defaults to `true` when the auth is refreshable. `false` opts this Connection out of keep-alive. It still refreshes on use. |
+
+The user sets it when connecting and can change it later. It means something only for a refreshable
+`oauth2` auth (`isRefreshable` in `@w6w/runtime`). A host may store it for any Connection and
+ignores it for the others. Turning it off never revokes or changes the credential.
+
+### Refresh status
+
+A host keeps this status for every refreshable Connection. It is **non-secret**: no token, no
+vendor text.
+
+| Field | Type | Description |
+|---|---|---|
+| `lastRefreshedAt` | timestamp | The last successful refresh, or the original grant when there has been none. Set at connect time. |
+| `refreshFailingSince` | timestamp | When refreshes started failing. Unset while refresh succeeds, and cleared by the next success. |
+
+A host may also record the last attempt time and a service-authored error code. Those are host
+bookkeeping and not part of this record.
+
+A host MAY return `autoRefresh`, `lastRefreshedAt` and `refreshFailingSince` on its own management
+surface (the Connection's owner deciding whether to reconnect). This is separate from the redacted
+projection.
+
+### Redaction
+
+The [redacted projection](#redacted-projection) is unchanged. `lastRefreshedAt` is still stripped,
+because it leaks rotation cadence. `autoRefresh` and `refreshFailingSince` are stripped too, since
+userland code (Action `execute`, editor previews) has no use for host maintenance state.
