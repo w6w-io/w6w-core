@@ -63,6 +63,13 @@
       "type": "string",
       "format": "date-time"
     },
+    "autoRefresh": {
+      "type": "boolean"
+    },
+    "refreshFailingSince": {
+      "type": "string",
+      "format": "date-time"
+    },
     "expiresAt": {
       "type": "string",
       "format": "date-time"

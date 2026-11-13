@@ -34,7 +34,23 @@ export interface OAuth2Config {
   tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
   /** Encoding of the token request. Defaults to form; Notion requires JSON. */
   tokenBodyFormat?: "form" | "json";
+  /** Token endpoint for the refresh grant, when it differs from `tokenUrl`. */
   refreshUrl?: string;
+  /**
+   * Lifetime of the vendor's refresh token, in seconds, when it expires (sliding or absolute).
+   * Drives keep-alive cadence. Omit when refresh tokens do not expire. E.g. 2592000 (30 d).
+   */
+  refreshTokenTtlSeconds?: number;
+  /**
+   * Access-token lifetime to assume when the token response carries no `expires_in`.
+   * Without it such a token is never treated as expiring. E.g. 604800 (7 d).
+   */
+  accessTokenTtlSeconds?: number;
+  /**
+   * `false` disables the built-in refresh for an auth whose vendor has no refresh grant.
+   * Default true. A defined `refresh` hook always wins over the built-in.
+   */
+  builtinRefresh?: boolean;
   revokeUrl?: string;
   scopes?: string[];
   /** Defaults to `" "`. */

@@ -705,6 +705,15 @@ function validateAuthInto(
       if (o.tokenBodyFormat !== undefined) {
         ctx.enum(o.tokenBodyFormat, ["form", "json"], `${path}.oauth2.tokenBodyFormat`);
       }
+      for (const k of ["refreshTokenTtlSeconds", "accessTokenTtlSeconds"] as const) {
+        const v = o[k];
+        if (v !== undefined && (!Number.isInteger(v) || (v as number) < 1)) {
+          ctx.err(`${path}.oauth2.${k}`, "must be a positive integer (seconds)");
+        }
+      }
+      if (o.builtinRefresh !== undefined && typeof o.builtinRefresh !== "boolean") {
+        ctx.err(`${path}.oauth2.builtinRefresh`, "must be a boolean");
+      }
       checkOAuth2Setup(ctx, o.setup, `${path}.oauth2.setup`);
     }
   }

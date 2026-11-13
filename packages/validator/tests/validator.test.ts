@@ -349,6 +349,36 @@ Deno.test("validateAuth checks optional OAuth token authentication and encoding"
   );
 });
 
+Deno.test("validateAuth checks the optional OAuth refresh lifetimes and builtinRefresh", () => {
+  const auth = {
+    key: "oauth",
+    type: "oauth2",
+    displayName: "OAuth",
+    oauth2: {
+      authorizationUrl: "https://example.com/oauth/authorize",
+      tokenUrl: "https://example.com/oauth/token",
+      refreshTokenTtlSeconds: 2592000,
+      accessTokenTtlSeconds: 604800,
+      builtinRefresh: true,
+    },
+  };
+  assertEquals(validateAuth(auth).ok, true);
+  for (const bad of [0, -1, 1.5, "3600"]) {
+    assertEquals(
+      validateAuth({ ...auth, oauth2: { ...auth.oauth2, refreshTokenTtlSeconds: bad } }).ok,
+      false,
+    );
+    assertEquals(
+      validateAuth({ ...auth, oauth2: { ...auth.oauth2, accessTokenTtlSeconds: bad } }).ok,
+      false,
+    );
+  }
+  assertEquals(
+    validateAuth({ ...auth, oauth2: { ...auth.oauth2, builtinRefresh: "no" } }).ok,
+    false,
+  );
+});
+
 // ── serviceAccount / tenantAuth / jit ────────────────────────────────────────
 const SA_AUTH = {
   key: "service-account",

@@ -64,6 +64,9 @@ const OAUTH2_KEYS: Record<keyof OAuth2Config, true> = {
   tokenAuthMethod: true,
   tokenBodyFormat: true,
   refreshUrl: true,
+  refreshTokenTtlSeconds: true,
+  accessTokenTtlSeconds: true,
+  builtinRefresh: true,
   revokeUrl: true,
   scopes: true,
   scopeSeparator: true,
@@ -91,6 +94,8 @@ const CONNECTION_NEW: (keyof Connection)[] = [
   "binding",
   "approved",
   "bindingRevision",
+  "autoRefresh",
+  "refreshFailingSince",
 ];
 
 // deno-lint-ignore no-explicit-any
@@ -136,7 +141,7 @@ Deno.test("auth.schema.json: serviceAccount block", () => {
   assertEquals(rule?.then, { required: ["serviceAccount"] });
 });
 
-Deno.test("connection.schema.json gains the 4 optional properties, required unchanged", () => {
+Deno.test("connection.schema.json gains the optional binding + refresh properties, required unchanged", () => {
   for (const k of CONNECTION_NEW) assert(k in connection.properties, k);
   assertEquals(connection.required, [
     "manifestVersion",
