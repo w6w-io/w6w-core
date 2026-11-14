@@ -36,7 +36,9 @@ user needs Node.
 w6w apps init <id> [--template deno|node] [--dir <path>]
 ```
 
-`<id>` is lowercase letters, digits and single hyphens; the target directory (default `./<id>`)
+`<id>` is a dotted reverse-DNS id — lowercase letters, digits and hyphens, in **two or more
+dot-separated segments** (e.g. `com.example.demo-app`). A flat, non-dotted id is a usage error: the
+CLI refuses it and suggests `com.example.<id>` instead. The target directory (default `./<id>`)
 must be missing or empty. [Deno](https://deno.com) must be on your PATH for `validate`, `build` and
 `publish` — also for the Node variant.
 
@@ -91,7 +93,7 @@ Everything below follows from these. Violating one is the most common way an app
 ## File layout
 
 ```
-my-app/
+com.example.my-app/          # the app id, also the default target directory
 ├── package.json            # identity — the `w6w` block (see below)
 ├── index.ts                # entry: default-exports { actions, auth }
 ├── actions/
@@ -128,7 +130,8 @@ Native npm fields are reused (`version`, `description`, `author`, `license`, `ho
 ```
 
 Rules the validator enforces: `id` is reverse-DNS (`^[a-z0-9]+(\.[a-z0-9-]+)+$`), `version` is
-semver, `categories` has 1–3 entries. Run `deno task validate` (the `@w6w/validator` CLI) to check.
+semver, `categories` has 1–3 entries. Run `w6w apps validate` to check — the scaffold's
+`deno task validate` task is just that command.
 
 ## Entry module (`index.ts`)
 
