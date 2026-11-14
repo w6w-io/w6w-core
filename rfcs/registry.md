@@ -570,7 +570,7 @@ the shared cursor forms above; no method is added to either interface.
 
 A **publisher** is the named party that publishes apps. It is a first-class record with a unique,
 URL-safe `slug`, a display name, an owning tenant, a `status` (`active` | `suspended`) and a set of
-**members**, each with a role (`owner` | `member`). A publisher MUST always have at least one owner;
+**members**, each with a role (`owner` | `developer`). A publisher MUST always have at least one owner;
 removing the last owner MUST be refused (`last_owner`). W6W is itself a publisher (slug `w6w`) and
 is the first one: there is one publishing pipeline, not a first-party path and a third-party path.
 
@@ -649,3 +649,111 @@ string. A manifest may therefore claim any publisher without effect.
 Revoking a namespace or suspending a publisher stops further publishing into the affected ids. It is
 **not an uninstall**: versions already registered, and installs of them, are untouched. Removing an
 app is a separate, explicit lifecycle action.
+
+---
+
+## Amendment: submission, review and listing (2026-11-14)
+
+> Adds the path from a publisher's private app to the global catalog. It records **option (a)** of the
+> listing decision: an approved version is registered into the **global tier**, and a separate
+> listing record carries the publisher's management rights. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-3..D-5). This amendment only adds; nothing above it
+> changes meaning except one correction: the member role is `developer`, not `member` (see _Roles_).
+
+### Roles
+
+The _Publisher_ section above names the member roles `owner` | `member`. The landed implementation
+(`publisher_members.role`) uses `owner` | `developer`; `developer` is the non-owner role, and a host
+MUST reject any other value. Everywhere that section says `member`, read `developer`. The
+last-owner rule is unchanged.
+
+### Listing record
+
+A **listing** is a host record, one per app id, that is separate from the registry's version rows.
+It names the publishing `publisher_id`, the listing copy, the id of the version currently listed, and
+a `state`: `private`, `in_review`, `changes_requested`, `listed`, `suspended` or `delisted`. A
+**submission** is an immutable request that binds an app id, a version and that version's digest to
+the checks run on it and the decision made.
+
+Management rights over a listed app (submitting new versions, editing copy, withdrawing) follow
+`app_listings.publisher_id` and the publisher's members, **not** the registry row's owner. After
+approval the owner of the version row is the global tier (empty owner), which no tenant can write to;
+the listing is what still ties the app to its publisher.
+
+### Approval and candidate rows
+
+A registry data store gains one operation, `approveVersion(id, version, { expectedDigest })`. In one
+transaction, holding a row lock on the app's latest pointer, it sets the owner of the named version
+row to global and advances the latest pointer to it, also global. A digest that no longer matches the
+stored row is refused with `stale_submission`; a missing version with `unknown_version`; a refusal
+changes nothing. Approval is the **only** way a version enters the global tier on behalf of a
+publisher. The `id_taken` refusal for registering under an id another owner holds stays as it is
+for every other caller.
+
+Before approval, a submitted version is a **candidate row**: stored under the publisher's own owner
+while the id already exists in the global tier. A host enables this by passing an `admitCandidate`
+port to the registry; with the port absent or returning false, behaviour is exactly as before
+(`id_taken`). A candidate row:
+
+- never advances the latest pointer;
+- is returned by `getVersion`, `getLatest`, `listVersions` and the host-internal `load` only to the
+  matching `caller`, or when the read passes `includeCandidates: true`. `unscoped: true` alone does
+  not reveal it, and neither does a different tenant or a read with no options: those see
+  `unknown_version` or absence, as if the version did not exist;
+- is never served by an explicit version or a pin to another tenant, because the check sits in the
+  store read itself, not only in the latest pointer.
+
+A non-listed private app (every row one owner) and a legacy global app (no listing row) read exactly
+as before.
+
+### Visibility is not review
+
+Two things that look alike are kept apart. **Visibility** (`public`, `unlisted`, private) says who may
+discover an app and is what the existing policy filter reads. **Review** (the listing `state`) says
+whether the host has accepted the app into the global catalog. An app's self-declared classification
+never authorizes listing. `unlisted` after approval is a listed app that is hidden from browse and
+search but still resolvable and invocable by id. `suspended` hides the app and refuses **new**
+connections while existing ones keep running; `delisted` refuses invocation, explicit and pinned
+versions included. Tenant allowlist and deny policy still applies on top of a listing and is not
+overridden by it.
+
+### What approval moves
+
+Approval moves **the app row only**: the version row's owner and the latest pointer. Connections,
+credentials, and any app-scoped OAuth client configuration stay owned by the tenant that created
+them. In particular:
+
+- `app_oauth_config` is keyed by `(app_id, auth_key)` and has no tenant column, but it is written only
+  through operator routes (`PUT /apps/:id/oauth-config/:authKey`, scope `operator:apps`), and the
+  per-tenant override (`tenant_oauth_app`) only through operator tenant routes. A publisher's tenant
+  therefore has no way to store an app-scoped OAuth client secret for its private app, and nothing of
+  that kind becomes reachable by other tenants when the app is approved. A row an operator created
+  for the id already belonged to the operator.
+- Connections are keyed by the owning tenant and stay with it; another tenant's connection to the
+  same app is its own.
+
+A host that later lets a tenant write app-scoped OAuth configuration MUST re-examine this rule
+before approval can move such a row.
+
+### Read paths and why each stays correct
+
+Every place a host reads the app catalog, under option (a):
+
+| Read path | Why it stays correct |
+| --- | --- |
+| Registry foundation (`getLatest`, `getVersion`, list) | The approved row and the latest pointer are both global, so every scope resolves them as it does any global app. Candidate rows are filtered inside the store read (above), so other scopes never see an unapproved version. |
+| Invoke (including explicit version, pins, model entitlement) | A global app resolves for every tenant and still passes the tenant allowlist/deny decision. Explicit and pinned versions go through the same candidate filter, so pointer-only approval is not what protects them. A `delisted` listing is refused at load. |
+| Connections (create, test, MCP connect) | A global id resolves across tenants as before. A `suspended` or `delisted` listing refuses a **new** connection; existing connections are untouched. |
+| Health, HTTP and MCP | Scope resolution finds the global app; an explicit-version health load honours the candidate rule. |
+| MCP search | A listed app enters the candidate set through the ordinary registry list; suspension and `unlisted` remove it from discovery without removing it from resolution. |
+| System-ops catalog | The existing predicate (both owner columns empty on both tables) is satisfied by an approved version, so no query changes; the listing state is checked in addition. |
+| Apps-catalog list (ids arm and paged snapshot arm) | Both arms read global rows that now include approved apps; the snapshot list counts only rows owned by the record's owner, so candidate rows do not inflate it. Browse additionally filters on listing state. |
+| Visibility and policy filter | The existing deny-versus-hide separation is reused: `suspended` and `unlisted` hide, `delisted` denies. Listing state is read from the listing record, never from the manifest. |
+| Publish-index (digest feed) | It reads global latest digest facts; an approved version appears there as any global version does, and first-party hash and no-op semantics are unchanged. |
+| Tenant operator catalog | The operator view opens the tenant snapshot with all visibilities, so suspended and delisted apps stay inspectable; only public browse is filtered. |
+
+### Failure of the listing record
+
+A global app with no listing row is a legacy or first-party app and is treated as listed. An app that
+has a listing row is governed by its `state`. Neither case changes how the registry stores versions.
+
