@@ -94,17 +94,38 @@ const EXEC_URL_PREFIX = "data:text/javascript;base64,";
  * `resourceLimits` equivalent, and `--v8-flags=--max-old-space-size` is
  * process-wide (it would cap the host too, and a breach aborts the whole
  * process rather than one Worker). What enforces: a host-side watchdog that
- * samples process RSS growth since the Worker started and `terminate()`s it
- * past the cap. Growth is attributed to the Worker being watched, so a
- * concurrent Worker's allocation can also count toward it - the cap is
- * deliberately high (default 1024 MiB) so first-party apps never approach it.
+ * `terminate()`s the Worker once the isolate's own heap+external bytes (posted
+ * by a reporter prelude, see WORKER_ENTRY_URL) pass the cap. Process RSS is NOT
+ * the primary signal: it is shared, and the parallel test suite (one process,
+ * hundreds of Workers) tripped a 1024 MiB RSS cap on trivial hooks. RSS growth
+ * stays as a 4x backstop (+ peer slack) against an app that forges/starves reports.
+ * Default 1024 MiB; first-party pack apps measured <=113 MiB (tests/pack-sanity.test.ts).
  * KNOWN LIMIT (measured 2.8.2): `terminate()` is honoured only when the Worker
  * returns to its event loop; a purely synchronous / microtask-only allocation
- * loop is not interrupted and needs process-level isolation.
+ * loop is not interrupted and needs process-level isolation. Measured with a
+ * 256 MiB cap: the call rejects with `memory_limit_exceeded` after ~94 ms, but
+ * the Worker thread keeps allocating (host RSS 336 MiB -> ~5 GiB within 1 s), so
+ * the host can still be OOM-killed. Same limit applies to `hook_timeout`.
+ * No in-process fix exists on Deno 2.8.2 (no thread kill, no resourceLimits).
  * Override with host env `W6W_APP_MEMORY_MB` (positive number).
  */
 export const DEFAULT_APP_MEMORY_MB = 1024;
 const MEMORY_SAMPLE_MS = 20;
+// RSS is process-wide, so N Workers alive together inflate each other's growth (each isolate
+// costs ~50-100 MiB: measured, a parallel suite tripped the 1024 MiB default with trivial
+// hooks). The watchdog therefore allows this much slack per OTHER live Worker it has seen.
+const PEER_SLACK_MB = 128;
+// The reporter module runs first in the Worker (static imports evaluate before the app code is
+// ever loaded) and posts that isolate's own heap + external (ArrayBuffer) bytes every sample.
+// Per-isolate, so peers' allocations do not count against this Worker. Inside a Worker
+// `Deno.memoryUsage()` heapTotal/external are that isolate's (measured: a 200 MiB typed-array
+// allocation moves external 0 -> 200 MiB while the host RSS is shared).
+const WORKER_ENTRY_URL = "data:text/javascript;charset=utf-8," + encodeURIComponent(
+  `const mu=Deno.memoryUsage.bind(Deno);const post=self.postMessage.bind(self);` +
+    `setInterval(()=>{const m=mu();post({type:"mem",mb:(m.heapTotal+m.external)/1048576})},${20});` +
+    `import ${JSON.stringify(import.meta.resolve("./worker.ts"))};`,
+);
+let liveWorkers = 0;
 
 export function memoryLimitMb(override?: number): number {
   if (override !== undefined && override > 0) return override;
@@ -164,13 +185,16 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
 
   const capMb = memoryLimitMb(opts.memoryLimitMb);
   const baseRss = Deno.memoryUsage().rss;
-  const worker = new Worker(import.meta.resolve("./worker.ts"), {
+  let reportedMb = 0;
+  liveWorkers++;
+  let peakPeers = liveWorkers - 1;
+  const worker = new Worker(WORKER_ENTRY_URL, {
     type: "module",
     // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
     deno: { permissions: { read, ...NO_NET_PERMS } },
   });
 
-  return new Promise<T>((resolvePromise, reject) => {
+  const result = new Promise<T>((resolvePromise, reject) => {
     const timer = setTimeout(() => {
       clearInterval(watchdog);
       worker.terminate();
@@ -179,7 +203,10 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
 
     const watchdog = setInterval(() => {
       const grownMb = (Deno.memoryUsage().rss - baseRss) / 1048576;
-      if (grownMb > capMb) {
+      peakPeers = Math.max(peakPeers, liveWorkers - 1);
+      // Primary: the Worker's own isolate. Backstop (an app that forges or starves the reports):
+      // process RSS growth, with a wide margin because RSS is shared with every peer.
+      if (reportedMb > capMb || grownMb > 4 * capMb + peakPeers * PEER_SLACK_MB) {
         clearInterval(watchdog);
         clearTimeout(timer);
         worker.terminate();
@@ -201,6 +228,11 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
     };
 
     worker.onmessage = async (e: MessageEvent) => {
+      if ((e.data as { type?: string })?.type === "mem") {
+        const mb = Number((e.data as { mb?: number }).mb);
+        if (Number.isFinite(mb)) reportedMb = mb;
+        return;
+      }
       const msg = e.data as WorkerMessage;
       switch (msg.type) {
         case "log":
@@ -392,6 +424,9 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
     };
 
     worker.postMessage(start);
+  });
+  return result.finally(() => {
+    liveWorkers--;
   });
 }
 
