@@ -83,3 +83,93 @@ Deno.test("pinnedFetch connects to the pinned IP with the Host header preserved"
     await srv.shutdown();
   }
 });
+
+// --- F-1: https pinning (in-process CONNECT proxy → pinned IP, TLS end to end) ---
+const CERTS = new URL("certs/", import.meta.url);
+
+async function withTlsServer(
+  body: () => BodyInit,
+  fn: (port: number, ca: string) => Promise<void>,
+) {
+  const cert = await Deno.readTextFile(new URL("self-signed.crt.pem", CERTS));
+  const key = await Deno.readTextFile(new URL("self-signed.key.pem", CERTS));
+  const server = Deno.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    cert,
+    key,
+    onListen: () => {},
+  }, (req) => new Response(body(), { headers: { "x-host": new URL(req.url).hostname } }));
+  try {
+    await fn(server.addr.port, cert);
+  } finally {
+    await server.shutdown();
+  }
+}
+
+Deno.test("https is pinned: connects to the pinned IP, cert/SNI checked against the name", async () => {
+  await withTlsServer(() => "hello", async (port, ca) => {
+    const dest = { host: "localhost", addresses: ["127.0.0.1"], pinned: "127.0.0.1" };
+    const { response, pinned } = await pinnedFetch(
+      `https://localhost:${port}/x`,
+      dest,
+      {},
+      undefined,
+      [ca],
+    );
+    assertEquals(pinned, true);
+    assertEquals(await response.text(), "hello");
+    // The cert is for "localhost": a different name must fail verification even though the pin works.
+    await assertRejects(async () => {
+      const r = await pinnedFetch(
+        `https://wrong.example:${port}/x`,
+        { host: "wrong.example", addresses: ["127.0.0.1"], pinned: "127.0.0.1" },
+        {},
+        undefined,
+        [ca],
+      );
+      await r.response.text();
+    });
+  });
+});
+
+Deno.test("https dials the pinned IP, not the name's own resolution", async () => {
+  await withTlsServer(() => "x", async (port, ca) => {
+    // localhost would reach the server; the pin to 127.0.0.2 (nothing listening there) must not.
+    await assertRejects(async () => {
+      const r = await pinnedFetch(
+        `https://localhost:${port}/`,
+        { host: "localhost", addresses: ["127.0.0.2"], pinned: "127.0.0.2" },
+        {},
+        undefined,
+        [ca],
+      );
+      await r.response.text();
+    });
+  });
+});
+
+Deno.test("https streams a large body through the pin", async () => {
+  const chunk = new Uint8Array(64 * 1024).fill(97);
+  await withTlsServer(
+    () =>
+      new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 64; i++) c.enqueue(chunk);
+          c.close();
+        },
+      }),
+    async (port, ca) => {
+      const { response } = await pinnedFetch(
+        `https://localhost:${port}/`,
+        { host: "localhost", addresses: ["127.0.0.1"], pinned: "127.0.0.1" },
+        {},
+        undefined,
+        [ca],
+      );
+      let n = 0;
+      for await (const c of response.body!) n += c.byteLength;
+      assertEquals(n, 64 * 64 * 1024);
+    },
+  );
+});

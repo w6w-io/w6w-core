@@ -19,9 +19,13 @@
  *    (`{dns}`, `{lookup}`, `{serverName}` are silently ignored or fail), and a
  *    `proxy` client does not pin. So for `https:` the SNI/cert name cannot be
  *    kept while connecting to a literal IP through `fetch`: `pinnedFetch`
- *    reports `pinned: false` there and leaves the https request on the name.
- *    Closing that needs a hand-rolled HTTP/1.1 over `Deno.startTls(conn,
- *    { hostname })` — not done here.
+ *    can't be kept by rewriting the URL. Instead `https:` goes through a
+ *    per-request, in-process CONNECT proxy bound to 127.0.0.1:0: fetch (via
+ *    `createHttpClient({ proxy })`) sends `CONNECT name:port`, the proxy dials
+ *    the PINNED IP and tunnels raw bytes, and TLS (SNI + certificate name) runs
+ *    end to end against the real name. No second DNS lookup happens anywhere.
+ *    This keeps fetch's streaming/redirect/size behaviour untouched (no
+ *    hand-rolled HTTP/1.1).
  */
 import { W6WError } from "./errors.ts";
 import { isIpLiteral, isPrivateAddress } from "./socket.ts";
@@ -95,19 +99,127 @@ export async function assertPublicDestination(
 }
 
 /**
- * Fetch pinned to `dest.pinned`. `http:` is truly pinned (connect-by-IP, Host
- * preserved). `https:` cannot keep SNI via fetch on Deno 2.8, so it is sent on
- * the name and `pinned` is false (see module notes).
+ * Start a one-shot CONNECT proxy that only tunnels to `ip:port`. The listener
+ * closes with the client (`close()`); any CONNECT target other than the
+ * expected `host:port` is refused so the proxy can't be steered elsewhere.
+ */
+function startPinProxy(host: string, port: number, ip: string) {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const want = `${host.includes(":") ? `[${host}]` : host}:${port}`.toLowerCase();
+  const dec = new TextDecoder();
+  const handle = async (down: Deno.Conn) => {
+    let up: Deno.Conn | undefined;
+    try {
+      let head = "";
+      const buf = new Uint8Array(2048);
+      while (!head.includes("\r\n\r\n") && head.length < 8192) {
+        const n = await down.read(buf);
+        if (n === null) throw new Error("closed");
+        head += dec.decode(buf.subarray(0, n), { stream: true });
+      }
+      const m = /^CONNECT (\S+) HTTP\/1\.[01]\r\n/i.exec(head);
+      if (!m || m[1].toLowerCase() !== want) {
+        await down.write(new TextEncoder().encode("HTTP/1.1 403 Forbidden\r\n\r\n"));
+        down.close();
+        return;
+      }
+      up = await Deno.connect({ hostname: ip, port });
+      await down.write(new TextEncoder().encode("HTTP/1.1 200 Connection established\r\n\r\n"));
+      await Promise.allSettled([
+        down.readable.pipeTo(up.writable),
+        up.readable.pipeTo(down.writable),
+      ]);
+    } catch {
+      try {
+        down.close();
+      } catch { /* already closed */ }
+      try {
+        up?.close();
+      } catch { /* already closed */ }
+    }
+  };
+  (async () => {
+    try {
+      for await (const c of listener) handle(c);
+    } catch { /* listener closed */ }
+  })();
+  return { port: (listener.addr as Deno.NetAddr).port, close: () => listener.close() };
+}
+
+/** Wrap a body so `done` runs once it is fully read, cancelled or errored. */
+function onBodyDone(res: Response, done: () => void): Response {
+  if (!res.body) {
+    done();
+    return res;
+  }
+  const reader = res.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(c) {
+      try {
+        const r = await reader.read();
+        if (r.done) {
+          c.close();
+          done();
+        } else c.enqueue(r.value);
+      } catch (e) {
+        done();
+        c.error(e);
+      }
+    },
+    cancel(reason) {
+      done();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
+/**
+ * Fetch pinned to `dest.pinned`. `http:` connects by IP with Host preserved;
+ * `https:` tunnels through the in-process CONNECT proxy to the pinned IP (see
+ * module notes). `tlsCaCerts` is a test seam (extra trusted PEMs).
  */
 export async function pinnedFetch(
   url: URL | string,
   dest: PublicDestination,
   init: RequestInit = {},
   fetchImpl?: typeof fetch,
+  tlsCaCerts?: string[],
 ): Promise<{ response: Response; pinned: boolean }> {
   const u = new URL(typeof url === "string" ? url : url.href);
-  if (u.protocol !== "http:" || isIpLiteral(dest.host)) {
-    return { response: await (fetchImpl ?? fetch)(u, init), pinned: isIpLiteral(dest.host) };
+  if (isIpLiteral(dest.host)) {
+    return { response: await (fetchImpl ?? fetch)(u, init), pinned: true };
+  }
+  if (u.protocol === "https:") {
+    const port = u.port ? Number(u.port) : 443;
+    const proxy = startPinProxy(dest.host, port, dest.pinned);
+    let client: Deno.HttpClient | undefined;
+    try {
+      client = Deno.createHttpClient({
+        proxy: { url: `http://127.0.0.1:${proxy.port}` },
+        ...(tlsCaCerts ? { caCerts: tlsCaCerts } : {}),
+      });
+      const response = await (fetchImpl ?? fetch)(u, { ...init, client } as RequestInit);
+      const c = client;
+      return {
+        response: onBodyDone(response, () => {
+          proxy.close();
+          c.close();
+        }),
+        pinned: true,
+      };
+    } catch (e) {
+      proxy.close();
+      client?.close();
+      throw e;
+    }
+  }
+  if (u.protocol !== "http:") {
+    return { response: await (fetchImpl ?? fetch)(u, init), pinned: false };
   }
   const hostHeader = u.host;
   u.hostname = dest.pinned.includes(":") ? `[${dest.pinned}]` : dest.pinned;
