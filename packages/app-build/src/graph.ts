@@ -5,7 +5,14 @@
  */
 import { fromFileUrl, relative, resolve } from "jsr:@std/path@^1.0.0";
 import { BuildError, isInside, isTestPath } from "./errors.ts";
-import { jsrHost, moduleAllowed, P3_SPECS, type RegistryMap, type Resolution } from "./registry.ts";
+import {
+  type GraphModule,
+  jsrHost,
+  moduleAllowed,
+  P3_SPECS,
+  type RegistryMap,
+  type Resolution,
+} from "./registry.ts";
 
 export interface DenoRun {
   code: number;
@@ -94,6 +101,9 @@ interface InfoModule {
 /**
  * Assert every module reachable from `entryRel` (app-relative) is a `file:` module that is
  * inside the app or declared shared directories (excluding test code), or in `@w6w/types`.
+ *
+ * Returns the graph's modules, so registry mode can materialise the approved `@w6w/*` set the
+ * very same resolution produced (see `materialiseRegistryModules`).
  */
 export async function assertGraph(
   realAppDir: string,
@@ -102,7 +112,7 @@ export async function assertGraph(
   typesRoot: string | null,
   sharedRoots: string[] = [],
   registry: RegistryMap | null = null,
-): Promise<void> {
+): Promise<GraphModule[]> {
   const fail = (code: string, msg: string): never => {
     throw new BuildError(code, msg, appDir);
   };
@@ -158,8 +168,7 @@ export async function assertGraph(
     try {
       real = await Deno.realPath(fromFileUrl(m.specifier));
     } catch (e) {
-      fail("graph_module_error", `${m.specifier}: ${(e as Error).message}`);
-      return;
+      return fail("graph_module_error", `${m.specifier}: ${(e as Error).message}`);
     }
     const sourceRoot = [realAppDir, ...sharedRoots].find((root) => isInside(root, real));
     if (sourceRoot) {
@@ -169,4 +178,5 @@ export async function assertGraph(
       fail("graph_outside_app", `module outside the app: ${m.specifier}`);
     }
   }
+  return modules;
 }

@@ -79,14 +79,16 @@ async function copyTree(dir: string, dest: string): Promise<void> {
 }
 
 /**
- * Stage `@w6w/types` as `dest` (`{deno.json, mod.ts, src/}`) — the same file set the JSR mirror
- * serves, so sibling mode and registry mode compile byte-identical sources.
+ * Stage `@w6w/types` as `dest` (`{deno.json, mod.ts, src/, package.json}`) — the real package,
+ * declarations and all, so sibling mode sees the same `"sideEffects": false` the real checkout
+ * carries (registry mode gets it from the builder's vendored `package.json`).
  */
 async function stageSiblingTypes(dest: string): Promise<void> {
   const pkg = join(PACKAGES_DIR, "types");
   await Deno.mkdir(dest, { recursive: true });
-  await Deno.copyFile(join(pkg, "deno.json"), join(dest, "deno.json"));
-  await Deno.copyFile(join(pkg, "mod.ts"), join(dest, "mod.ts"));
+  for (const name of ["deno.json", "mod.ts", "package.json"]) {
+    await Deno.copyFile(join(pkg, name), join(dest, name));
+  }
   await copyTree(join(pkg, "src"), join(dest, "src"));
 }
 
@@ -331,7 +333,8 @@ async function realAppConfig(
 }
 
 /** The fallback fixture (lone `core` checkout): `@w6w/types` pulled in broadly, consts and all. */
-const BROAD_INDEX = `import { DEFAULT_FRONTMATTER_MAX_BYTES, DIGEST_VERSION, FILE_MAX_BYTES } from "@w6w/types";
+const BROAD_INDEX =
+  `import { DEFAULT_FRONTMATTER_MAX_BYTES, DIGEST_VERSION, FILE_MAX_BYTES } from "@w6w/types";
 
 const ping = {
   key: "ping",
