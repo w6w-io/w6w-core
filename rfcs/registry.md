@@ -668,7 +668,9 @@ pass the same check, and it runs **before** any blob or catalog write, so a refu
 nothing behind. A global operator/CI registration is the only exemption. Given an actor and an app
 id, a host decides in order:
 
-1. An operator MAY register any id, into any tier (the operator/CI exception).
+1. An operator or CI registration into the **global** catalog is exempt (the operator/CI exception).
+   An operator registering into a tenant or account tier is a non-global registration and passes the
+   allow-list below like any other actor, so an unclaimed id is refused (`namespace_not_owned`).
 2. An id inside a reserved namespace is refused to every other actor.
 3. An id under an active namespace is registrable only into that namespace's holder — the holding
    tenant's tenant tier or one of its account tiers. A prefix active for **another** tenant is
