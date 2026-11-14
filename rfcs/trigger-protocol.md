@@ -46,7 +46,7 @@ Prior art for the signing primitive is the control-link and hub-spoke wire (Ed25
 
 - **Subscription.** One per published trigger node. `subscriptionId` is w6w's id, used by both sides for the life of the registration. The partner's own id is `partnerSubscriptionId`. A protocol subscription is always node-bound and has subscription type `"protocol"`.
 - **Two directions, two credentials.** Host to partner: the bearer credential of the trigger node's own connection (the credential the app's actions use). Partner to host: an Ed25519 signature verifiable from the partner's published JWKS. Neither side stores a secret of the other.
-- **Trust.** The manifest names the keys the host trusts to fire (via `jwksUrl`), so only operator-installed apps (global or tenant tier) may declare the delivery kind.
+- **Trust.** The manifest names the keys the host trusts to fire (via `jwksUrl`), so only operator-installed apps may declare the delivery kind: the **global or tenant** tier, never the account tier.
 - **Persist-then-dispatch** is unchanged ([trigger.md](./trigger.md)): a fire is durably stored as a trigger event before the 200, then dispatched to a run at the bound node.
 
 ## Shape
@@ -90,7 +90,7 @@ Rules the loader and validator enforce:
 
 1. `baseUrl` and `jwksUrl` MUST be `https`, and both hosts MUST be in the app's `network.allow`. `http` is accepted only for a loopback host (`localhost`, `127.0.0.1`, `[::1]`), for local testing; w6w's egress refuses loopback in production.
 2. A protocol trigger MUST NOT declare `onSubscribe`, `onUnsubscribe` or `poll`; the host is the registration client. An optional output parser (`parseOutput`) stays allowed. `handleIngest` is never invoked for a protocol fire (the envelope `payload` is already the normalized event).
-3. Only an app installed at the **global or tenant tier** (operator-installed) may declare `delivery: "w6w-protocol"`; a user-tier app that does is refused at validation. The manifest names the keys w6w trusts for fires.
+3. Only an app installed at the **global or tenant tier** (operator-installed) may declare `delivery: "w6w-protocol"`; an account-tier app that does is refused at validation, so an import into an account is refused too and a protocol trigger never lands in that tier. The manifest names the keys w6w trusts for fires.
 4. `type` for webhook and poll triggers is unchanged. The subscription created for a protocol trigger has `type: "protocol"`.
 5. The registration `eventType` is the single entry of `protocol.events`; if the trigger lists several, it MUST declare a select param named `eventType` whose options are drawn from `protocol.events`, and that param's value is the `eventType` (the param is not repeated in `params`).
 6. Filters, when the user sets them on the trigger node, are a node-level `filters` value in grammar `protocol.filters.versions`; they are not part of `params`.
@@ -522,7 +522,7 @@ Construction:
 Verification (the host), in order; every failure is a uniform 401:
 
 1. Header present; compact form; `alg` is `EdDSA`, `typ` is `w6w-trigger+jwt` (anything else, including `none`, is refused before any key lookup).
-2. Read `iss` only as a lookup hint: it must name an installed global- or tenant-tier app that declares `protocol`; load that app's JWKS from its **manifest** `jwksUrl` (never a URL from the token), cached up to 10 minutes, re-fetched at most once a minute on an unknown `kid`. If the JWKS cannot be fetched at all the response is 503 (retryable), not 401.
+2. Read `iss` only as a lookup hint: it must name an installed global- or tenant-tier app (never an account-tier one) that declares `protocol`; load that app's JWKS from its **manifest** `jwksUrl` (never a URL from the token), cached up to 10 minutes, re-fetched at most once a minute on an unknown `kid`. If the JWKS cannot be fetched at all the response is 503 (retryable), not 401.
 3. Select the key by `kid` from that JWKS only; verify the signature.
 4. The claim set is exactly the eight claims; `aud` = `w6w-trigger`; `iss` equals the app id; `htm` = the request method; `htu` = the request path; `bodySha256` = base64url SHA-256 of the received raw bytes.
 5. Window (mirrors the control-link request artifact's 60 s lifetime and 30 s skew; see the limits table): `exp - iat` ≤ 300 s; `iat` no more than 30 s in the future; now no more than 60 s past `iat` plus 30 s skew, and no more than 30 s past `exp`.
@@ -613,7 +613,7 @@ No secret appears in a registration body, a fire response, a log line, or an exa
 
 A host conforms when:
 
-- a manifest with `delivery: "w6w-protocol"` and a valid `protocol` block loads, and a user-tier app declaring it is refused;
+- a manifest with `delivery: "w6w-protocol"` and a valid `protocol` block loads, and an account-tier app declaring it is refused;
 - publishing a workflow with a protocol trigger node produces exactly one create call per node with the headers and body above, and none for a draft save;
 - a fire with a valid signature produces one stored trigger event and a run at the node; the same `eventId` again yields `duplicate`;
 - every signature or claim failure produces the identical 401 body;
