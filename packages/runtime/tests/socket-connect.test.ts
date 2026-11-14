@@ -511,7 +511,9 @@ Deno.test("(j) an existing ctx.fetch-only app invoked with no target behaves exa
       action: "call",
       params: { url: `http://127.0.0.1:${port}/` },
     },
-    { connection },
+    // The ctx.fetch server is loopback (this app's target is a socket, so the
+    // Connection carries none): opt out of the private-egress guard.
+    { connection, egressGuard: { allowPrivate: true } },
   );
   assertEquals((result.value as { status: number }).status, 200);
   assertEquals(received, "k-123");

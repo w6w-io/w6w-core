@@ -9,6 +9,13 @@ import { checkHealth, describe, healthAllowlist, loadApp } from "../mod.ts";
 import type { LoadedApp } from "../mod.ts";
 import { type HealthResult, rollUpHealth } from "../src/health.ts";
 
+// Every server this file talks to is a loopback fixture, and `checkHealth`'s
+// options carry no egress seam, so the whole file opts out of the private-egress
+// guard through its documented env switch (default off; the guard itself is
+// pinned in private-egress.test.ts / private-egress-fetch.test.ts). Mutating env
+// also makes the test runner defer this file to its serial track.
+Deno.env.set("W6W_APP_ALLOW_PRIVATE", "1");
+
 const SENDGRID_DIR = fromFileUrl(new URL("../../../fixtures/apps/sendgrid", import.meta.url));
 
 Deno.test("loader: exposes declared checks and derives one per auth `test`", async () => {

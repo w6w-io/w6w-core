@@ -56,6 +56,8 @@ Deno.test("a hook's ctx.fetch against an allowed host succeeds and the response 
       auth,
       "afterConnect",
       { apiKey: "key-A", probeUrl: `http://127.0.0.1:${port}/` },
+      // The capture server is loopback: opt out of the private-egress guard.
+      { egressGuard: { allowPrivate: true } },
     );
     // onFetch was wired: the hook got a real Response and read its status.
     assertEquals(result.probeStatus, 201);
@@ -201,6 +203,10 @@ Deno.test("T1.5 (b): the same hook WITH signing runs exactly as before (credenti
           sourceRevision: 1,
         },
       },
+      // The hook fetches the fixture's made-up `probe.w6w.test` host and the
+      // fetch below is a stub, so the guard gets a resolver seam: a public
+      // address, allowed through, no DNS.
+      egressGuard: { resolve: () => Promise.resolve(["93.184.216.34"]) },
     });
     assertEquals(out.message, '{"credential":null}');
     assertEquals(seenAuth, ["Bearer ya29.t1-5"]);
