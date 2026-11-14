@@ -71,7 +71,10 @@ for (const status of [301, 302, 303, 307, 308]) {
     const app = await loadApp(EGRESS_DIR);
     const p = pair(status);
     try {
-      const fetchRefuse = signingFetch(app, undefined, undefined, { redirects: "refuse" });
+      const fetchRefuse = signingFetch(app, undefined, undefined, {
+        redirects: "refuse",
+        egressGuard: { allowPrivate: true },
+      });
       const res = await fetchRefuse({
         url: `http://127.0.0.1:${p.origin.port}/start`,
         method: "POST",
@@ -95,7 +98,8 @@ for (const status of [301, 302, 303, 307, 308]) {
 
 Deno.test("redirects unset and 'same-host' follow a same-hostname other-port 307: one request lands", async () => {
   const app = await loadApp(EGRESS_DIR);
-  for (const opts of [{}, { redirects: "same-host" as const }]) {
+  const LOCAL = { egressGuard: { allowPrivate: true } };
+  for (const opts of [LOCAL, { ...LOCAL, redirects: "same-host" as const }]) {
     const p = pair(307);
     try {
       const res = await signingFetch(app, undefined, undefined, opts)({
@@ -127,7 +131,10 @@ Deno.test("redirects:'refuse' returns a CROSS-host 3xx too (no egress_denied thr
     })
   );
   try {
-    const res = await signingFetch(app, undefined, undefined, { redirects: "refuse" })({
+    const res = await signingFetch(app, undefined, undefined, {
+      redirects: "refuse",
+      egressGuard: { allowPrivate: true },
+    })({
       url: `http://127.0.0.1:${origin.port}/start`,
       method: "GET",
       headers: {},
@@ -151,13 +158,20 @@ Deno.test("redirects:'refuse' through invoke: signed 307 comes back as the actio
       connection: CONNECTION.id,
       params: { url: `http://127.0.0.1:${p.origin.port}/start` },
     };
-    const result = await invoke(app, invocation, { connection: CONNECTION, redirects: "refuse" });
+    const result = await invoke(app, invocation, {
+      connection: CONNECTION,
+      redirects: "refuse",
+      egressGuard: { allowPrivate: true },
+    });
     assertEquals((result.value as { status: number }).status, 307);
     assertEquals(p.origin.requests[0]?.headers.get("x-api-key"), "live-secret-abc123");
     assertEquals(p.target.requests.length, 0);
 
     // Same invocation, option unset: the hop is followed and the key travels.
-    const followed = await invoke(app, invocation, { connection: CONNECTION });
+    const followed = await invoke(app, invocation, {
+      connection: CONNECTION,
+      egressGuard: { allowPrivate: true },
+    });
     assertEquals((followed.value as { status: number }).status, 200);
     assertEquals(p.target.requests.length, 1);
     assert(p.target.requests[0].headers.get("x-api-key") === "live-secret-abc123");
@@ -170,7 +184,10 @@ Deno.test("redirects:'refuse' leaves a non-redirect response untouched", async (
   const app = await loadApp(EGRESS_DIR);
   const s = recorder(() => new Response("plain", { status: 200 }));
   try {
-    const res = await signingFetch(app, undefined, undefined, { redirects: "refuse" })({
+    const res = await signingFetch(app, undefined, undefined, {
+      redirects: "refuse",
+      egressGuard: { allowPrivate: true },
+    })({
       url: `http://127.0.0.1:${s.port}/x`,
       method: "GET",
       headers: {},

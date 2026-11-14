@@ -93,7 +93,7 @@ function parseIPv6(host: string): number[] | null {
 }
 
 /** True if `host` is an IPv4 or IPv6 literal — the resolution set is just itself. */
-function isIpLiteral(host: string): boolean {
+export function isIpLiteral(host: string): boolean {
   const stripped = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   return parseIPv4(host) !== null || parseIPv6(stripped) !== null;
 }
@@ -149,10 +149,29 @@ function isPrivateIPv6(ip: number[]): boolean {
   if (isZero(ip.slice(0, 10)) && ip[10] === 0xff && ip[11] === 0xff) {
     return isPrivateIPv4(ip.slice(12, 16)); // ::ffff:0:0/96, unwrapped
   }
+  if (ip[0] === 0xff) return true; // ff00::/8 multicast
+  if (ip[0] === 0xfe && (ip[1] & 0xc0) === 0xc0) return true; // fec0::/10 site-local (deprecated)
+  // NAT64 well-known 64:ff9b::/96 — the tail is an IPv4 destination behind the gateway.
+  if (
+    ip[0] === 0 && ip[1] === 0x64 && ip[2] === 0xff && ip[3] === 0x9b && isZero(ip.slice(4, 12))
+  ) return isPrivateIPv4(ip.slice(12, 16));
+  // 64:ff9b:1::/48 local-use NAT64 (RFC 8215): operator-internal by definition.
+  if (
+    ip[0] === 0 && ip[1] === 0x64 && ip[2] === 0xff && ip[3] === 0x9b && ip[4] === 0 && ip[5] === 1
+  ) {
+    return true;
+  }
+  // 6to4 2002::/16 — bytes 2..5 are the embedded IPv4.
+  if (ip[0] === 0x20 && ip[1] === 0x02) return isPrivateIPv4(ip.slice(2, 6));
+  // Teredo 2001:0000::/32 — server in bytes 4..7, client is bytes 12..15 XOR 0xff.
+  if (ip[0] === 0x20 && ip[1] === 0x01 && ip[2] === 0 && ip[3] === 0) {
+    const client = ip.slice(12, 16).map((b) => b ^ 0xff);
+    return isPrivateIPv4(client) || isPrivateIPv4(ip.slice(4, 8));
+  }
   return false;
 }
 
-function isPrivateAddress(addr: string): boolean {
+export function isPrivateAddress(addr: string): boolean {
   const v4 = parseIPv4(addr);
   if (v4) return isPrivateIPv4(v4);
   const v6 = parseIPv6(addr);
