@@ -757,3 +757,35 @@ Every place a host reads the app catalog, under option (a):
 A global app with no listing row is a legacy or first-party app and is treated as listed. An app that
 has a listing row is governed by its `state`. Neither case changes how the registry stores versions.
 
+
+## Pack ownership (2026-11-13)
+
+> Names each per-repo app index and makes its app ids owned by that pack. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-1, D-7).
+
+A **pack** is a named app index: one repository publishing its own index at
+`apps/<pack>/index.json`. `POST /system-ops/apps/publish-index` takes an optional `pack` next to
+`indexSha256`. A pack name matches `^[a-z0-9][a-z0-9-]{0,62}$` — lowercase letters, digits and `-`,
+starting with a letter or digit; any other name is `400 invalid_body`.
+
+The **owner of an app id** is the pack whose index registered it, recorded as a row
+`app_packs(app_id, pack, claimed_at, updated_at)` with at most one owner per id. Ownership is
+**claimed on first publish**: publishing an id that has no owner asserts the publishing pack as its
+owner, with `from_pack = null`. A publish into a named pack registers only the ids in that pack's own
+index and never touches another pack's apps or ownership rows. An id already owned by a different
+pack P is reported `failed` with `owned_by_pack:<P>`, and its row is unchanged.
+
+Ownership is decided at the start of a publish, before it registers anything — claim before publish:
+an id another pack owns is dropped from the publish, and the ids a publish may own are claimed for its
+pack with an insert-if-absent write. The one **residual window** is a `pack-move` landing while a
+publish is in flight: that publish never sees the move, finishes under its starting ownership, and may
+register one last set of versions for the previous pack; a re-run of the move reconciles the two.
+
+Ownership moves only by an explicit, audited operation: `POST /system-ops/apps/pack-move`
+(`{appId, toPack, reason}`, ops scope `apps:publish`). It updates the owner and appends a row to the
+`app_pack_moves` audit table — `app_id`, `from_pack` (null when the app was unowned), `to_pack`,
+`reason`, `actor`, `at` — in one transaction. An unknown app id is `404`.
+
+A publish with **no `pack`** is the global-index behaviour and is exactly unchanged: it neither
+claims nor consults pack ownership. Publishing never unregisters an app: an id that leaves an index
+keeps its registered versions, and removal stays a separate, explicit lifecycle action.

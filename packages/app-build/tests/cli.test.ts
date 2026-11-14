@@ -7,23 +7,18 @@
  */
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.0.0";
+import { haveApps, requireApp } from "./_real_apps.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const TYPES = fromFileUrl(new URL("../../types/mod.ts", import.meta.url));
-const APPS = fromFileUrl(new URL("../../../../apps/apps/", import.meta.url));
-const haveApps = (() => {
-  try {
-    return Deno.statSync(APPS).isDirectory;
-  } catch {
-    return false;
-  }
-})();
 
-async function cli(args: string[]) {
+/** Runs the CLI; `env` is merged into the inherited environment (e.g. a private `TMPDIR`). */
+async function cli(args: string[], env: Record<string, string> = {}) {
   const out = await new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", CLI, ...args],
     stdout: "piped",
     stderr: "piped",
+    env,
   }).output();
   const td = new TextDecoder();
   return { code: out.code, stdout: td.decode(out.stdout), stderr: td.decode(out.stderr) };
@@ -100,7 +95,7 @@ Deno.test({
           manifestVersion: "1",
           kind: "pack",
           name: "t",
-          apps: [{ path: join(APPS, "gotify") }, { path: bad }, { path: join(APPS, "apify") }],
+          apps: [{ path: requireApp("gotify") }, { path: bad }, { path: requireApp("apify") }],
         }),
       );
       const out = join(tmp, "out");
@@ -161,15 +156,19 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** The platform temp dir `Deno.makeTempDir` picks by default. */
-function tmpDir(): string {
-  return Deno.env.get("TMPDIR") ?? Deno.env.get("TMP") ?? Deno.env.get("TEMP") ?? "/tmp";
+/**
+ * A temp dir private to one CLI run. `deno task test` runs test files in parallel and
+ * `validate.test.ts` creates the same-named throwaway roots, so the `--validate` cases must
+ * hand the child its own `TMPDIR` and scan that instead of the shared platform temp dir.
+ */
+async function privateTmpDir(): Promise<string> {
+  return await Deno.realPath(await Deno.makeTempDir({ prefix: "w6w-cli-private-" }));
 }
 
-/** Throwaway out roots `validateApp` creates in the platform temp dir. */
-async function validateOutRoots(): Promise<string[]> {
+/** Throwaway out roots `validateApp` creates in `dir` (the child's `TMPDIR`). */
+async function validateOutRoots(dir: string): Promise<string[]> {
   const names: string[] = [];
-  for await (const e of Deno.readDir(tmpDir())) {
+  for await (const e of Deno.readDir(dir)) {
     if (e.name.startsWith("w6w-app-validate-")) names.push(e.name);
   }
   return names.sort();
@@ -184,9 +183,10 @@ function jsonLine(stdout: string): unknown {
 
 Deno.test("cli: --validate on a valid app prints one ok JSON line, exits 0, leaves nothing", async () => {
   const { tmp, app } = await fixture();
+  const tmpdir = await privateTmpDir();
   try {
-    const before = await validateOutRoots();
-    const r = await cli(["--validate", app]);
+    const before = await validateOutRoots(tmpdir);
+    const r = await cli(["--validate", app], { TMPDIR: tmpdir });
     assertEquals(r.code, 0);
     assertEquals(jsonLine(r.stdout), {
       ok: true,
@@ -198,8 +198,9 @@ Deno.test("cli: --validate on a valid app prints one ok JSON line, exits 0, leav
     for await (const e of Deno.readDir(tmp)) names.push(e.name);
     assertEquals(names, ["app"]);
     assert(!(await exists(join(app, "out"))));
-    assertEquals(await validateOutRoots(), before);
+    assertEquals(await validateOutRoots(tmpdir), before);
   } finally {
+    await Deno.remove(tmpdir, { recursive: true });
     await Deno.remove(tmp, { recursive: true });
   }
 });
@@ -208,15 +209,17 @@ Deno.test("cli: --validate on a broken graph prints its BuildError code, exits 1
   const { tmp, app } = await fixture({
     "index.ts": `import "npm:left-pad@1.3.0";\nexport default { actions: [] };\n`,
   });
+  const tmpdir = await privateTmpDir();
   try {
-    const before = await validateOutRoots();
-    const r = await cli(["--validate", app]);
+    const before = await validateOutRoots(tmpdir);
+    const r = await cli(["--validate", app], { TMPDIR: tmpdir });
     assertEquals(r.code, 1);
     const result = jsonLine(r.stdout) as { ok: boolean; errors: { code: string }[] };
     assertEquals(result.ok, false);
     assertEquals(result.errors.map((e) => e.code), ["graph_npm"]);
-    assertEquals(await validateOutRoots(), before);
+    assertEquals(await validateOutRoots(tmpdir), before);
   } finally {
+    await Deno.remove(tmpdir, { recursive: true });
     await Deno.remove(tmp, { recursive: true });
   }
 });
