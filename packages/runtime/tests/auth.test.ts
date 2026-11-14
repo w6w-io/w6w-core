@@ -17,6 +17,11 @@ const CONNECTION: Connection = {
   createdAt: "2026-05-24T00:00:00Z",
 };
 
+// Every server this file talks to is a loopback fixture. The private-egress
+// guard is opted out per call site (`LOCAL`); the guard itself is pinned in
+// private-egress.test.ts / private-egress-fetch.test.ts.
+const LOCAL = { egressGuard: { allowPrivate: true } };
+
 /** Spins up a one-shot local endpoint that records the request it receives. */
 function captureServer() {
   let captured: { authorization: string | null; body: string } | undefined;
@@ -81,7 +86,7 @@ Deno.test("sign injects the credential at the wire; the action never sees it", a
       },
     };
 
-    const result = await invoke(app, invocation, { connection: CONNECTION });
+    const result = await invoke(app, invocation, { ...LOCAL, connection: CONNECTION });
     const value = result.value as { status: number; connectionKeys: string[] };
 
     // The host performed the call and got the echo server's 202.
@@ -149,6 +154,7 @@ Deno.test("gate: needs_refresh runs the refresh hook, then signs with the new cr
   const { server, port, get } = captureServer();
   try {
     const result = await invoke(app, sendInvocation(`http://127.0.0.1:${port}`), {
+      ...LOCAL,
       connection: withState("needs_refresh"),
     });
     assertEquals((result.value as { status: number }).status, 202);
@@ -228,7 +234,7 @@ Deno.test("overrides reach the wire without the action declaring them", async ()
           headers: { "x-trace": "abc" },
         },
       },
-      { connection: CONNECTION },
+      { ...LOCAL, connection: CONNECTION },
     );
   } finally {
     await server.shutdown();
@@ -253,7 +259,7 @@ Deno.test("a path override sets one leaf of the built body end to end", async ()
         ...sendInvocation(`http://127.0.0.1:${port}`),
         overrides: { body: { "tracking_settings.open_tracking.enable": false } },
       },
-      { connection: CONNECTION },
+      { ...LOCAL, connection: CONNECTION },
     );
   } finally {
     await server.shutdown();
@@ -273,7 +279,7 @@ Deno.test("overrides cannot hijack the auth header the sign hook owns", async ()
         ...sendInvocation(`http://127.0.0.1:${port}`),
         overrides: { headers: { authorization: "Bearer attacker-supplied" } },
       },
-      { connection: CONNECTION },
+      { ...LOCAL, connection: CONNECTION },
     );
   } finally {
     await server.shutdown();
@@ -293,7 +299,7 @@ Deno.test("a differently-cased override cannot ride beside the signer's auth hea
         ...sendInvocation(`http://127.0.0.1:${port}`),
         overrides: { headers: { Authorization: "Bearer attacker-supplied" } },
       },
-      { connection: CONNECTION },
+      { ...LOCAL, connection: CONNECTION },
     );
   } finally {
     await server.shutdown();
@@ -327,7 +333,7 @@ Deno.test("a differently-cased override cannot ride beside a non-Authorization s
         params: { url: `http://127.0.0.1:${port}/x` },
         overrides: { headers: { "X-Api-Key": "attacker-supplied" } },
       },
-      { connection },
+      { ...LOCAL, connection },
     );
   } finally {
     await server.shutdown();
@@ -345,6 +351,7 @@ Deno.test("signingFetch with no overrides still dedupes, on the wire and in the 
       app.auths[0],
       CONNECTION.credential,
       {
+        ...LOCAL,
         connection: CONNECTION,
         captureEgress: true,
         onEgress: (info) => infos.push(info),
@@ -378,7 +385,7 @@ Deno.test("overrides cannot redirect the request off the allowlisted host", asyn
         // rewritten — host and path stay exactly as the action wrote them.
         overrides: { headers: { host: "evil.example.com" }, query: { a: "1" } },
       },
-      { connection: CONNECTION },
+      { ...LOCAL, connection: CONNECTION },
     );
   } finally {
     await server.shutdown();
@@ -397,7 +404,7 @@ Deno.test("an invocation with no overrides is byte-identical to before", async (
           ...sendInvocation(`http://127.0.0.1:${port}`),
           ...(overrides ? { overrides } : {}),
         },
-        { connection: CONNECTION },
+        { ...LOCAL, connection: CONNECTION },
       );
     } finally {
       await server.shutdown();

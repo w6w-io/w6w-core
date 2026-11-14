@@ -101,7 +101,11 @@ Deno.test("R1 - cross-host redirect is denied and the credential never arrives t
       credential: { apiKey: "live-secret-abc123" },
     };
     const err = await assertRejects(
-      () => invoke(app, inv(`http://127.0.0.1:${A.port}/start`, connection), { connection }),
+      () =>
+        invoke(app, inv(`http://127.0.0.1:${A.port}/start`, connection), {
+          connection,
+          egressGuard: { allowPrivate: true },
+        }),
       W6WError,
     );
     assertEquals(err.code, "egress_denied");
@@ -153,6 +157,7 @@ Deno.test("R2 - same-host redirect is followed, signed header intact", async () 
 
     const result = await invoke(app, inv(`http://127.0.0.1:${A.port}/same`, connection), {
       connection,
+      egressGuard: { allowPrivate: true },
     });
     const value = result.value as { status: number; body: string };
     // Assert all three: status alone would pass an implementation that
@@ -168,6 +173,7 @@ Deno.test("R2 - same-host redirect is followed, signed header intact", async () 
       inv(`http://127.0.0.1:${A.port}/port-hop`, connection),
       {
         connection,
+        egressGuard: { allowPrivate: true },
       },
     );
     const portHopValue = portHopResult.value as { status: number; body: string };
@@ -192,7 +198,11 @@ Deno.test("R3 - a same-host redirect loop terminates at the hop cap", async () =
       credential: { apiKey: "k-r3" },
     };
     const err = await assertRejects(
-      () => invoke(app, inv(`http://127.0.0.1:${A.port}/loop`, connection), { connection }),
+      () =>
+        invoke(app, inv(`http://127.0.0.1:${A.port}/loop`, connection), {
+          connection,
+          egressGuard: { allowPrivate: true },
+        }),
       W6WError,
     );
     assertEquals(err.code, "too_many_redirects");
@@ -227,7 +237,11 @@ Deno.test("R4 - pre-sign check denies before `sign` can rescue an off-allowlist 
     // ever runs. On the base tree this invocation succeeds and A.get() is
     // defined — that is the divergence this case exists for.
     const err = await assertRejects(
-      () => invoke(app, inv(`http://localhost:${B.port}/start`, connection), { connection }),
+      () =>
+        invoke(app, inv(`http://localhost:${B.port}/start`, connection), {
+          connection,
+          egressGuard: { allowPrivate: true },
+        }),
       W6WError,
     );
     assertEquals(err.code, "egress_denied");
@@ -248,7 +262,11 @@ Deno.test("R5 - pre-sign check denies before the throwing sign hook is ever spaw
   // Non-allowlisted destination; nothing ever listens here — the point is
   // that no connection is ever attempted.
   const err = await assertRejects(
-    () => invoke(app, inv("http://localhost:1/anything", connection), { connection }),
+    () =>
+      invoke(app, inv("http://localhost:1/anything", connection), {
+        connection,
+        egressGuard: { allowPrivate: true },
+      }),
     W6WError,
   );
   assertEquals(err.code, "egress_denied");
@@ -273,7 +291,11 @@ Deno.test("R6 - post-sign check is retained: sign rewriting off-allowlist is sti
     // pre-sign check were implemented by MOVING the existing check rather
     // than adding a second one.
     const err = await assertRejects(
-      () => invoke(app, inv("http://127.0.0.1:1/start", connection), { connection }),
+      () =>
+        invoke(app, inv("http://127.0.0.1:1/start", connection), {
+          connection,
+          egressGuard: { allowPrivate: true },
+        }),
       W6WError,
     );
     assertEquals(err.code, "egress_denied");
@@ -298,7 +320,7 @@ Deno.test("R7 - a swallowed denial does not mask a later, unrelated failure", as
       invoke(
         app,
         inv("http://localhost:1/not-allowed", connection, "probe-then-fail"),
-        { connection },
+        { connection, egressGuard: { allowPrivate: true } },
       ),
     W6WError,
   );

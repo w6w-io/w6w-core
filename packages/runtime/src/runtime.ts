@@ -38,6 +38,8 @@ import { resolveParams } from "./resolve.ts";
 import { runHook } from "./sandbox/run-hook.ts";
 import type { WireResponse } from "./sandbox/protocol.ts";
 import { egressFailure, type EgressInfo, egressInfo } from "./egress.ts";
+import { assertPublicDestination, pinnedFetch } from "./private-egress.ts";
+import type { PublicDestinationOptions } from "./private-egress.ts";
 import { credentialError, W6WError } from "./errors.ts";
 import {
   type CredentialPurpose,
@@ -127,6 +129,8 @@ export interface InvokeOptions {
    * Fails closed: a value other than unset or `"same-host"` refuses too.
    */
   redirects?: "same-host" | "refuse";
+  /** Private-egress guard seam: inject a resolver (tests) or `allowPrivate`. */
+  egressGuard?: PublicDestinationOptions;
 }
 
 export interface InvokeResult {
@@ -240,6 +244,7 @@ async function hostFetch(
   req: SignableRequest,
   timeoutMs = 30_000,
   redirects?: InvokeOptions["redirects"],
+  egressGuard?: PublicDestinationOptions,
 ): Promise<WireResponse> {
   let host: string;
   try {
@@ -268,7 +273,10 @@ async function hostFetch(
     for (;;) {
       let res: Response;
       try {
-        res = await fetch(currentUrl, {
+        // F-1: resolve + refuse private on EVERY hop, then connect to the
+        // address that was checked (http: pinned; https: see private-egress.ts).
+        const dest = await assertPublicDestination(currentUrl, egressGuard);
+        ({ response: res } = await pinnedFetch(currentUrl, dest, {
           method,
           headers: req.headers,
           // A5 (runtime.ts:180): a Uint8Array body passes through to the real
@@ -282,8 +290,9 @@ async function hostFetch(
           body: body as BodyInit | null | undefined,
           redirect: "manual",
           signal: controller.signal,
-        });
+        }, egressGuard?.fetchImpl));
       } catch (err) {
+        if (err instanceof W6WError) throw err;
         if (controller.signal.aborted) {
           throw new W6WError(
             "fetch_timeout",
@@ -446,7 +455,7 @@ export function signingFetch(
     try {
       const res = opts.egressTransport
         ? await opts.egressTransport(signed)
-        : await hostFetch(allowlist, signed, opts.timeoutMs, opts.redirects);
+        : await hostFetch(allowlist, signed, opts.timeoutMs, opts.redirects, opts.egressGuard);
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );
@@ -531,6 +540,8 @@ export interface PrepareAuthorizationOptions {
   timeoutMs?: number;
   /** `InvokeOptions.redirects`, for the in-core `refresh` arm's egress. */
   redirects?: InvokeOptions["redirects"];
+  /** Private-egress guard seam (resolver / opt-out), see `private-egress.ts`. */
+  egressGuard?: PublicDestinationOptions;
 }
 
 export interface PreparedAuthorization {
@@ -667,7 +678,8 @@ export async function prepareAuthorization(
         selector: { kind: "auth", key: auth.auth.key, hook: "refresh" },
         input: { credential: conn.credential },
         timeoutMs: opts.timeoutMs,
-        onFetch: (req) => hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects),
+        onFetch: (req) =>
+          hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects, opts.egressGuard),
       });
     } catch (e) {
       throw new W6WError("connection_broken", "auth", `Refresh failed: ${(e as Error).message}`);
@@ -709,6 +721,8 @@ export interface RunAuthHookOptions {
   timeoutMs?: number;
   /** `InvokeOptions.redirects`, for this hook's `ctx.fetch` egress. */
   redirects?: InvokeOptions["redirects"];
+  /** Private-egress guard seam (resolver / opt-out), see `private-egress.ts`. */
+  egressGuard?: PublicDestinationOptions;
   onLog?: (level: string, message: string, data?: unknown) => void;
   /**
    * Signed mode (D-A3) for a provider-derived auth: `test`/`afterConnect` run with
@@ -815,10 +829,16 @@ export async function runAuthHook<T = unknown>(
       pickDerivedToken(
         (signing.authorization as Extract<ResolvedAuthorization, { kind: "derived" }>).token,
       ),
-      { timeoutMs: opts.timeoutMs, onLog: opts.onLog, redirects: opts.redirects },
+      {
+        timeoutMs: opts.timeoutMs,
+        onLog: opts.onLog,
+        redirects: opts.redirects,
+        egressGuard: opts.egressGuard,
+      },
       app.netAllowlist,
     )
-    : (req: SignableRequest) => hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects);
+    : (req: SignableRequest) =>
+      hostFetch(app.netAllowlist, req, opts.timeoutMs, opts.redirects, opts.egressGuard);
   const hookInput: Record<string, unknown> = signing
     ? {
       credential: null,
@@ -892,6 +912,7 @@ export async function invoke(
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
         redirects: opts.redirects,
+        egressGuard: opts.egressGuard,
       },
     ));
   } else if (invocation.connection) {
@@ -1035,6 +1056,7 @@ export async function invokeTriggerHook(
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
         redirects: opts.redirects,
+        egressGuard: opts.egressGuard,
       },
     ));
   }
@@ -1103,6 +1125,7 @@ export async function invokeResolveFields(
         egressTransport: opts.egressTransport,
         timeoutMs: opts.timeoutMs,
         redirects: opts.redirects,
+        egressGuard: opts.egressGuard,
       },
     ));
   } else if (app.auths.length > 0) {
