@@ -557,3 +557,95 @@ Snapshot storage is a host concern and is not part of `Registry` or `DataStore`.
 policy) exist only in the host, and `Registry` is also a library for in-memory and CLI hosts. The
 registry surface gains only the optional `Page<T>` fields, the `ReadOpts.policy` data carrier and
 the shared cursor forms above; no method is added to either interface.
+
+---
+
+## Amendment: publishers and namespaces (2026-11-13)
+
+> Opens the registry to third-party publishers. Until now every id in the global catalog was
+> published by W6W; a user could only install into their own private tier. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-1, D-2).
+
+### Publisher
+
+A **publisher** is the named party that publishes apps. It is a first-class record with a unique,
+URL-safe `slug`, a display name, an owning tenant, a `status` (`active` | `suspended`) and a set of
+**members**, each with a role (`owner` | `member`). A publisher MUST always have at least one owner;
+removing the last owner MUST be refused (`last_owner`). W6W is itself a publisher (slug `w6w`) and
+is the first one: there is one publishing pipeline, not a first-party path and a third-party path.
+
+A publisher is `verified` if and only if it holds at least one verified namespace.
+
+### Namespace
+
+A **namespace** is a reverse-DNS prefix bound to a domain the publisher controls: the domain
+`zapier.com` is the prefix `com.zapier`; `tables.zapier.com` is `com.zapier.tables`. The prefix is
+lowercase, IDNA-ascii only, and has at least two labels. A prefix matches an app id when the id
+equals the prefix or begins with the prefix followed by `.`: `com.zapier` matches `com.zapier` and
+`com.zapier.tables`, and MUST NOT match `com.zapierx.a`. The one non-DNS form is `@w6w` (below),
+which matches ids beginning `@w6w/`.
+
+A namespace has a status:
+
+| Status     | Meaning                                                               |
+| ---------- | --------------------------------------------------------------------- |
+| `pending`  | Claimed; a verification token has been issued; proof not yet seen.    |
+| `verified` | Control of the domain was proven (or an operator vouched, see below). |
+| `revoked`  | Withdrawn by the publisher or an operator.                            |
+
+Only a `verified` namespace confers ownership; `pending` and `revoked` namespaces MUST NOT match any
+id. A prefix MUST be verified for at most one publisher at a time; a second verification attempt
+fails with `namespace_taken`. Re-claiming a prefix the same publisher already holds returns the
+existing row.
+
+### Verification
+
+A host MUST accept at least one of these proofs of domain control, each carrying the namespace's
+token:
+
+1. **DNS TXT** — a record at `_w6w-publisher.<domain>` whose value contains the token.
+2. **Well-known file** — `https://<domain>/.well-known/w6w-publisher.txt` whose body contains the
+   token.
+
+The host MAY additionally let an operator force-verify a namespace (method `operator`); that is how
+the reserved namespaces are seeded. A verification that cannot yet be proven is not an error: it
+reports `verified: false` with a reason, and the publisher retries.
+
+### Reserved namespaces
+
+`io.w6w` and `@w6w` are reserved to W6W. No other publisher may claim them (`namespace_reserved`),
+and an id inside them (`io.w6w` or `io.w6w.*`, `@w6w/*`) MUST NOT be published by anyone but an
+operator acting for the W6W publisher. A host MAY reserve further prefixes.
+
+### Ownership and the publish decision
+
+The **owner of an app id** is the publisher holding the **longest verified prefix** that matches it,
+or none. Given an actor and an app id, a host decides, in order:
+
+1. An operator MAY publish any id.
+2. An id inside a reserved namespace is refused to every other actor (`namespace_reserved`).
+3. An id inside a verified namespace of publisher P: if P is suspended, refuse
+   (`publisher_suspended`); if the actor is a member of P and acts through P's owning tenant, allow
+   it into P's **publisher tier**; otherwise refuse (`namespace_owned`).
+4. An id inside no verified namespace is allowed only into the actor's own **private tier**, as
+   before.
+
+### Relation to owner scope
+
+This extends the owner scopes of _Amendment: owner-scoped registration_. An id inside a verified
+namespace may be installed or published only by its publisher's members, and lands in the
+publisher's **tenant tier**; a non-member cannot register it in any tier, including their own
+private one. An id outside every verified namespace stays private-tier only. The global tier is
+unchanged and remains reachable only by operators.
+
+### The manifest `publisher` field
+
+A manifest's `publisher` field is **informational**. The verified owner of the id is authoritative
+for who published an app, and a host MUST display and enforce the verified owner, never the manifest
+string. A manifest may therefore claim any publisher without effect.
+
+### Revocation
+
+Revoking a namespace or suspending a publisher stops further publishing into the affected ids. It is
+**not an uninstall**: versions already registered, and installs of them, are untouched. Removing an
+app is a separate, explicit lifecycle action.
