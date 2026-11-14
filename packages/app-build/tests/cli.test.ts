@@ -7,17 +7,10 @@
  */
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@^1.0.0";
 import { dirname, fromFileUrl, join } from "jsr:@std/path@^1.0.0";
+import { haveApps, requireApp } from "./_real_apps.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const TYPES = fromFileUrl(new URL("../../types/mod.ts", import.meta.url));
-const APPS = fromFileUrl(new URL("../../../../apps/apps/", import.meta.url));
-const haveApps = (() => {
-  try {
-    return Deno.statSync(APPS).isDirectory;
-  } catch {
-    return false;
-  }
-})();
 
 async function cli(args: string[]) {
   const out = await new Deno.Command(Deno.execPath(), {
@@ -100,7 +93,7 @@ Deno.test({
           manifestVersion: "1",
           kind: "pack",
           name: "t",
-          apps: [{ path: join(APPS, "gotify") }, { path: bad }, { path: join(APPS, "apify") }],
+          apps: [{ path: requireApp("gotify") }, { path: bad }, { path: requireApp("apify") }],
         }),
       );
       const out = join(tmp, "out");
