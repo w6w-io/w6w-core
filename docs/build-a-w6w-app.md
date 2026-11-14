@@ -27,26 +27,26 @@ updatedAt: null
 
 ## Start with `w6w apps init`
 
-Scaffold a working app with the CLI; do not write one from scratch and do not clone a starter
-repo (the old `w6w-app-template-*` repos are superseded by `w6w apps init`). Both variants satisfy
-the **identical** App contract; the toolchain is the only difference. Prefer **Deno** unless the
-user needs Node.
+Scaffold a working app with the CLI; do not write one from scratch and do not clone a starter repo
+(the old `w6w-app-template-*` repos are superseded by `w6w apps init`). Both variants satisfy the
+**identical** App contract; the toolchain is the only difference. Prefer **Deno** unless the user
+needs Node.
 
 ```bash
 w6w apps init <id> [--template deno|node] [--dir <path>]
 ```
 
-`<id>` is lowercase letters, digits and single hyphens; the target directory (default `./<id>`)
-must be missing or empty. [Deno](https://deno.com) must be on your PATH for `validate`, `build` and
+`<id>` is lowercase letters, digits and single hyphens; the target directory (default `./<id>`) must
+be missing or empty. [Deno](https://deno.com) must be on your PATH for `validate`, `build` and
 `publish` — also for the Node variant.
 
-| `--template` | Toolchain                                    | Use when                                      |
-| ------------ | -------------------------------------------- | --------------------------------------------- |
-| `deno`       | Deno + JSR `@w6w/types` + `deno test`        | Default. Zero-install.                        |
+| `--template` | Toolchain                                       | Use when                                     |
+| ------------ | ----------------------------------------------- | -------------------------------------------- |
+| `deno`       | Deno + JSR `@w6w/types` + `deno test`           | Default. Zero-install.                       |
 | `node`       | Node + `node --test --experimental-strip-types` | The user's stack is Node. Zero dependencies. |
 
-Both scaffold a working app you mutate into the target: an `apiKey` Auth (`sign` + `test`), a
-`ping` Action, a `new-item` poll trigger stub, a `service` health check, unit tests with a mocked
+Both scaffold a working app you mutate into the target: an `apiKey` Auth (`sign` + `test`), a `ping`
+Action, a `new-item` poll trigger stub, a `service` health check, unit tests with a mocked
 `HookContext`, and a CI workflow that runs `w6w apps validate`.
 
 The scaffold's `deno.json` resolves `@w6w/*` from the registry with **exact versions** (ranges are
@@ -127,7 +127,7 @@ Native npm fields are reused (`version`, `description`, `author`, `license`, `ho
 }
 ```
 
-Rules the validator enforces: `id` is reverse-DNS (`^[a-z0-9-]+(\.[a-z0-9-]+)+$`), `version` is
+Rules the validator enforces: `id` is reverse-DNS (`^[a-z0-9]+(\.[a-z0-9-]+)+$`), `version` is
 semver, `categories` has 1–3 entries. Run `deno task validate` (the `@w6w/validator` CLI) to check.
 
 ## Entry module (`index.ts`)
@@ -263,8 +263,14 @@ const serviceAccount: AuthDefinition = {
   type: "serviceAccount",
   displayName: "Service account",
   fields: [ // the credential-source input: by convention exactly one field
-    { key: "serviceAccountKey", label: "Service account key", type: "json", secret: true,
-      required: true, ui: "textarea" },
+    {
+      key: "serviceAccountKey",
+      label: "Service account key",
+      type: "json",
+      secret: true,
+      required: true,
+      ui: "textarea",
+    },
   ],
   serviceAccount: {
     accepts: ["google-service-account.v1"], // the contract ids you take
@@ -288,10 +294,10 @@ const serviceAccount: AuthDefinition = {
 export default serviceAccount;
 ```
 
-`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the Connection's
-non-secret `binding` and `credentialDisplay` (such as the service-account email), never key material.
-A host that supplies no credential resolver refuses a `serviceAccount` auth with `provider_unsupported`.
-See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
+`afterConnect` is the same: no `credential`, a signed `ctx.fetch`. Both also receive the
+Connection's non-secret `binding` and `credentialDisplay` (such as the service-account email), never
+key material. A host that supplies no credential resolver refuses a `serviceAccount` auth with
+`provider_unsupported`. See [`rfcs/credential.md`](../rfcs/credential.md) and the working example
 [`fixtures/apps/service-account`](../fixtures/apps/service-account/).
 
 ## `HookContext` (`ctx`) — the ambient API
@@ -373,10 +379,10 @@ The loop, from the app directory:
 - `w6w apps validate [dir] [--resolution sibling|registry]` — builds into a temp dir and checks the
   manifest and bundle against the same rules the registry applies; nothing is kept.
 - `w6w apps build [dir] [-o|--out <dir>] [--pack <file>]` — writes
-  `<out>/<id>/<version>/{app.js,manifest.json}` and `<out>/index.json`; `--pack` updates a pack
-  file with the built entry.
-- `w6w apps publish [dir] [--version <semver>]` — builds and uploads the artifact to **your
-  personal catalog** (visible only to you). `--version` is written into `package.json` first.
+  `<out>/<id>/<version>/{app.js,manifest.json}` and `<out>/index.json`; `--pack` updates a pack file
+  with the built entry.
+- `w6w apps publish [dir] [--version <semver>]` — builds and uploads the artifact to **your personal
+  catalog** (visible only to you). `--version` is written into `package.json` first.
   `w6w apps list [--scope personal]` shows what is installed.
 - To run against the reference runtime: `loadApp(dir)` → `describe(app)` (public manifest, runs no
   untrusted code) →
@@ -386,33 +392,31 @@ The loop, from the app directory:
 
 ## Health checks
 
-An App may declare probes a host runs to answer "is this working?": vendor status,
-credential liveness, quota headroom. `Auth.test` already covers the credential case and is
-derived into that surface automatically, so **nothing is required of you today** — adding a
-`service` or `quota` check is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
+An App may declare probes a host runs to answer "is this working?": vendor status, credential
+liveness, quota headroom. `Auth.test` already covers the credential case and is derived into that
+surface automatically, so **nothing is required of you today** — adding a `service` or `quota` check
+is additive. See [`rfcs/healthcheck.md`](../rfcs/healthcheck.md).
 
 Four things to know:
 
-- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs
-  a scope the credential may legitimately lack reports a working App as broken. Prefer a
-  dedicated ping (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the
-  cheapest read available.
-- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must
-  not be added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook
-  allowlist via `network.allow`, honoured only for an unsigned posture.
-- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no
-  hook is a first-class answer, and a better one than a silent gap. Give it
-  `severity: "informational"`, or the permanent `unknown` it reports will pin your App's
-  verdict there forever.
-- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it
-  with `feed` and the host fetches and parses it for you:
+- **Probe an endpoint the narrowest usable credential can still reach.** A check that needs a scope
+  the credential may legitimately lack reports a working App as broken. Prefer a dedicated ping
+  (Mailchimp's `/3.0/ping`), else a whoami that needs no scope, else the cheapest read available.
+- **Status hosts are not API hosts.** `status.stripe.com` is not `api.stripe.com`, and must not be
+  added to `w6w.network.allow` to satisfy a probe — a check gets its own per-hook allowlist via
+  `network.allow`, honoured only for an unsigned posture.
+- **Say so when a vendor publishes nothing.** An entry with `unavailable: { reason }` and no hook is
+  a first-class answer, and a better one than a silent gap. Give it `severity: "informational"`, or
+  the permanent `unknown` it reports will pin your App's verdict there forever.
+- **Declare a status feed; don't parse one.** If the vendor publishes Atom or RSS, name it with
+  `feed` and the host fetches and parses it for you:
 
   ```ts
   const service: HealthCheckDefinition = {
     key: "service",
     title: "Platform status",
     kind: "service",
-    feed: { url: "https://status.example.com/feed.rss" },   // host fetches + parses
+    feed: { url: "https://status.example.com/feed.rss" }, // host fetches + parses
 
     check({ feed }, _ctx) {
       if (feed?.error) return { state: "unknown", message: feed.error };
@@ -424,11 +428,11 @@ Four things to know:
   };
   ```
 
-  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current
-  state**: most vendors emit one entry per *update*, so the newest entry for a resolved
-  incident still carries that incident's original title, and judging by it reports an
-  outage that ended days ago. `latest` is the host's fold to one entry per incident.
-  The feed's host is allowlisted implicitly, so do not restate it in `network.allow`.
+  Read `latest`, not `entries`. **A feed is a log of updates, not a statement of current state**:
+  most vendors emit one entry per _update_, so the newest entry for a resolved incident still
+  carries that incident's original title, and judging by it reports an outage that ended days ago.
+  `latest` is the host's fold to one entry per incident. The feed's host is allowlisted implicitly,
+  so do not restate it in `network.allow`.
 
 ## Triggers
 
@@ -449,8 +453,8 @@ That is five hooks in all: `onSubscribe`, `onUnsubscribe`, `handleIngest`, `poll
 
 **Ship triggers.** When the vendor exposes events (webhooks) or a newest-first list, the app ships
 triggers; the only exception is a vendor with neither, and then the README records why. Read
-[`rfcs/trigger.md`](../rfcs/trigger.md) first. (The `w6w apps init` scaffold ships one poll trigger stub, `triggers/new-item.ts`, built on
-`@w6w/app-kit/poll`; replace it with yours.)
+[`rfcs/trigger.md`](../rfcs/trigger.md) first. (The `w6w apps init` scaffold ships one poll trigger
+stub, `triggers/new-item.ts`, built on `@w6w/app-kit/poll`; replace it with yours.)
 
 - **Poll** — use the poll kit at `apps/_shared/poll/mod.ts`: `pollFromListAction` turns an existing
   list/search action into a `New <record>` trigger, `pollSnapshot` diffs a table-like source
@@ -469,8 +473,8 @@ triggers; the only exception is a vendor with neither, and then the README recor
       `ctx.fetch`, no credentials.
 - [ ] Auth (if any): `test` present; `sign` injects the credential; secret fields use
       `type: "secret"`.
-- [ ] Unit tests pass (`deno task test` / `npm test`), `w6w apps validate` passes,
-      and `w6w apps publish` succeeds.
+- [ ] Unit tests pass (`deno task test` / `npm test`), `w6w apps validate` passes, and
+      `w6w apps publish` succeeds.
 - [ ] Imports keep `.ts` extensions.
 - [ ] Triggers shipped, or the reason recorded in the README.
 
@@ -481,8 +485,9 @@ triggers; the only exception is a vendor with neither, and then the README recor
 - RFCs: [app](../rfcs/app.md) · [action](../rfcs/action.md) · [auth](../rfcs/auth.md) ·
   [param](../rfcs/param.md) · [connection](../rfcs/connection.md) ·
   [invocation](../rfcs/invocation.md) · [hook-runtime](../rfcs/hook-runtime.md) ·
-  [credential](../rfcs/credential.md) ·
-  [categories](../rfcs/categories.md) · [trigger](../rfcs/trigger.md)
+  [credential](../rfcs/credential.md) · [categories](../rfcs/categories.md) ·
+  [trigger](../rfcs/trigger.md)
 - Working examples: [`fixtures/apps/hello`](../fixtures/apps/hello/) (no-auth) ·
   [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign) ·
-  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived token)
+  [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived
+  token)
