@@ -11,6 +11,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@^1.0.0";
 import { dirname, join } from "jsr:@std/path@^1.0.0";
 import { validateApp } from "../mod.ts";
+import { haveApps, requireApp } from "./_real_apps.ts";
 
 const INDEX = `export default { actions: [] };\n`;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -171,4 +172,22 @@ Deno.test("6: the default parser is the types parser — a real build parses cle
     const r = await validateApp(app, { minify: false });
     assertEquals(r.ok, true);
   });
+});
+
+/**
+ * The split layout puts each app at `<pack repo>/apps/<name>`; a name that is not checked out
+ * under a real pack must be refused exactly like a missing fixture dir (the pre-split suite only
+ * ever proved the fixture path). Runs only when the real apps are checked out.
+ */
+Deno.test({
+  name: "6: a missing app dir inside a real pack is app_dir_invalid too",
+  ignore: !haveApps,
+  fn: async () => {
+    const missing = join(dirname(requireApp("apify")), "no-such-app");
+    const r = await validateApp(missing);
+    assertEquals(r.ok, false);
+    if (r.ok) return;
+    assertEquals(r.errors[0].code, "app_dir_invalid");
+    assertEquals(await exists(missing), false, "validateApp must not create the app dir");
+  },
 });
