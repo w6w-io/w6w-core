@@ -31,6 +31,8 @@ export interface PublicDestinationOptions {
   allowPrivate?: boolean;
   /** Resolve a hostname to addresses. Default: `Deno.resolveDns` A+AAAA. */
   resolve?: (host: string) => Promise<string[]>;
+  /** Test seam: the fetch the pinned request is sent with. Default: global `fetch`. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface PublicDestination {
