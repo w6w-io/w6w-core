@@ -43,6 +43,8 @@ export interface WorkerRunOptions {
    */
   readScope?: string | string[];
   timeoutMs?: number;
+  /** Per-Worker memory cap in MiB (see `memoryLimitMb`). Default: `W6W_APP_MEMORY_MB`, else 1024. */
+  memoryLimitMb?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
   /**
@@ -88,6 +90,35 @@ function execDataUrl(code: ExecCode): string {
 const EXEC_URL_PREFIX = "data:text/javascript;base64,";
 
 /**
+ * Per-Worker memory cap, MiB. Research (Deno 2.8.2): `new Worker` accepts no
+ * `resourceLimits` equivalent, and `--v8-flags=--max-old-space-size` is
+ * process-wide (it would cap the host too, and a breach aborts the whole
+ * process rather than one Worker). What enforces: a host-side watchdog that
+ * samples process RSS growth since the Worker started and `terminate()`s it
+ * past the cap. Growth is attributed to the Worker being watched, so a
+ * concurrent Worker's allocation can also count toward it - the cap is
+ * deliberately high (default 1024 MiB) so first-party apps never approach it.
+ * KNOWN LIMIT (measured 2.8.2): `terminate()` is honoured only when the Worker
+ * returns to its event loop; a purely synchronous / microtask-only allocation
+ * loop is not interrupted and needs process-level isolation.
+ * Override with host env `W6W_APP_MEMORY_MB` (positive number).
+ */
+export const DEFAULT_APP_MEMORY_MB = 1024;
+const MEMORY_SAMPLE_MS = 20;
+
+export function memoryLimitMb(override?: number): number {
+  if (override !== undefined && override > 0) return override;
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get("W6W_APP_MEMORY_MB");
+  } catch {
+    raw = undefined;
+  }
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_APP_MEMORY_MB;
+}
+
+/**
  * THE sink for the Worker's read permission. An `entryUrl` start (exec code) gets
  * `false` — any `readScope` is ignored, and the URL must be a `data:` module so
  * nothing on disk is ever imported; an `entryPath` start gets exactly the supplied scope(s).
@@ -131,6 +162,8 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
   // Decided here, host-side, from the start message alone — never from a caller option.
   const read = workerReadPermission(start, opts.readScope);
 
+  const capMb = memoryLimitMb(opts.memoryLimitMb);
+  const baseRss = Deno.memoryUsage().rss;
   const worker = new Worker(import.meta.resolve("./worker.ts"), {
     type: "module",
     // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
@@ -139,12 +172,30 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
 
   return new Promise<T>((resolvePromise, reject) => {
     const timer = setTimeout(() => {
+      clearInterval(watchdog);
       worker.terminate();
       reject(new W6WError("hook_timeout", "execute", `Worker timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
 
+    const watchdog = setInterval(() => {
+      const grownMb = (Deno.memoryUsage().rss - baseRss) / 1048576;
+      if (grownMb > capMb) {
+        clearInterval(watchdog);
+        clearTimeout(timer);
+        worker.terminate();
+        reject(
+          new W6WError(
+            "memory_limit_exceeded",
+            "execute",
+            `Worker exceeded the ${capMb} MiB memory limit.`,
+          ),
+        );
+      }
+    }, MEMORY_SAMPLE_MS);
+
     const finish = (fn: () => void) => {
       clearTimeout(timer);
+      clearInterval(watchdog);
       worker.terminate();
       fn();
     };
