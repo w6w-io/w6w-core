@@ -49,3 +49,18 @@ Deno.test("no change / narrowing → []", () => {
   assertEquals(capabilityWidens(base, { network: { allow: [] } }), []);
   assertEquals(capabilityWidens(capabilitySummary(base), capabilitySummary(base)), []);
 });
+
+Deno.test("serviceAccount scope added widens", () => {
+  const sa = (scopes: string[]) => ({
+    ...base,
+    auth: [{ type: "serviceAccount", serviceAccount: { scopes } }],
+  });
+  assertEquals(capabilityWidens(sa(["a"]), sa(["a", "b"])), ["scope added: serviceAccount b"]);
+  assertEquals(capabilityWidens(sa(["a", "b"]), sa(["a"])), []);
+});
+
+Deno.test("healthCheck host added widens", () => {
+  const hc = (allow: string[]) => ({ ...base, healthChecks: [{ network: { allow } }] });
+  assertEquals(capabilityWidens(hc(["a.com"]), hc(["a.com", "H.com"])), ["host added: h.com"]);
+  assertEquals(capabilitySummary(hc(["z.com"])).hosts, ["api.example.com", "z.com"]);
+});

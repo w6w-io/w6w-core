@@ -5,8 +5,9 @@
  * catalog JSON without constructing a full manifest. Source fields (src/ paths):
  *  - hosts:    `network.allow` (app.ts:86) plus the hosts of `protocol.baseUrl` / `protocol.jwksUrl`
  *              (app.ts:103, trigger-protocol.ts:14-21). Lowercased, sorted, deduped.
+ *  - hosts also fold `healthChecks[].network.allow` (health.ts:158).
  *  - auths:    `auth[]` (app.ts:138, AuthDefinition in auth.ts:187): `type` (auth.ts:166) and
- *              `oauth2.scopes` (auth.ts:38). Merged per type, scopes sorted/deduped.
+ *              `oauth2.scopes` (auth.ts:38) and `serviceAccount.scopes` (auth.ts:136-141). Merged per type, scopes sorted/deduped.
  *  - triggers: `triggers[]` (app.ts:140): `delivery === "w6w-protocol"` → "protocol", else
  *              `type` (trigger.ts:69; "webhook" | "poll"), defaulting to "webhook" when absent
  *              (the loader derives `type`, so raw catalog JSON may lack it).
@@ -19,7 +20,12 @@ export interface CapabilityManifestLike {
   network?: { allow?: string[] };
   capabilities?: { socket?: boolean };
   protocol?: { baseUrl?: string; jwksUrl?: string };
-  auth?: Array<{ type: string; oauth2?: { scopes?: string[] } }>;
+  auth?: Array<{
+    type: string;
+    oauth2?: { scopes?: string[] };
+    serviceAccount?: { scopes?: string[] };
+  }>;
+  healthChecks?: Array<{ network?: { allow?: string[] } }>;
   triggers?: Array<{ type?: string; delivery?: string }>;
 }
 
@@ -43,6 +49,9 @@ const uniqSorted = (xs: string[]): string[] => [...new Set(xs)].sort();
 
 export function capabilitySummary(manifest: CapabilityManifestLike): CapabilitySummary {
   const hosts = (manifest.network?.allow ?? []).map((h) => String(h).trim().toLowerCase());
+  for (const hc of manifest.healthChecks ?? []) {
+    for (const h of hc.network?.allow ?? []) hosts.push(String(h).trim().toLowerCase());
+  }
   for (const u of [manifest.protocol?.baseUrl, manifest.protocol?.jwksUrl]) {
     const h = hostOf(u);
     if (h) hosts.push(h);
@@ -50,7 +59,7 @@ export function capabilitySummary(manifest: CapabilityManifestLike): CapabilityS
   const byType = new Map<string, string[]>();
   for (const a of manifest.auth ?? []) {
     const scopes = byType.get(a.type) ?? [];
-    scopes.push(...(a.oauth2?.scopes ?? []));
+    scopes.push(...(a.oauth2?.scopes ?? []), ...(a.serviceAccount?.scopes ?? []));
     byType.set(a.type, scopes);
   }
   const auths = [...byType.entries()]
