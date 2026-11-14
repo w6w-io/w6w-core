@@ -1,29 +1,38 @@
 # RFC: Connection
 
-**Status:** Final
-**Author:** Segev Shmueli
-**Date:** 2026-05-18 (revised 2026-06-01)
+**Status:** Final **Author:** Segev Shmueli **Date:** 2026-05-18 (revised 2026-06-01)
 
 ## Summary
 
-A `Connection` is the **stored instance** produced when a user completes an Auth flow. It holds the opaque credential blob, the display metadata used to label the connection, the reference to the App and Auth method that produced it, and the lifecycle state visible to the platform.
+A `Connection` is the **stored instance** produced when a user completes an Auth flow. It holds the
+opaque credential blob, the display metadata used to label the connection, the reference to the App
+and Auth method that produced it, and the lifecycle state visible to the platform.
 
-> **Amended 2026-10-27:** a Connection now references a stored Credential (`credentialId`, `binding`, `approved`, `bindingRevision`) and the source is resolved at use; the inline `credential` is the legacy runtime-input shape only — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** a Connection now references a stored Credential (`credentialId`,
+> `binding`, `approved`, `bindingRevision`) and the source is resolved at use; the inline
+> `credential` is the legacy runtime-input shape only — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
-Connections are runtime entities, not publisher-authored manifests. This RFC defines the **logical schema** of a Connection so other primitives — Action, Invocation, Workflow, Run — can reference it portably. It does not mandate storage mechanics.
+Connections are runtime entities, not publisher-authored manifests. This RFC defines the **logical
+schema** of a Connection so other primitives — Action, Invocation, Workflow, Run — can reference it
+portably. It does not mandate storage mechanics.
 
 ## Motivation
 
-The Auth RFC describes how a user *connects* to an App. It is silent on what a connection *is* once it exists. Without a defined Connection:
+The Auth RFC describes how a user _connects_ to an App. It is silent on what a connection _is_ once
+it exists. Without a defined Connection:
 
-- Actions can't be invoked against a specific stored credential — the [Invocation](./invocation.md) envelope has nothing to reference.
+- Actions can't be invoked against a specific stored credential — the [Invocation](./invocation.md)
+  envelope has nothing to reference.
 - Workflow steps can't be tied to a chosen connection.
 - The Auth lifecycle has hooks but no state machine — hosts each invent one.
-- The boundary between "what publishers see" (credential is opaque) and "what the host stores" (the credential blob plus metadata) is unstated.
+- The boundary between "what publishers see" (credential is opaque) and "what the host stores" (the
+  credential blob plus metadata) is unstated.
 
 ## Goals
 
-- Define a Connection's **logical schema**: identity, app/auth reference, credential blob, display metadata, state, timestamps.
+- Define a Connection's **logical schema**: identity, app/auth reference, credential blob, display
+  metadata, state, timestamps.
 - Define the **lifecycle state machine** so hosts agree on what each Auth hook transitions into.
 - Define how Actions and Workflow steps **reference** a Connection.
 - Define a **redacted projection** so userland code (Actions) never sees the credential.
@@ -31,37 +40,49 @@ The Auth RFC describes how a user *connects* to an App. It is silent on what a c
 
 ## Non-Goals
 
-- Storage mechanics, encryption-at-rest, key management — still the host's concern (carried over from Auth RFC).
+- Storage mechanics, encryption-at-rest, key management — still the host's concern (carried over
+  from Auth RFC).
 - Wire format for syncing connections across hosts.
 - Sharing semantics — see Open Questions.
 - Audit and observability surfaces — covered by Run RFC.
 
 ## Concept
 
-A Connection is the **runtime view** of an Auth method. The Auth manifest is "how to log in." A Connection is "the result of logging in," for one principal, against one App, via one Auth method.
+A Connection is the **runtime view** of an Auth method. The Auth manifest is "how to log in." A
+Connection is "the result of logging in," for one principal, against one App, via one Auth method.
 
-The credential remains **opaque** to the platform. A Connection wraps it, but never introspects it. Auth's `sign` hook is still the only thing that ever reads the credential blob.
+The credential remains **opaque** to the platform. A Connection wraps it, but never introspects it.
+Auth's `sign` hook is still the only thing that ever reads the credential blob.
 
-> **Amended 2026-10-27:** the "only `sign` reads it" shorthand is retired; the hook-runtime per-hook table states what each hook receives — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** the "only `sign` reads it" shorthand is retired; the hook-runtime per-hook
+> table states what each hook receives — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 A socket-backed Connection's `target` (below) is the opposite case on purpose: it is **not** opaque.
-The host must read `host`/`port`/`tlsMode` to perform the pre-connect check ([Hook Runtime RFC
-§The target check](./hook-runtime.md#the-target-check)), so it is a first-class, non-secret field —
-never folded into the opaque `credential` blob it sits beside.
+The host must read `host`/`port`/`tlsMode` to perform the pre-connect check
+([Hook Runtime RFC §The target check](./hook-runtime.md#the-target-check)), so it is a first-class,
+non-secret field — never folded into the opaque `credential` blob it sits beside.
 
 ### Lifecycle
 
-| State | Meaning | Entered when |
-|---|---|---|
-| `pending` | User started a flow, not yet finished. | Flow initiated. |
-| `connected` | Credential live; `test` last passed. | `exchange` returned and `test` passed. |
-| `needs_refresh` | Credential expired or was rejected; `refresh` should run. | `test` failed with a refreshable error, or `expiresAt` passed. |
-| `broken` | Connection needs user attention. | `refresh` failed, or `test` failed with a non-refreshable error. |
-| `revoked` | Terminal. Credential revoked. | User disconnected, `revoke` succeeded, or remote revoked. |
+| State           | Meaning                                                   | Entered when                                                     |
+| --------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
+| `pending`       | User started a flow, not yet finished.                    | Flow initiated.                                                  |
+| `connected`     | Credential live; `test` last passed.                      | `exchange` returned and `test` passed.                           |
+| `needs_refresh` | Credential expired or was rejected; `refresh` should run. | `test` failed with a refreshable error, or `expiresAt` passed.   |
+| `broken`        | Connection needs user attention.                          | `refresh` failed, or `test` failed with a non-refreshable error. |
+| `revoked`       | Terminal. Credential revoked.                             | User disconnected, `revoke` succeeded, or remote revoked.        |
 
-> **Amended 2026-10-27:** `needs_refresh` is not used for a provider-derived source, which is re-derived by expiry at use — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** `needs_refresh` is not used for a provider-derived source, which is
+> re-derived by expiry at use — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
-Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`. Hosts may not invent additional transitions.
+> **Amended 2026-11-13:** for a Connection with a refreshable auth, "`refresh` failed" means
+> background refreshes have failed for 72 hours. A single failure, on use or in the background, does
+> not enter `broken` — see [§Amendment — 2026-11-13](#amendment--2026-11-13-auto-refresh).
+
+Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`. Hosts may not invent
+additional transitions.
 
 ## Shape
 
@@ -78,13 +99,13 @@ Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`
   "credential": "<opaque blob>",
   "display": {
     "user": { "name": "Alice", "id": "U123" },
-    "team": { "name": "Acme",  "id": "T456" }
+    "team": { "name": "Acme", "id": "T456" }
   },
   "label": "Alice — Acme",
-  "createdAt":       "2026-05-01T14:22:09Z",
-  "lastTestedAt":    "2026-05-18T09:00:00Z",
+  "createdAt": "2026-05-01T14:22:09Z",
+  "lastTestedAt": "2026-05-18T09:00:00Z",
   "lastRefreshedAt": "2026-05-15T03:11:00Z",
-  "expiresAt":       "2026-05-22T03:11:00Z",
+  "expiresAt": "2026-05-22T03:11:00Z",
   "target": {
     "host": "db.internal.example.com",
     "port": 5432,
@@ -96,7 +117,8 @@ Transitions are driven by Auth hooks — `exchange`, `test`, `refresh`, `revoke`
 
 ### Redacted projection
 
-The same record, as exposed to any userland code (Action `execute`, Workflow steps, editor previews):
+The same record, as exposed to any userland code (Action `execute`, Workflow steps, editor
+previews):
 
 ```json
 {
@@ -105,7 +127,10 @@ The same record, as exposed to any userland code (Action `execute`, Workflow ste
   "auth": "./auth/oauth2.json",
   "owner": "user_8x7H...",
   "state": "connected",
-  "display": { "user": { "name": "Alice", "id": "U123" }, "team": { "name": "Acme", "id": "T456" } },
+  "display": {
+    "user": { "name": "Alice", "id": "U123" },
+    "team": { "name": "Acme", "id": "T456" }
+  },
   "label": "Alice — Acme",
   "createdAt": "2026-05-01T14:22:09Z",
   "lastTestedAt": "2026-05-18T09:00:00Z",
@@ -119,46 +144,62 @@ The same record, as exposed to any userland code (Action `execute`, Workflow ste
 }
 ```
 
-The `credential` field is **stripped**. `lastRefreshedAt` is **stripped** (leaks rotation cadence). Everything else is intact.
+The `credential` field is **stripped**. `lastRefreshedAt` is **stripped** (leaks rotation cadence).
+Everything else is intact.
 
 Only Auth `sign` / `refresh` / `revoke` hooks ever receive the unredacted record.
 
-> **Amended 2026-10-27:** which hooks receive the credential is tabulated per hook, and a derived authorization never hands the stored source to any hook — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** which hooks receive the credential is tabulated per hook, and a derived
+> authorization never hands the stored source to any hook — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 ### Field reference
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `manifestVersion` | string | ✅ | Core spec version. |
-| `id` | string | ✅ | Stable, host-issued identifier. Opaque outside the host. |
-| `app` | string (app id) | ✅ | The App this Connection authorizes against. |
-| `auth` | string (path) | ✅ | Reference to the Auth manifest that produced this Connection. Same path the App manifest uses. |
-| `owner` | string | ✅ | Host-issued identifier of the principal that owns the Connection (user, workspace, etc.). |
-| `state` | enum | ✅ | Lifecycle state. |
-| `credential` | opaque | ⬜ | Whatever `exchange` returned. Present only on states where a credential exists. **Host-encrypted at rest. Never present in the redacted projection.** |
-| `display` | object | ⬜ | Free-form metadata populated by Auth's `afterConnect`. Source of `connectionLabel` variables. |
-| `label` | string | ⬜ | Rendered `connectionLabel`. Cached for list views; re-rendered when `display` changes. |
-| `createdAt` | timestamp | ✅ | When the Connection was first persisted. |
-| `lastTestedAt` | timestamp | ⬜ | Last successful `test`. |
-| `lastRefreshedAt` | timestamp | ⬜ | Last successful `refresh`. Redacted in the projection. |
-| `expiresAt` | timestamp | ⬜ | When known (e.g. OAuth `expires_in`). Drives proactive refresh scheduling. |
-| `target` | [`ConnectionTarget`](../packages/types/src/connection.ts) | ⬜ | Non-secret connect target (`host`/`port`/`database`/`tlsMode`/`caCert`/`allowPrivate`) for a socket-backed Connection. **Not** secret and **present in the redacted projection** — unlike `credential`, the host must be able to read it to run the [pre-connect target check](./hook-runtime.md#the-target-check). |
+| Field             | Type                                                      | Required | Description                                                                                                                                                                                                                                                                                                         |
+| ----------------- | --------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manifestVersion` | string                                                    | ✅       | Core spec version.                                                                                                                                                                                                                                                                                                  |
+| `id`              | string                                                    | ✅       | Stable, host-issued identifier. Opaque outside the host.                                                                                                                                                                                                                                                            |
+| `app`             | string (app id)                                           | ✅       | The App this Connection authorizes against.                                                                                                                                                                                                                                                                         |
+| `auth`            | string (path)                                             | ✅       | Reference to the Auth manifest that produced this Connection. Same path the App manifest uses.                                                                                                                                                                                                                      |
+| `owner`           | string                                                    | ✅       | Host-issued identifier of the principal that owns the Connection (user, workspace, etc.).                                                                                                                                                                                                                           |
+| `state`           | enum                                                      | ✅       | Lifecycle state.                                                                                                                                                                                                                                                                                                    |
+| `credential`      | opaque                                                    | ⬜       | Whatever `exchange` returned. Present only on states where a credential exists. **Host-encrypted at rest. Never present in the redacted projection.**                                                                                                                                                               |
+| `display`         | object                                                    | ⬜       | Free-form metadata populated by Auth's `afterConnect`. Source of `connectionLabel` variables.                                                                                                                                                                                                                       |
+| `label`           | string                                                    | ⬜       | Rendered `connectionLabel`. Cached for list views; re-rendered when `display` changes.                                                                                                                                                                                                                              |
+| `createdAt`       | timestamp                                                 | ✅       | When the Connection was first persisted.                                                                                                                                                                                                                                                                            |
+| `lastTestedAt`    | timestamp                                                 | ⬜       | Last successful `test`.                                                                                                                                                                                                                                                                                             |
+| `lastRefreshedAt` | timestamp                                                 | ⬜       | Last successful `refresh`. Redacted in the projection.                                                                                                                                                                                                                                                              |
+| `expiresAt`       | timestamp                                                 | ⬜       | When known (e.g. OAuth `expires_in`). Drives proactive refresh scheduling.                                                                                                                                                                                                                                          |
+| `target`          | [`ConnectionTarget`](../packages/types/src/connection.ts) | ⬜       | Non-secret connect target (`host`/`port`/`database`/`tlsMode`/`caCert`/`allowPrivate`) for a socket-backed Connection. **Not** secret and **present in the redacted projection** — unlike `credential`, the host must be able to read it to run the [pre-connect target check](./hook-runtime.md#the-target-check). |
 
-> **Amended 2026-10-27:** `owner` is host attribution only; a Credential has its own tenant, account and `createdBy`, `delegatedUser` is a separate concept, `auth` names an auth `key` rather than a path, and `credential` is the legacy runtime-input shape — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-11-13:** adds `autoRefresh` and `refreshFailingSince`; `lastRefreshedAt` also
+> covers the original grant, and a host may show it to the Connection's owner — see
+> [§Amendment — 2026-11-13](#amendment--2026-11-13-auto-refresh).
+
+> **Amended 2026-10-27:** `owner` is host attribution only; a Credential has its own tenant, account
+> and `createdBy`, `delegatedUser` is a separate concept, `auth` names an auth `key` rather than a
+> path, and `credential` is the legacy runtime-input shape — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 **Provenance.** `target` is set at connect time **alongside `credential`**, from the user's
-Connection form — not the mechanism `display` uses. `display` is populated *after* connect by Auth's
+Connection form — not the mechanism `display` uses. `display` is populated _after_ connect by Auth's
 `afterConnect` hook; `target` is never hook-derived, because it is user-configured input the host
-needs *before* it can even attempt a connection (the pre-connect check reads it, and the handshake
-hook receives it as read-only input — see [Hook Runtime RFC §`ctx.socket`](./hook-runtime.md#ctxsocket)).
-*Persisting* `target` alongside the rest of the record on connect is a host storage concern this RFC
-does not wire — the same way it does not wire `credential`'s storage mechanics.
+needs _before_ it can even attempt a connection (the pre-connect check reads it, and the handshake
+hook receives it as read-only input — see
+[Hook Runtime RFC §`ctx.socket`](./hook-runtime.md#ctxsocket)). _Persisting_ `target` alongside the
+rest of the record on connect is a host storage concern this RFC does not wire — the same way it
+does not wire `credential`'s storage mechanics.
 
 ## Referencing a Connection
 
-Actions and Workflow steps refer to a Connection by `id`. The Action invocation envelope (see [Invocation](./invocation.md)) carries the `connection` field. The platform resolves it to the Connection record at runtime and feeds the credential into the Auth `sign` hook. The Action receives the **redacted projection** if it asks for connection context at all.
+Actions and Workflow steps refer to a Connection by `id`. The Action invocation envelope (see
+[Invocation](./invocation.md)) carries the `connection` field. The platform resolves it to the
+Connection record at runtime and feeds the credential into the Auth `sign` hook. The Action receives
+the **redacted projection** if it asks for connection context at all.
 
-> **Amended 2026-10-27:** the source is resolved at use by the host and `sign` receives what the resolved authorization says, not necessarily a stored blob — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** the source is resolved at use by the host and `sign` receives what the
+> resolved authorization says, not necessarily a stored blob — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 ## Credential handling rules
 
@@ -167,63 +208,79 @@ The Auth RFC declares credentials opaque. This RFC tightens that into testable i
 1. The blob is whatever `exchange` returned. The platform never parses it.
 2. The host encrypts it at rest. Encryption mechanism is host-defined.
 3. The blob is decrypted only to be passed to `sign`, `refresh`, or `revoke`.
-4. No userland surface — Action `execute`, Workflow expressions, editor previews, logs, traces — ever sees the blob.
+4. No userland surface — Action `execute`, Workflow expressions, editor previews, logs, traces —
+   ever sees the blob.
 5. A Connection record exposed to userland MUST be the redacted projection.
 
-> **Amended 2026-10-27:** rules 1 and 3 hold for an opaque (legacy) credential; for a provider-derived source only the provider interprets it and `sign` receives a `DerivedToken` — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** rules 1 and 3 hold for an opaque (legacy) credential; for a
+> provider-derived source only the provider interprets it and `sign` receives a `DerivedToken` — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 `target` does not weaken rule 3: the host reads `target` freely (it is not the blob) and still never
-introspects `credential` to do so — the pre-connect check and the `handshake` hook each read `target`
-directly off the Connection record, with `credential` handled exactly as rules 1-4 already require.
+introspects `credential` to do so — the pre-connect check and the `handshake` hook each read
+`target` directly off the Connection record, with `credential` handled exactly as rules 1-4 already
+require.
 
 ## Import
 
-When a Connection is migrated from another host (export from host A, import to host B), the imported record MUST land in state `needs_refresh`. The receiving host runs the Auth `refresh` (or, for credentials without a refresh hook, `test`) before transitioning to `connected`. Trusting the source's `connected` state silently across hosts is not spec-compliant — re-validation is cheap and is the only thing that guarantees the credential is live in the new environment.
+When a Connection is migrated from another host (export from host A, import to host B), the imported
+record MUST land in state `needs_refresh`. The receiving host runs the Auth `refresh` (or, for
+credentials without a refresh hook, `test`) before transitioning to `connected`. Trusting the
+source's `connected` state silently across hosts is not spec-compliant — re-validation is cheap and
+is the only thing that guarantees the credential is live in the new environment.
 
-> **Amended 2026-10-27:** import keeps `needs_refresh`, a stored source never travels between hosts so a credential reference is re-bound on the receiving host, and `needs_refresh` is not used for provider-derived sources — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** import keeps `needs_refresh`, a stored source never travels between hosts
+> so a credential reference is re-bound on the receiving host, and `needs_refresh` is not used for
+> provider-derived sources — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 ## Resolved questions
 
-| Question | Resolution |
-|---|---|
-| Sharing | **Deferred.** `owner` is a single principal in `manifestVersion: "1"`. Multi-owner / team sharing will be a follow-up RFC that introduces a separate access table; the Connection record stays slim. |
-| Multi-account hints | **N Connections, one per account.** Flows that authorize multiple workspaces in one credential (Slack, GitHub orgs) produce one Connection per workspace. Grouping in the UI is a host concern. |
+| Question                              | Resolution                                                                                                                                                                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sharing                               | **Deferred.** `owner` is a single principal in `manifestVersion: "1"`. Multi-owner / team sharing will be a follow-up RFC that introduces a separate access table; the Connection record stays slim.                                               |
+| Multi-account hints                   | **N Connections, one per account.** Flows that authorize multiple workspaces in one credential (Slack, GitHub orgs) produce one Connection per workspace. Grouping in the UI is a host concern.                                                    |
 | Credential rotation outside `refresh` | **Invisible to the platform.** Schemes that derive per-request signatures from a long-lived key (AWS SigV4, etc.) do the derivation inside `sign` and do not mutate the stored credential. Connections that genuinely need rotation use `refresh`. |
-| Health probe scheduling | **Host's choice.** No `nextTestAt` field. Hosts derive scheduling from `expiresAt`, `lastTestedAt`, and their own policy. |
-| State on import | `needs_refresh`. See [Import](#import) above. |
-| Display metadata schema | **Deferred.** `display` remains free-form for `v1`. Optional `displaySchema` in the Auth manifest may be added later without breakage. |
+| Health probe scheduling               | **Host's choice.** No `nextTestAt` field. Hosts derive scheduling from `expiresAt`, `lastTestedAt`, and their own policy.                                                                                                                          |
+| State on import                       | `needs_refresh`. See [Import](#import) above.                                                                                                                                                                                                      |
+| Display metadata schema               | **Deferred.** `display` remains free-form for `v1`. Optional `displaySchema` in the Auth manifest may be added later without breakage.                                                                                                             |
 
-> **Amended 2026-10-27:** sharing within one tenant and account now works by `credentialId`, with cross-account and multi-owner sharing still deferred, and rotation bumps `revision`, invalidates derived authorization and marks tests stale — see [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
+> **Amended 2026-10-27:** sharing within one tenant and account now works by `credentialId`, with
+> cross-account and multi-owner sharing still deferred, and rotation bumps `revision`, invalidates
+> derived authorization and marks tests stale — see
+> [§Amendment — 2026-10-27](#amendment--2026-10-27-credential-reference-binding-and-lifecycle).
 
 ## Amendment — 2026-10-27: credential reference, binding and lifecycle
 
 > **Additive, with refinements.** A Connection may now reference a stored
 > [Credential](./credential.md) instead of owning its secret. This section refines or supersedes
-> exactly these passages, each of which carries a pointer to this section: the Summary's "It holds the
-> opaque credential blob"; the Concept's "Auth's `sign` hook is still the only thing that ever reads the
-> credential blob"; the Lifecycle table's `needs_refresh` row; "Only Auth `sign` / `refresh` / `revoke`
-> hooks ever receive the unredacted record"; the Field reference's `auth`, `owner` and `credential`
-> rows; the sentence in "Referencing a Connection" that feeds the credential into `sign`; Credential
-> handling rules 1 and 3; the Import paragraph; and the Resolved questions rows "Sharing" and
-> "Credential rotation outside `refresh`". Everything else in this RFC stands.
+> exactly these passages, each of which carries a pointer to this section: the Summary's "It holds
+> the opaque credential blob"; the Concept's "Auth's `sign` hook is still the only thing that ever
+> reads the credential blob"; the Lifecycle table's `needs_refresh` row; "Only Auth `sign` /
+> `refresh` / `revoke` hooks ever receive the unredacted record"; the Field reference's `auth`,
+> `owner` and `credential` rows; the sentence in "Referencing a Connection" that feeds the
+> credential into `sign`; Credential handling rules 1 and 3; the Import paragraph; and the Resolved
+> questions rows "Sharing" and "Credential rotation outside `refresh`". Everything else in this RFC
+> stands.
 
 ### A Connection carries a credential reference
 
 Alongside the members above, a Connection may carry:
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `credentialId` | string or null | ⬜ | The stored Credential this Connection binds to. Null or absent: the Connection has no stored credential (a `jit` Connection, or a legacy Connection that still carries `credential` inline). |
-| `binding` | `ConnectionBinding` | ⬜ | Non-secret inputs narrowing how the credential is used: `scopes`, `delegatedUser`, `settings`. |
-| `approved` | `ApprovedBinding` | ⬜ | What the host approved the binding to carry: `{ scopes, delegatedUser }`. |
-| `bindingRevision` | integer | ⬜ | Bumped whenever the binding's scopes or delegated user change. Part of the [authorization cache key](./credential.md#authorization-cache-key). |
+| Field             | Type                | Required | Description                                                                                                                                                                                  |
+| ----------------- | ------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `credentialId`    | string or null      | ⬜       | The stored Credential this Connection binds to. Null or absent: the Connection has no stored credential (a `jit` Connection, or a legacy Connection that still carries `credential` inline). |
+| `binding`         | `ConnectionBinding` | ⬜       | Non-secret inputs narrowing how the credential is used: `scopes`, `delegatedUser`, `settings`.                                                                                               |
+| `approved`        | `ApprovedBinding`   | ⬜       | What the host approved the binding to carry: `{ scopes, delegatedUser }`.                                                                                                                    |
+| `bindingRevision` | integer             | ⬜       | Bumped whenever the binding's scopes or delegated user change. Part of the [authorization cache key](./credential.md#authorization-cache-key).                                               |
 
-The **source is resolved at use** by the host (see [Credential RFC §Resolution](./credential.md#resolution))
-and is not a member of the Connection record. The inline `credential` member stays only as the
-**runtime-input shape**: what a runtime with no credential resolver reads, and the shape a legacy
-create adapter accepts at the boundary. None of the four new members is part of the redacted
-projection (`RedactedConnection`): userland never sees them. `auth` is the auth method's **`key`**
-(see [Auth RFC §Amendment](./auth.md#amendment--2026-10-27-serviceaccount-strict-auth-keys-and-refined-opacity)),
+The **source is resolved at use** by the host (see
+[Credential RFC §Resolution](./credential.md#resolution)) and is not a member of the Connection
+record. The inline `credential` member stays only as the **runtime-input shape**: what a runtime
+with no credential resolver reads, and the shape a legacy create adapter accepts at the boundary.
+None of the four new members is part of the redacted projection (`RedactedConnection`): userland
+never sees them. `auth` is the auth method's **`key`** (see
+[Auth RFC §Amendment](./auth.md#amendment--2026-10-27-serviceaccount-strict-auth-keys-and-refined-opacity)),
 not a path; the path in the examples above is the legacy path-reference form.
 
 ### Who receives the credential
@@ -232,37 +289,42 @@ The shorthand that Auth `sign` is the only reader of the credential, and the sen
 `sign` / `refresh` / `revoke` receive the unredacted record, are retired. Which hook receives which
 secret is stated, per hook and per kind of auth, in the Hook Runtime RFC's
 [per-hook table](./hook-runtime.md#per-hook-secret-access-and-network-posture). Rules 1 and 3 of
-"Credential handling rules" describe an **opaque (legacy) credential**. For a provider-derived source,
-only the compiled-in provider interprets it, `sign` receives a `DerivedToken`, and no hook receives
-the stored source. Rules 2, 4 and 5 hold for both.
+"Credential handling rules" describe an **opaque (legacy) credential**. For a provider-derived
+source, only the compiled-in provider interprets it, `sign` receives a `DerivedToken`, and no hook
+receives the stored source. Rules 2, 4 and 5 hold for both.
 
 ### Ownership
 
-`owner` is **host attribution**: the principal the Connection is attributed to. It is not the owner of
-the secret. A Credential has its **own** `tenant` and `account` ownership plus a `createdBy`
+`owner` is **host attribution**: the principal the Connection is attributed to. It is not the owner
+of the secret. A Credential has its **own** `tenant` and `account` ownership plus a `createdBy`
 attribution, and a `delegatedUser` (the user a service account impersonates) is a third, separate
 concept: not the `owner`, and not the acting principal's subject.
 
-> **Amended 2026-11-12:** a Connection also has an ownership scope (`accessScope`, `account` or `user`), distinct from the `owner` attribution — see [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
+> **Amended 2026-11-12:** a Connection also has an ownership scope (`accessScope`, `account` or
+> `user`), distinct from the `owner` attribution — see
+> [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
 
 ### Sharing
 
 A Credential can be shared by several Connections **within one tenant and account**, by
 `credentialId`. A credential created for one Connection is private to it; disconnecting that
 Connection deletes it when no other Connection references it, and disconnecting a Connection never
-revokes or deletes a shared credential ([Credential RFC §Lifecycle policy](./credential.md#lifecycle-policy)).
-Cross-account and multi-owner sharing remains deferred.
+revokes or deletes a shared credential
+([Credential RFC §Lifecycle policy](./credential.md#lifecycle-policy)). Cross-account and
+multi-owner sharing remains deferred.
 
-> **Amended 2026-11-12:** a `user`-scoped Connection has a single owner and is not sharing; a shared credential must have the same ownership as every Connection referencing it — see [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
+> **Amended 2026-11-12:** a `user`-scoped Connection has a single owner and is not sharing; a shared
+> credential must have the same ownership as every Connection referencing it — see
+> [§Amendment — 2026-11-12](#amendment--2026-11-12-connection-ownership).
 
 ### Import and `needs_refresh`
 
-Import keeps its rule: an imported Connection lands in `needs_refresh`. Two additions. First, a stored
-**source never travels between hosts**; a credential reference is **re-bound** on the receiving host
-(the importer attaches a credential it holds, or creates one). Second, `needs_refresh` is **not used
-for a provider-derived source**: a derived token is re-derived by expiry at use (it is renewed
-`TOKEN_SKEW_MS` before it expires), so there is no stored state to mark stale and no `refresh` hook
-to run.
+Import keeps its rule: an imported Connection lands in `needs_refresh`. Two additions. First, a
+stored **source never travels between hosts**; a credential reference is **re-bound** on the
+receiving host (the importer attaches a credential it holds, or creates one). Second,
+`needs_refresh` is **not used for a provider-derived source**: a derived token is re-derived by
+expiry at use (it is renewed `TOKEN_SKEW_MS` before it expires), so there is no stored state to mark
+stale and no `refresh` hook to run.
 
 ### Rotation
 
@@ -274,9 +336,9 @@ and never changes the stored credential: rotating a stored credential is an even
 
 ## Amendment — 2026-11-12: connection ownership
 
-> **Additive.** This section adds an ownership scope to the Connection. It edits none of the passages
-> above. `owner` stays host attribution (see [§Ownership](#ownership)), and the deferral of multi-owner
-> sharing stands: a user-scoped Connection has exactly **one** owner and is not sharing.
+> **Additive.** This section adds an ownership scope to the Connection. It edits none of the
+> passages above. `owner` stays host attribution (see [§Ownership](#ownership)), and the deferral of
+> multi-owner sharing stands: a user-scoped Connection has exactly **one** owner and is not sharing.
 
 ### Scope
 
@@ -284,10 +346,10 @@ A Connection has an optional host-populated `accessScope`: `account` or `user`. 
 `account`. It is independent of reuse: a Connection is private to one credential or shares one by
 `credentialId` exactly as before, in either scope.
 
-A `user` Connection belongs to `(tenant, account, ownerSubject)`, where `ownerSubject` is the verified
-subject string, never `users.id`; the host stamps it from the authenticated principal and never takes
-it from the client. `Connection` has no `ownerSubject` member: `owner` remains attribution only and
-does not decide ownership. The scope is **immutable after creation**.
+A `user` Connection belongs to `(tenant, account, ownerSubject)`, where `ownerSubject` is the
+verified subject string, never `users.id`; the host stamps it from the authenticated principal and
+never takes it from the client. `Connection` has no `ownerSubject` member: `owner` remains
+attribution only and does not decide ownership. The scope is **immutable after creation**.
 
 ### Identical ownership with the Credential
 
@@ -297,14 +359,57 @@ scopes is refused.
 
 ### Visibility and use
 
-A user-owned Connection is visible to and usable by its owner only, and only when the execution is an
-authenticated end user (not a service principal, operator, impersonated session or unattended or
-background run). A foreign id and an absent id are indistinguishable. The check precedes any decrypt,
-hook, token-store read or egress, including a cached authorization, and a refusal on those grounds is
-`user_context_required` ([Credential RFC §Amendment — 2026-11-12](./credential.md#amendment--2026-11-12-ownership-scope)).
-A user-owned Connection is never handed off to a spoke.
+A user-owned Connection is visible to and usable by its owner only, and only when the execution is
+an authenticated end user (not a service principal, operator, impersonated session or unattended or
+background run). A foreign id and an absent id are indistinguishable. The check precedes any
+decrypt, hook, token-store read or egress, including a cached authorization, and a refusal on those
+grounds is `user_context_required`
+([Credential RFC §Amendment — 2026-11-12](./credential.md#amendment--2026-11-12-ownership-scope)). A
+user-owned Connection is never handed off to a spoke.
 
 ### Redaction
 
 `accessScope` is host-side only. It is not part of `RedactedConnection`: userland code (Action
 `execute`, editor previews) never sees ownership.
+
+## Amendment — 2026-11-13: auto-refresh
+
+> **Additive.** This section adds the `autoRefresh` setting and the refresh status a host keeps on a
+> Connection, which the keep-alive in
+> [Auth RFC §Amendment — 2026-11-13](./auth.md#amendment--2026-11-13-refresh-lifecycle) reads and
+> writes. It qualifies the Lifecycle table's "`refresh` failed" entry into `broken` and the Field
+> reference's `lastRefreshedAt` row, each with a pointer. Everything else in this RFC stands.
+
+### `autoRefresh`
+
+| Field         | Type    | Required | Description                                                                                                                                                                    |
+| ------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `autoRefresh` | boolean | ⬜       | Keep the credential alive with background refresh. Defaults to `true` when the auth is refreshable. `false` opts this Connection out of keep-alive. It still refreshes on use. |
+
+The user sets it when connecting and can change it later. It means something only for a refreshable
+auth (`isRefreshable` in `@w6w/runtime`: an auth with a `refresh` hook, or `oauth2` with the
+built-in refresh). A host may store it for any Connection and ignores it for the others. Turning it
+off never revokes or changes the credential.
+
+### Refresh status
+
+A host keeps this status for every refreshable Connection. It is **non-secret**: no token, no vendor
+text.
+
+| Field                 | Type      | Description                                                                                       |
+| --------------------- | --------- | ------------------------------------------------------------------------------------------------- |
+| `lastRefreshedAt`     | timestamp | The last successful refresh, or the original grant when there has been none. Set at connect time. |
+| `refreshFailingSince` | timestamp | When refreshes started failing. Unset while refresh succeeds, and cleared by the next success.    |
+
+A host may also record the last attempt time and a service-authored error code. Those are host
+bookkeeping and not part of this record.
+
+A host MAY return `autoRefresh`, `lastRefreshedAt` and `refreshFailingSince` on its own management
+surface (the Connection's owner deciding whether to reconnect). This is separate from the redacted
+projection.
+
+### Redaction
+
+The [redacted projection](#redacted-projection) is unchanged. `lastRefreshedAt` is still stripped,
+because it leaks rotation cadence. `autoRefresh` and `refreshFailingSince` are stripped too, since
+userland code (Action `execute`, editor previews) has no use for host maintenance state.

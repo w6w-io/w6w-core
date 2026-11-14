@@ -412,6 +412,14 @@ interface CredentialResolver {
   resolving a `jit` Connection for a run with no inbound token (a workflow, queue, schedule or
   trigger run) MUST fail `jit_unavailable_in_background` (D-C6). The token is never propagated into a
   background run.
+- **Keep-alive** (amended 2026-11-13). The background keep-alive in
+  [Auth RFC §Amendment — 2026-11-13](./auth.md#amendment--2026-11-13-refresh-lifecycle) is this
+  resolver refreshing on a schedule instead of on use. It runs the same refresh path (the auth's
+  `refresh` hook, or the built-in OAuth2 refresh), so there is still **exactly one refresher**
+  (D-C2), and no scheduler, worker or spoke refreshes on its own. Each write-back is a refreshed
+  grant: it bumps `refreshSeq` through the same compare-and-set, never `revision`, so derived tokens
+  and sibling state survive it. A background refresh has no inbound token and never serves `jit`
+  (D-C6). The sweep skips `jit` Connections, which have nothing stored to keep alive.
 - **Derived `test` and `afterConnect`** run in _signed mode_: `credential` is `null` and `ctx.fetch`
   is signed by the auth's `sign` hook from the derived token (D-A3). Their input also carries the
   non-secret `binding` and `credentialDisplay` (for example the service-account email), exactly when

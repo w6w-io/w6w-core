@@ -696,9 +696,15 @@ export async function prepareAuthorization(
  * `sign` is excluded (network-less by RFC); `preflight` (input `unknown`) and
  * `exchange` (input `{fields?, code?, redirectUri?}`) take other shapes.
  */
-export type CredentialHookKind = "test" | "afterConnect" | "refresh" | "revoke";
+/**
+ * The Auth hooks the host runs with host-mediated egress. `exchange` is among them: it receives the
+ * connect form's raw `fields` (passed as the positional `credential`) and returns the credential to
+ * store — the fields themselves are never stored.
+ */
+export type CredentialHookKind = "exchange" | "test" | "afterConnect" | "refresh" | "revoke";
 
 const CREDENTIAL_HOOK_KINDS: readonly CredentialHookKind[] = [
+  "exchange",
   "test",
   "afterConnect",
   "refresh",
@@ -725,7 +731,7 @@ export interface RunAuthHookOptions {
 }
 
 /**
- * Run one of an Auth method's credential-bearing lifecycle hooks — `test`,
+ * Run one of an Auth method's credential-bearing lifecycle hooks — `exchange`, `test`,
  * `afterConnect`, `refresh` or `revoke` — in the same least-privilege sandbox
  * `invoke` uses, with host-mediated, allowlist-enforced egress. This is the
  * `prepareAuthorization` `needs_refresh` branch's mechanism, generalized by hook
@@ -827,6 +833,9 @@ export async function runAuthHook<T = unknown>(
         ? { credentialDisplay: signing.credentialDisplay }
         : {}),
     }
+    // `exchange` turns the connect form's fields into the credential (ExchangeHook's input).
+    : hook === "exchange"
+    ? { fields: credential }
     : { credential };
   try {
     return await runHook<T>({
