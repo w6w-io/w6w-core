@@ -209,7 +209,10 @@ Deno.test(
     const auth = authFor(app, CREDENTIAL_CONNECTION);
     const { server, port, hits, get } = captureServer();
     try {
-      const handler = signingFetch(app, auth, CREDENTIAL_CONNECTION.credential, {});
+      // Loopback capture server: opt out of the private-egress guard.
+      const handler = signingFetch(app, auth, CREDENTIAL_CONNECTION.credential, {
+        egressGuard: { allowPrivate: true },
+      });
       const res = await handler({
         url: `http://127.0.0.1:${port}/v3/mail/send`,
         method: "POST",
@@ -231,6 +234,7 @@ Deno.test("unset egressTransport keeps signing and host egress exactly as before
   try {
     const result = await invoke(app, sendInvocation(`http://127.0.0.1:${port}`), {
       connection: CREDENTIAL_CONNECTION,
+      egressGuard: { allowPrivate: true },
     });
     assert((result.value as { status: number }).status === 202);
   } finally {

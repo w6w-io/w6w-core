@@ -38,6 +38,13 @@ const CONNECTION: Connection = {
   createdAt: "2026-10-27T00:00:00Z",
 };
 
+// Every stub host here is a loopback fixture, and `checkHealth` / `runAuthHook`
+// carry no egress seam, so the whole file opts out of the private-egress guard
+// through its documented env switch (default off; the guard itself is pinned in
+// private-egress.test.ts / private-egress-fetch.test.ts). Mutating env also makes
+// the test runner defer this file to its serial track.
+Deno.env.set("W6W_APP_ALLOW_PRIVATE", "1");
+
 function spyResolver(
   answer: ResolvedAuthorization | (() => Promise<ResolvedAuthorization>),
 ) {
@@ -490,6 +497,14 @@ async function withFetchStub<T>(
   }
 }
 
+/**
+ * The service-account fixture's `test` hook fetches the made-up
+ * `probe.w6w.test` host. With `globalThis.fetch` stubbed there is no DNS, so the
+ * private-egress guard gets a resolver seam returning a public address: it
+ * passes, and nothing is resolved for real.
+ */
+const STUBBED_HOST = { egressGuard: { resolve: () => Promise.resolve(["93.184.216.34"]) } };
+
 Deno.test("AC5: signed test runs with credential:null and a signed fetch; nothing else reaches it", async () => {
   const app = await loadApp(SERVICE_ACCOUNT);
   const auth = authFor(app, SA_CONNECTION);
@@ -499,7 +514,7 @@ Deno.test("AC5: signed test runs with credential:null and a signed fetch; nothin
       auth,
       "test",
       SA_CONNECTION.credential, // the positional credential must be ignored
-      { signing: { authorization: DERIVED } },
+      { signing: { authorization: DERIVED }, ...STUBBED_HOST },
     );
     assertEquals(out.message, '{"credential":null}');
     assertEquals(out.ok, true);
@@ -520,6 +535,7 @@ Deno.test("R-14: signed test forwards exactly binding and credentialDisplay when
     const out = await runAuthHook<{ message: string }>(app, auth, "test", "ignored", {
       // Extra members on the signing object must never be forwarded wholesale.
       signing: { authorization: DERIVED, binding, credentialDisplay },
+      ...STUBBED_HOST,
     });
     assertEquals(JSON.parse(out.message), { credential: null, binding, credentialDisplay });
 
@@ -531,6 +547,7 @@ Deno.test("R-14: signed test forwards exactly binding and credentialDisplay when
       "ignored",
       {
         signing: { authorization: DERIVED, credentialDisplay },
+        ...STUBBED_HOST,
       },
     );
     assertEquals(onlyDisplay.message, JSON.stringify({ credential: null, credentialDisplay }));
@@ -645,6 +662,7 @@ Deno.test("F1: signed runAuthHook strips extra members from the derived token (s
   await withFetchStub(async (calls) => {
     await runAuthHook(app, auth, "test", null, {
       signing: { authorization: { ...DERIVED, token } },
+      ...STUBBED_HOST,
     });
     assertEquals(calls.length, 1);
     assertEquals(calls[0].headers.get("authorization"), `Bearer ${TOKEN.accessToken}`);

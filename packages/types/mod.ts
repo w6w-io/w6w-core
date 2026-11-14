@@ -28,3 +28,4 @@ export * from "./src/digest.ts";
 export * from "./src/skill-package.ts";
 export * from "./src/model-completion.ts";
 export * from "./src/credential.ts";
+export * from "./src/capability.ts";
