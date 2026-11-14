@@ -173,3 +173,24 @@ Deno.test("https streams a large body through the pin", async () => {
     },
   );
 });
+
+Deno.test("v6 special-use arms refused; public v6 and public-embedded forms pass", async () => {
+  const denied = [
+    "ff02::1", // multicast
+    "64:ff9b::a00:1", // NAT64 -> 10.0.0.1
+    "2002:0a00:0001::", // 6to4 -> 10.0.0.1
+    "fec0::1", // site-local
+    "2001:0:4136:e378:8000:63bf:f5ff:fffe", // Teredo, client 10.0.0.1
+  ];
+  for (const a of denied) {
+    assertEquals(
+      await code(assertPublicDestination(`http://[${a}]/`, none)),
+      "egress_private_denied",
+      a,
+    );
+  }
+  // NAT64 to a public v4 (8.8.8.8) and 6to4 of a public v4 stay allowed.
+  for (const a of ["64:ff9b::808:808", "2002:0808:0808::1"]) {
+    await assertPublicDestination(`http://[${a}]/`, none);
+  }
+});

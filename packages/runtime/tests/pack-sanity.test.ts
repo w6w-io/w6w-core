@@ -68,6 +68,7 @@ Deno.test({
       } MiB (${worstApp}); cap ${DEFAULT_APP_MEMORY_MB} MiB`,
     );
     for (const f of failures) console.log("  fail:", f);
+    assert(ok >= 20, `only ${ok}/${picked.length} apps loaded; the memory check proves nothing`);
     assert(failures.length === 0, failures.join("\n"));
     assert(worst < DEFAULT_APP_MEMORY_MB / 2, `worst ${worst} MiB is within 2x of the cap`);
   },

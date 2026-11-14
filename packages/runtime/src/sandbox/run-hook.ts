@@ -188,11 +188,17 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
   let reportedMb = 0;
   liveWorkers++;
   let peakPeers = liveWorkers - 1;
-  const worker = new Worker(WORKER_ENTRY_URL, {
-    type: "module",
-    // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
-    deno: { permissions: { read, ...NO_NET_PERMS } },
-  });
+  let worker: Worker;
+  try {
+    worker = new Worker(WORKER_ENTRY_URL, {
+      type: "module",
+      // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
+      deno: { permissions: { read, ...NO_NET_PERMS } },
+    });
+  } catch (e) {
+    liveWorkers--; // the matching decrement lives in result.finally, never attached on a throw
+    throw e;
+  }
 
   const result = new Promise<T>((resolvePromise, reject) => {
     const timer = setTimeout(() => {

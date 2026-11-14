@@ -226,7 +226,12 @@ export async function pinnedFetch(
   const headers = new Headers(init.headers);
   headers.set("host", hostHeader);
   const client = Deno.createHttpClient({ allowHost: true });
-  // The client is left to GC: closing it would cut a still-streaming body.
-  const response = await (fetchImpl ?? fetch)(u, { ...init, headers, client } as RequestInit);
-  return { response, pinned: true };
+  try {
+    const response = await (fetchImpl ?? fetch)(u, { ...init, headers, client } as RequestInit);
+    // Closed once the body is done, not before: closing would cut a still-streaming body.
+    return { response: onBodyDone(response, () => client.close()), pinned: true };
+  } catch (e) {
+    client.close();
+    throw e;
+  }
 }
