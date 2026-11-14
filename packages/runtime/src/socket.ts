@@ -93,7 +93,7 @@ function parseIPv6(host: string): number[] | null {
 }
 
 /** True if `host` is an IPv4 or IPv6 literal — the resolution set is just itself. */
-function isIpLiteral(host: string): boolean {
+export function isIpLiteral(host: string): boolean {
   const stripped = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   return parseIPv4(host) !== null || parseIPv6(stripped) !== null;
 }
@@ -152,7 +152,7 @@ function isPrivateIPv6(ip: number[]): boolean {
   return false;
 }
 
-function isPrivateAddress(addr: string): boolean {
+export function isPrivateAddress(addr: string): boolean {
   const v4 = parseIPv4(addr);
   if (v4) return isPrivateIPv4(v4);
   const v6 = parseIPv6(addr);
