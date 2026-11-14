@@ -18,7 +18,12 @@ export class W6WError extends Error {
     this.name = "W6WError";
   }
 
-  toJSON() {
+  toJSON(): {
+    code: string;
+    phase: ErrorPhase;
+    message: string;
+    details?: unknown;
+  } {
     return { code: this.code, phase: this.phase, message: this.message, details: this.details };
   }
 }
