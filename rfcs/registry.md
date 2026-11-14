@@ -669,6 +669,12 @@ owner, with `from_pack = null`. A publish into a named pack registers only the i
 index and never touches another pack's apps or ownership rows. An id already owned by a different
 pack P is reported `failed` with `owned_by_pack:<P>`, and its row is unchanged.
 
+Ownership is decided at the start of a publish, before it registers anything — claim before publish:
+an id another pack owns is dropped from the publish, and the ids a publish may own are claimed for its
+pack with an insert-if-absent write. The one **residual window** is a `pack-move` landing while a
+publish is in flight: that publish never sees the move, finishes under its starting ownership, and may
+register one last set of versions for the previous pack; a re-run of the move reconciles the two.
+
 Ownership moves only by an explicit, audited operation: `POST /system-ops/apps/pack-move`
 (`{appId, toPack, reason}`, ops scope `apps:publish`). It updates the owner and appends a row to the
 `app_pack_moves` audit table — `app_id`, `from_pack` (null when the app was unowned), `to_pack`,
