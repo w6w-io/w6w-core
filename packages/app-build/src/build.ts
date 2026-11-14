@@ -22,7 +22,7 @@ import {
 import { inlineAssets } from "./assets.ts";
 import { BuildError, isInside } from "./errors.ts";
 import { assertGraph, resolveTypesRoot, runDeno } from "./graph.ts";
-import { readRegistryMap, type Resolution } from "./registry.ts";
+import { materialiseRegistryModules, readRegistryMap, type Resolution } from "./registry.ts";
 import { computeSourceDigest } from "./source-digest.ts";
 import { resolveSharedRoots } from "./shared.ts";
 import pkgConfig from "../deno.json" with { type: "json" };
@@ -141,13 +141,10 @@ async function bundle(
   tmp: string,
   minify: boolean,
   sourcemap: boolean,
-  resolution: Resolution,
+  configFile: string,
 ): Promise<{ js: Uint8Array; map?: string }> {
   const out = join(tmp, "app.js");
-  const args = ["bundle", "-q"];
-  // Sibling mode is offline-only; registry mode resolves the mapped `@w6w/*` packages remotely.
-  if (resolution === "sibling") args.push("--no-remote");
-  args.push("--no-npm", "--no-lock", "--config", "deno.json");
+  const args = ["bundle", "-q", "--no-remote", "--no-npm", "--no-lock", "--config", configFile];
   if (minify) args.push("--minify");
   if (sourcemap) args.push("--sourcemap=external");
   args.push("-o", out, entryRel);
@@ -286,10 +283,18 @@ export async function buildApp(
   const sharedRoots = await resolveSharedRoots(realAppDir);
 
   // ---- graph: the real refusal ----
-  await assertGraph(realAppDir, appDir, entryRel, typesRoot, sharedRoots, registry);
+  const modules = await assertGraph(realAppDir, appDir, entryRel, typesRoot, sharedRoots, registry);
 
   const tmp = await Deno.realPath(await Deno.makeTempDir({ prefix: "w6w-app-build-" }));
   try {
+    // ---- registry mode: the same `sideEffects` treatment sibling mode gets for free ----
+    const vendored = registry === null ? null : await materialiseRegistryModules(modules, {
+      tmp,
+      realAppDir,
+      appDir,
+      registry,
+    });
+
     // ---- bundle ----
     const { js, map } = await bundle(
       realAppDir,
@@ -298,7 +303,7 @@ export async function buildApp(
       tmp,
       minify,
       sourcemap,
-      resolution,
+      vendored?.configPath ?? join(realAppDir, "deno.json"),
     );
     const code = new TextDecoder("utf-8", { fatal: true }).decode(js);
 

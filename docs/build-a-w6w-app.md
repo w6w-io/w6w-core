@@ -127,7 +127,7 @@ Native npm fields are reused (`version`, `description`, `author`, `license`, `ho
 }
 ```
 
-Rules the validator enforces: `id` is reverse-DNS (`^[a-z0-9-]+(\.[a-z0-9-]+)+$`), `version` is
+Rules the validator enforces: `id` is reverse-DNS (`^[a-z0-9]+(\.[a-z0-9-]+)+$`), `version` is
 semver, `categories` has 1–3 entries. Run `deno task validate` (the `@w6w/validator` CLI) to check.
 
 ## Entry module (`index.ts`)

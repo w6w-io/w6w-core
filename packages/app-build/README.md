@@ -75,6 +75,20 @@ is added if missing). It is the base for both the allowlist check and Deno's own
 local mirror plus a fresh `DENO_DIR` makes registry builds fully offline. No gate in this package
 fetches the real jsr.io.
 
+### Same tree-shaking as sibling mode
+
+Sibling mode tree-shakes `@w6w/*` because those packages declare `"sideEffects": false`.
+`deno bundle` has no plugin API and ignores that declaration for `jsr:` modules, so registry mode
+would keep top-level consts the sibling build drops — and the two artifacts would differ. The
+builder, not `@w6w/types`, closes the gap: `materialiseRegistryModules` (`src/registry.ts`) copies
+the approved module set the graph already fetched into a temp tree mirroring the registry layout,
+writes `{"sideEffects": false}` as each package-version's `package.json`, maps every `@w6w/*`
+specifier to that copy in a temp config, and bundles that tree with `--no-remote`. Bundling then
+sees `file:` modules carrying the declarations sibling mode sees and tree-shakes them identically;
+that single mechanism is why `app.js` is byte-identical across modes (see "Cross-mode parity"). Each
+module is re-checked against the allowlist while copying, so the temp tree can never carry a module
+the graph refused. A graph with no registry modules is bundled as before.
+
 ### Local JSR mirror
 
 `tests/jsr-mirror.ts` stages a JSR layout in a temp dir and serves it on `127.0.0.1:0`. It stages
