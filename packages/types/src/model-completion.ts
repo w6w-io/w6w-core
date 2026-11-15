@@ -122,9 +122,12 @@ export interface CompletionInput {
   extensions?: CompletionNativeFields;
 }
 
-/** A request: the baseline input plus the one flag this host rejects (`stream`). */
+/** A request: the baseline input plus the streaming flag. */
 export type ModelCompletionRequest = CompletionInput & {
-  /** Streaming is not supported; `true` fails `model_request_unsupported`. */
+  /**
+   * `true` answers `text/event-stream` (`ModelCompletionStreamEvent` frames) where the target's
+   * adapter streams; otherwise 400 `model_request_unsupported`.
+   */
   stream?: boolean;
 };
 
@@ -209,4 +212,87 @@ export interface ModelCompletionEnvelope {
   usage: CompletionUsage | Record<string, unknown>;
   raw?: unknown;
   meta: Record<string, unknown>;
+  /** Token accounting as settled for this call; present on streamed terminals. */
+  usageSummary?: CompletionUsageSummary;
 }
+
+/**
+ * Streamed completions. Additive: `contractVersion` stays 1.
+ *
+ * Every SSE frame is `event: <type>\ndata: <one-line JSON>\n\n`, and the JSON's own `type` equals
+ * the event name. Order: content events (`delta`/`tool_call_delta`), then EXACTLY ONE terminal
+ * (`final` | `error`).
+ */
+export const MODEL_COMPLETION_STREAM_EVENTS = [
+  "delta",
+  "tool_call_delta",
+  "final",
+  "error",
+] as const;
+export type ModelCompletionStreamEventName = typeof MODEL_COMPLETION_STREAM_EVENTS[number];
+
+/** Token accounting as settled for a call; mirrors the model-usage row (`source` included). */
+export interface CompletionUsageSummary {
+  inclusiveInputTokens: number | null;
+  freshInputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  source: "reported" | "partial" | "estimated" | "unknown";
+}
+
+/** The invocation a completion was recorded under; carried by both terminals. */
+export interface ModelCompletionInvocationFrame {
+  invocationId: string;
+  status: "succeeded" | "failed";
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+}
+
+/** Text appended to choice `choice`. */
+export interface CompletionStreamTextDelta {
+  type: "delta";
+  choice: number;
+  text: string;
+}
+
+/**
+ * A fragment of tool call `index` (0-based, per choice, assembly order). `id`/`name` appear on the
+ * first fragment of that call; `arguments` is a raw JSON-text fragment ("" allowed) — never parse
+ * it alone.
+ */
+export interface CompletionStreamToolCallDelta {
+  type: "tool_call_delta";
+  choice: number;
+  index: number;
+  id?: string;
+  name?: string;
+  arguments: string;
+}
+
+/** Exactly the non-stream JSON response body, plus `type`. */
+export type ModelCompletionStreamFinal =
+  & ModelCompletionEnvelope
+  & ModelCompletionInvocationFrame
+  & {
+    type: "final";
+    status: "succeeded";
+    usageSummary: CompletionUsageSummary;
+  };
+
+/** Terminal failure after commitment: the JSON error body plus the frame, plus `type`. */
+export interface ModelCompletionStreamError extends ModelCompletionInvocationFrame {
+  type: "error";
+  status: "failed";
+  error: { code: string; message: string; [k: string]: unknown };
+}
+
+/** The union a streamed response carries: content events, then exactly one terminal. */
+export type ModelCompletionStreamEvent =
+  | CompletionStreamTextDelta
+  | CompletionStreamToolCallDelta
+  | ModelCompletionStreamFinal
+  | ModelCompletionStreamError;
