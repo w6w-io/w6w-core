@@ -1,0 +1,16 @@
+{
+  "name": "@w6w-fixtures/session-login",
+  "version": "1.0.0",
+  "description": "A login-exchanged bearer session with a rotating refresh token.",
+  "license": "MIT",
+  "author": { "name": "w6w" },
+  "private": true,
+  "w6w": {
+    "id": "com.example.session-login",
+    "displayName": "Session login fixture",
+    "categories": ["developer-tools"],
+    "appearance": { "icon": { "svg": "./assets/icon.svg" } },
+    "network": { "allow": ["127.0.0.1"] },
+    "entry": "./index.ts"
+  }
+}

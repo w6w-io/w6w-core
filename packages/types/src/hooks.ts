@@ -243,7 +243,47 @@ export type ExchangeHook = (
   ctx: HookContext,
 ) => unknown | Promise<unknown>;
 
-/** Auth `refresh` — produce a fresh credential from the current one. */
+/**
+ * The code a hook's thrown error carries to say **the user must sign in again**: the vendor has
+ * refused the credential for good (a revoked, reused or expired refresh token, a disabled account),
+ * so retrying cannot help. Thrown from `refresh` it makes the host mark the connection broken at
+ * once — no hourly retries, no 72-hour wait (rfcs/auth.md "Failure policy").
+ */
+export const REAUTH_REQUIRED = "reauth_required" as const;
+
+/**
+ * The shape a hook error code may take to cross the sandbox boundary: lowercase snake case, at most
+ * 64 characters. Anything else is dropped there, so vendor text never rides on it.
+ */
+export const HOOK_ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** `v` when it is a well-formed hook error code ({@link HOOK_ERROR_CODE_PATTERN}), else undefined. */
+export function hookErrorCode(v: unknown): string | undefined {
+  return typeof v === "string" && HOOK_ERROR_CODE_PATTERN.test(v) ? v : undefined;
+}
+
+/**
+ * Throw from an Auth hook (normally `refresh`) when the vendor's answer means re-authentication is
+ * required. `reason` is the vendor's own error code (`refresh_token_reused`,
+ * `account_disabled`, …) when it has one; the host records it, so it must not contain a secret.
+ * Equivalent to throwing any `Error` whose `code` is {@link REAUTH_REQUIRED} and whose optional
+ * `reason` is a code — an app that does not import this class can do exactly that.
+ */
+export class ReauthRequiredError extends Error {
+  readonly code: typeof REAUTH_REQUIRED = REAUTH_REQUIRED;
+  readonly reason?: string;
+
+  constructor(reason?: string, message = "The vendor requires this account to sign in again.") {
+    super(message);
+    this.name = "ReauthRequiredError";
+    if (reason !== undefined) this.reason = reason;
+  }
+}
+
+/**
+ * Auth `refresh` — produce a fresh credential from the current one. The result REPLACES the stored
+ * credential. Throw {@link ReauthRequiredError} when the vendor says the user must sign in again.
+ */
 export type RefreshHook = (
   input: { credential: unknown },
   ctx: HookContext,

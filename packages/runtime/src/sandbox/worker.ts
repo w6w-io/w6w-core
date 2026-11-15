@@ -9,7 +9,13 @@
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import { AUTH_HOOK_KINDS, isFileRef, parseParams, TRIGGER_HOOK_KINDS } from "@w6w/types";
+import {
+  AUTH_HOOK_KINDS,
+  hookErrorCode,
+  isFileRef,
+  parseParams,
+  TRIGGER_HOOK_KINDS,
+} from "@w6w/types";
 import type { AppDefinition, FileCapability, FileRef, SocketHandle } from "@w6w/types";
 import type {
   DescribedApp,
@@ -373,10 +379,19 @@ async function run(msg: Extract<HostMessage, { type: "start" }>) {
     if (msg.op === "call") await handleCall(msg);
     else await handleDescribeApp(msg);
   } catch (err) {
-    const error = err as Error;
+    const error = err as Error & { code?: unknown; reason?: unknown };
+    // A hook's error code crosses the boundary (the host tells `reauth_required` and an exchange's
+    // own failure code apart by it) — only in the well-formed code shape, never as free text.
+    const code = hookErrorCode(error?.code);
+    const reason = hookErrorCode(error?.reason);
     post({
       type: "error",
-      error: { name: error?.name ?? "Error", message: String(error?.message ?? err) },
+      error: {
+        name: error?.name ?? "Error",
+        message: String(error?.message ?? err),
+        ...(code !== undefined ? { code } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      },
     });
   }
 }

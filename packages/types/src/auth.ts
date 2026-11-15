@@ -34,7 +34,13 @@ export interface OAuth2Config {
   tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
   /** Encoding of the token request. Defaults to form; Notion requires JSON. */
   tokenBodyFormat?: "form" | "json";
+  /** Token endpoint for the refresh grant, when it differs from `tokenUrl`. */
   refreshUrl?: string;
+  /**
+   * `false` disables the built-in refresh for an auth whose vendor has no refresh grant.
+   * Default true. A defined `refresh` hook always wins over the built-in.
+   */
+  builtinRefresh?: boolean;
   revokeUrl?: string;
   scopes?: string[];
   /** Defaults to `" "`. */
@@ -173,6 +179,21 @@ export interface Auth {
   fields?: Param[];
   /** Where the user gets what `fields` ask for, in order — e.g. the vendor's key page. */
   setup?: AuthSetupStep[];
+  /**
+   * Lifetime of the credential's refresh token (or whatever the `refresh` hook renews from), in
+   * seconds, when it expires (sliding or absolute). Drives keep-alive cadence for any refreshable
+   * auth. A stated expiry outranks it: `refresh_token_expires_in` in an OAuth2 token response, or
+   * `refreshTokenExpiresAt` in a `refresh` hook's result. Omit when it does not expire.
+   * E.g. 2592000 (30 d). Not for `jit` / `tenantAuth` / `serviceAccount`.
+   */
+  refreshTokenTtlSeconds?: number;
+  /**
+   * Access-token lifetime to assume when a new credential states none: an OAuth2 token response
+   * without `expires_in`, or a `refresh` hook result without a new `expiresAt`. The host then sets
+   * `expiresAt = now + accessTokenTtlSeconds`. Without it such a token is never treated as
+   * expiring. E.g. 604800 (7 d). Not for `jit` / `tenantAuth` / `serviceAccount`.
+   */
+  accessTokenTtlSeconds?: number;
   oauth2?: OAuth2Config;
   apiKey?: ApiKeyConfig;
   tenantAuth?: TenantAuthConfig;

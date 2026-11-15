@@ -55,8 +55,21 @@ export interface Connection {
   label?: string;
   createdAt: string;
   lastTestedAt?: string;
-  /** Redacted from the projection (leaks rotation cadence). */
+  /**
+   * Last successful refresh, or the original grant. Redacted from the projection (leaks rotation
+   * cadence); a host may show it to the Connection's owner on its management surface.
+   */
   lastRefreshedAt?: string;
+  /**
+   * Keep the credential alive with background refresh. Default true when refreshable.
+   * A non-secret host setting; not part of the redacted projection (userland has no use for it).
+   */
+  autoRefresh?: boolean;
+  /**
+   * When the host's refreshes started failing, unset while refresh succeeds. Host-owned and
+   * non-secret; redacted from the projection like `lastRefreshedAt`.
+   */
+  refreshFailingSince?: string;
   expiresAt?: string;
   /**
    * Set at connect time alongside `credential`, from the user's Connection form.
@@ -80,7 +93,8 @@ export interface Connection {
 
 /**
  * The Connection as exposed to userland code (Action `execute`, editor previews).
- * `credential`, `lastRefreshedAt`, and `manifestVersion` are stripped.
+ * `credential`, `lastRefreshedAt`, `manifestVersion` and the host's refresh bookkeeping
+ * (`autoRefresh`, `refreshFailingSince`) are stripped.
  */
 export type RedactedConnection = Pick<
   Connection,
