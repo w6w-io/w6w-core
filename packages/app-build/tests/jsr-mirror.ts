@@ -182,7 +182,13 @@ async function stageRuntime(packagesDir: string): Promise<MirrorPackage> {
   };
 }
 
-/** Stage the synthetic `@w6w/app-kit`: the pinned P3 interface only, a few lines each. */
+/**
+ * Stage the synthetic `@w6w/app-kit`: the pinned P3 interface only, a few lines each. It is
+ * laid out like the real package (`./poll` -> `./poll/mod.ts`), because app-build's
+ * `vendoredFor` maps `jsr:@w6w/app-kit@<v>/poll` onto `<v>/poll/mod.ts`; a flat `poll.ts`
+ * never vendors and the build refuses it. It also stubs the real kit's names that the
+ * `w6w apps init` scaffold imports (`pollSnapshot`, `requireRawBody`).
+ */
 function syntheticAppKit(): MirrorPackage {
   const version = parseP3(P3_SPECS["@w6w/app-kit/poll"], "@w6w/app-kit/poll").version;
   const poll = `/**
@@ -190,6 +196,23 @@ function syntheticAppKit(): MirrorPackage {
  * built over \`apps/_shared\` elsewhere; tests here only need the specifier to
  * resolve to a real module.
  */
+export interface SnapshotChange {
+  readonly kind: "added" | "updated" | "removed";
+  readonly key: string;
+  readonly values: unknown;
+}
+
+/** Stub of the real kit's \`pollSnapshot\`: every row is reported as added. */
+export async function pollSnapshot(o: {
+  state: unknown;
+  rows: Array<{ key: string; values: unknown }>;
+  emit?: { added?: boolean; updated?: boolean; removed?: boolean };
+  maxRows?: number;
+}): Promise<{ events: SnapshotChange[]; nextState: unknown }> {
+  const events = o.rows.map((r) => ({ kind: "added" as const, key: r.key, values: r.values }));
+  return await Promise.resolve({ events, nextState: o.state });
+}
+
 export interface PollTriggerOptions {
   /** Trigger name shown to the author. */
   readonly name: string;
@@ -214,14 +237,20 @@ export interface WebhookTriggerOptions {
 export function webhookTrigger(options: WebhookTriggerOptions): WebhookTriggerOptions {
   return options;
 }
+
+/** Stub of the real kit's \`requireRawBody\`. */
+export function requireRawBody(raw: { rawBody?: unknown }): string {
+  if (typeof raw?.rawBody !== "string") throw new Error("rawBody missing");
+  return raw.rawBody;
+}
 `;
   return {
     name: "app-kit",
     version,
-    exports: { "./poll": "./poll.ts", "./webhook": "./webhook.ts" },
+    exports: { "./poll": "./poll/mod.ts", "./webhook": "./webhook/mod.ts" },
     files: new Map([
-      ["/poll.ts", encoder.encode(poll)],
-      ["/webhook.ts", encoder.encode(webhook)],
+      ["/poll/mod.ts", encoder.encode(poll)],
+      ["/webhook/mod.ts", encoder.encode(webhook)],
     ]),
   };
 }
