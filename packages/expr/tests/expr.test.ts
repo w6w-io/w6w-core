@@ -194,3 +194,43 @@ Deno.test("get: one own key or array index of a computed value, else null", () =
   assertEquals(evaluate({ get: [{ var: "nope" }, "k"] }, data), null);
   assertEquals(evaluate({ get: [{ get: [{ var: "o" }, "k"] }, "length"] }, data), null);
 });
+
+/** Run `fn` with `Date.now()` pinned to `ms`. */
+function atTime<T>(ms: number, fn: () => T): T {
+  const real = Date.now;
+  Date.now = () => ms;
+  try {
+    return fn();
+  } finally {
+    Date.now = real;
+  }
+}
+
+// 2026-11-15T03:40:12.345Z
+const NOW_MS = Date.UTC(2026, 10, 15, 3, 40, 12, 345);
+
+Deno.test("now: ISO 8601 UTC by default, epoch seconds and epoch milliseconds on request", () => {
+  atTime(NOW_MS, () => {
+    assertEquals(evaluate({ now: [] }), "2026-11-15T03:40:12.345Z");
+    assertEquals(evaluate({ now: null }), "2026-11-15T03:40:12.345Z");
+    assertEquals(evaluate({ now: ["iso"] }), "2026-11-15T03:40:12.345Z");
+    assertEquals(evaluate({ now: "epoch" }), 1794714012);
+    assertEquals(evaluate({ now: ["epoch_ms"] }), NOW_MS);
+  });
+});
+
+Deno.test("now: the format may be computed; an unknown format throws ExprError", () => {
+  atTime(NOW_MS, () => {
+    assertEquals(evaluate({ now: [{ var: "fmt" }] }, { fmt: "epoch" }), 1794714012);
+    assertThrows(() => evaluate({ now: ["seconds"] }), ExprError, 'Unknown "now" format');
+    assertThrows(() => evaluate({ now: [1] }), ExprError);
+  });
+});
+
+Deno.test("now: reads the clock on every evaluation and composes with other operators", () => {
+  assertEquals(atTime(1_000, () => evaluate({ now: ["epoch_ms"] })), 1_000);
+  assertEquals(atTime(2_000, () => evaluate({ now: ["epoch_ms"] })), 2_000);
+  const rule = { ">": [{ now: ["epoch"] }, { var: "deadline" }] };
+  assertEquals(atTime(NOW_MS, () => evaluate(rule, { deadline: 1794714000 })), true);
+  assertEquals(atTime(NOW_MS, () => evaluate(rule, { deadline: 1794714999 })), false);
+});

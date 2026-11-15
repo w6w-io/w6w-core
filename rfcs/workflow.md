@@ -1880,3 +1880,38 @@ A host that implements the `{{ }}` grammar MUST:
   Testably, `{{ vars.a ? badroot.x : 1 }}` is refused in full.
 - Serialize such a payload back to infix text so that re-parsing it yields the identical JSONLogic.
   Fall back to `{{ =<raw> }}` when no such text exists.
+
+## Amendment — 2026-11-15: `now()` in `{{ }}`
+
+> Additive to [Amendment — 2026-11-11](#amendment--2026-11-11-inline-expressions-in--). It carves
+> one exception out of that amendment's "a function call is malformed" rule; every other call stays
+> malformed. 0 lines are deleted.
+
+A marker may read the current time without a script step. Inside the inline-expression production,
+the bare name `now` immediately followed by `(` is a call, and it is the only call. It takes no
+argument or one quoted string, the **format**:
+
+| Text              | JSONLogic              | Value                                                                  |
+| ----------------- | ---------------------- | ---------------------------------------------------------------------- |
+| `now()`           | `{"now":[]}`           | ISO 8601 UTC timestamp with milliseconds, `"2026-11-15T03:40:12.345Z"` |
+| `now('iso')`      | `{"now":["iso"]}`      | the same                                                               |
+| `now('epoch')`    | `{"now":["epoch"]}`    | whole seconds since the Unix epoch, a number                           |
+| `now('epoch_ms')` | `{"now":["epoch_ms"]}` | milliseconds since the Unix epoch, a number                            |
+
+`now` is specified by `@w6w/expr`. It reads the clock each time it is evaluated, so two `now`s in
+one run, or in one marker, may differ. A missing or `null` format is `iso`; any other format is an
+evaluation error, never a silent default. The format of a `{{ =<JSONLogic> }}` payload may itself be
+an expression.
+
+A host that implements the `{{ }}` grammar MUST:
+
+- Parse `now()` and `now('<format>')` as above, as an operand anywhere the 2026-11-11 production
+  takes one. A call engages that production through its parentheses. Testably,
+  `{{ now('epoch') > var.deadline ? 'late' : 'on time' }}` →
+  `{"if":[{">":[{"now":["epoch"]},{"var":"var.deadline"}]},"late","on time"]}`.
+- Keep every other spelling on the earlier productions: `{{ now }}` is the path `now`, and
+  `{{ var.now() }}`, `{{ today() }}`, `{{ now(var.fmt) }}` and a call with two arguments are
+  malformed, as before.
+- Treat `now` as having no `{ "var": … }` operand for root-anchoring, so `{{ now() }}` alone
+  resolves.
+- Serialize `{"now":[]}` and `{"now":["<format>"]}` back to `now()` and `now('<format>')`.
