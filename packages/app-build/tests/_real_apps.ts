@@ -2,10 +2,11 @@
  * Where the real apps the build/cli/validate suites exercise live.
  *
  * Before the apps split every app sat in the sibling `apps` checkout (`apps/apps/<name>`). After
- * it, each app lives in its own pack repo (`apps-<group>/apps/<name>`) with the `apps` checkout
- * keeping only `_shared`, so a name has to be looked up across the pack checkouts beside the lane.
- * With none of them checked out (a bare `core` clone) `findApp` returns `null` and `haveApps` is
- * `false`; the suites then `ignore` their real-app tests instead of failing.
+ * it, each app lives in its own pack repo, checked out INSIDE the `apps` (tooling) checkout as one
+ * of its submodules (`apps/<group>/apps/<name>`), with `apps/apps` keeping only `_shared`; so a
+ * name has to be looked up across the pack checkouts under the sibling `apps`. With none of them
+ * checked out (a bare `core` clone) `findApp` returns `null` and `haveApps` is `false`; the suites
+ * then `ignore` their real-app tests instead of failing.
  */
 import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
 
@@ -14,6 +15,16 @@ export const REAL_APPS = ["apify", "gotify", "webex", "hubspot", "aws/s3", "sale
 
 /** The lane directory the pack checkouts sit in (`core` is one of its entries). */
 const LANE = fromFileUrl(new URL("../../../../", import.meta.url));
+
+const PACK = "w6w-pack.json";
+
+function isFile(path: string): boolean {
+  try {
+    return Deno.statSync(path).isFile;
+  } catch {
+    return false;
+  }
+}
 
 function isDir(path: string): boolean {
   try {
@@ -24,21 +35,22 @@ function isDir(path: string): boolean {
 }
 
 /**
- * The `apps/` roots of the pack checkouts beside the lane — the legacy `apps` checkout first (it
- * wins while it still holds the apps), then every `apps-*` repo in name order.
+ * The `apps/` roots of the pack checkouts — the legacy root `apps/apps` first (it wins while it
+ * still holds the apps), then every pack repo nested in the `apps` checkout (`apps/<group>`, a
+ * directory with its own `w6w-pack.json`) in name order.
  */
 const PACK_APPS_ROOTS: string[] = (() => {
-  let names: string[] = [];
+  const tooling = join(LANE, "apps");
+  let groups: string[] = [];
   try {
-    names = [...Deno.readDirSync(LANE)]
+    groups = [...Deno.readDirSync(tooling)]
+      .filter((e) =>
+        (e.isDirectory || e.isSymlink) && e.name !== "apps" && isFile(join(tooling, e.name, PACK))
+      )
       .map((e) => e.name)
-      .filter((n) => n === "apps" || n.startsWith("apps-"));
-  } catch { /* no lane to look into: no pack is checked out */ }
-  const legacy = names.filter((n) => n === "apps");
-  const split = names.filter((n) => n !== "apps").sort();
-  return [...legacy, ...split]
-    .map((n) => join(LANE, n, "apps"))
-    .filter(isDir);
+      .sort();
+  } catch { /* no apps checkout beside the lane: no pack is checked out */ }
+  return [join(tooling, "apps"), ...groups.map((g) => join(tooling, g, "apps"))].filter(isDir);
 })();
 
 /** The directory of real app `name` (e.g. `apify`, `aws/s3`), or `null` if no pack holds it. */
