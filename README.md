@@ -98,14 +98,7 @@ Primitives that are reused inside other manifests rather than declared standalon
 
 ## Build your own app
 
-Two starter templates cover both authoring flows. The app contract they satisfy is identical — pick the toolchain you're comfortable with.
-
-| Template | Toolchain | Notes |
-|---|---|---|
-| [`w6w-app-template-deno`](https://github.com/w6w-io/w6w-app-template-deno) | Deno + JSR `@w6w/types` + `deno test` | Zero-install, matches the reference runtime directly. |
-| [`w6w-app-template-node`](https://github.com/w6w-io/w6w-app-template-node) | Node 22 + npm `@w6w/types` + `tsx` + `vitest` | Node-idiomatic. `.ts` extensions kept in imports so the same source runs under the runtime unchanged. |
-
-Both ship: bearer-token Auth (`sign` + `test`), read + perform Actions against `httpbin.org`, mocked-`HookContext` unit tests, and a green CI workflow. Click **Use this template** on GitHub to start.
+Scaffold an app with `w6w apps init <id> [--template deno|node]`, then `w6w apps validate`, `build` and `publish` it; the old `w6w-app-template-*` repos are superseded. See [`docs/build-a-w6w-app.md`](./docs/build-a-w6w-app.md).
 
 Building with an LLM / coding agent? [`docs/build-a-w6w-app.md`](./docs/build-a-w6w-app.md) is a self-contained, prompt-ready instruction set covering the app contract, the hard sandbox rules, and a definition-of-done checklist.
 

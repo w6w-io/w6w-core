@@ -321,9 +321,11 @@ V1 implementations:
 
 ## Amendment: owner-scoped registration (2026-07-14)
 
-> Adds per-**tenant** and per-**user** private apps alongside the global catalog. Motivated by
-> embedded-tenant onboarding (a partner installs its own apps tenant-wide; its users bring their own).
-> Companion design + rollout: `.claude/docs/app-install-scoping.md`.
+> Adds per-**tenant** and per-**account** private apps alongside the global catalog. Motivated by
+> embedded-tenant onboarding (a partner installs its own apps tenant-wide; the people working in it
+> bring their own). Companion design + rollout: `.claude/docs/app-install-scoping.md`.
+> Reconciled 2026-11-14: the personal tier is an **account** tier. The owner of an app is always a
+> tenant or an account, never a user.
 
 ### Owner scope
 
@@ -332,7 +334,7 @@ A registered app gains an **owner scope** — the principal that installed it:
 ```ts
 interface OwnerScope {
   tenant?: string;   // absent / "" → not tenant-owned
-  subject?: string;  // absent / "" → not user-owned
+  account?: string;  // absent / "" → not account-owned
 }
 ```
 
@@ -340,18 +342,30 @@ Three tiers, by which fields are set:
 
 - **Global** — neither set. Operator-published; the existing behavior. Available to every tenant
   (subject to the host's tenant allowlist / entitlement policy, which is out of scope for this RFC).
-- **Tenant** — `tenant` set, `subject` unset. Installed by a tenant admin; available to every subject
-  in that tenant.
-- **User** — both set. Installed by one user; available only to that `(tenant, subject)`.
+- **Tenant** — `tenant` set, `account` unset. Installed by a tenant admin; available to every
+  account in that tenant.
+- **Account** — both set. Installed for one account inside a tenant; visible to every member of
+  that account and to no foreign account in the same tenant.
+
+`OwnerScope` carries `tenant` and `account` only: there is no subject slot, and no tier is ever
+addressed to one person. The person who imported, published or edited a row is **attribution**
+(`published_by`, `created_by`), which grants and limits nothing. Storage mirrors the scope: the
+account tier is the `owner_account` column next to `owner_tenant`, and an empty pair is the global
+tier. The wire token `personal`, where a host still accepts it as a management target, scope or app
+class, is a **deprecated alias** for account-owned; it never means "visible to one subject".
+
+Ownership is availability, never an exemption from policy: a deny list still filters an owned row, and
+a host's credential and connection ownership is unchanged by the tier a row sits in.
 
 ### Identity
 
 The reverse-DNS `id` stays **globally unique** — version identity remains `(id, version)`, and `owner`
 is a **visibility/ownership attribute**, not part of the key. An `id` therefore belongs to exactly one
-owner scope. `register(sourceRef, { owner })` MUST be rejected (`id_taken`) if that `id` already exists
-under a **different** owner scope. This keeps a workflow's app reference unambiguous and makes
-shadowing structurally impossible — a private app can never reuse (and so never silently substitute) a
-global one.
+owner scope. `register(sourceRef, { owner })` MUST be rejected (`id_taken`) if that `id` already
+exists under a **different** owner scope. Uniqueness spans the whole catalog rather than a tier or a
+tenant: two accounts of the same tenant that register the same id collide with `id_taken`. This
+keeps a workflow's app reference unambiguous and makes shadowing structurally impossible — a private
+app can never reuse (and so never silently substitute) a global one.
 
 > This global-uniqueness choice is deliberate: it avoids per-scope key surgery in datastores and their
 > inbound foreign keys. A host MAY later relax `id` to be unique only *within* an owner scope, at the
@@ -362,10 +376,10 @@ global one.
 - `register(sourceRef, opts?: { owner?: OwnerScope })` — installs into `opts.owner` (default global).
   Idempotency (digest over `{ manifest, actions, auth }`) is evaluated **within the owner scope**.
 - `list(query, opts?: { caller?: OwnerScope })` — returns the **union** for the caller: global ∪
-  tenant-owned (`caller.tenant`) ∪ user-owned (`caller.tenant, caller.subject`). Most-specific tier
-  wins on `id`; absent `caller` → global only (back-compat).
-- `get(id, opts?: { caller?: OwnerScope })` — resolves `id` **most-specific-first** (user → tenant →
-  global) within the caller's scope.
+  tenant-owned (`caller.tenant`) ∪ account-owned (`caller.tenant, caller.account`). Most-specific
+  tier wins on `id`; absent `caller` → global only (back-compat).
+- `get(id, opts?: { caller?: OwnerScope })` — resolves `id` **most-specific-first** (account →
+  tenant → global) within the caller's scope.
 
 Hosts MUST resolve an executing step's app against the **caller's** owner scope, and MUST treat an app
 owned by the caller's scope as implicitly authorized (a host's tenant entitlement/allowlist governs
@@ -374,14 +388,18 @@ owned by the caller's scope as implicitly authorized (a host's tenant entitlemen
 ### Trust
 
 Privileged host capabilities (`ctx.host.*`, see the Hook-Runtime RFC) MUST NOT be granted to any
-non-global (tenant/user-owned) app. Owner-scoped apps run in the same least-privilege sandbox as any
-third-party app; ownership conveys *availability*, never elevated trust.
+non-global (tenant- or account-owned) app. Owner-scoped apps run in the same least-privilege sandbox
+as any third-party app; ownership conveys *availability*, never elevated trust.
 
 ### Back-compat
 
 The owner scope is additive and defaults to global. A datastore that stores every app with an empty
 owner scope, and a caller that passes none, reproduce the pre-amendment single-global-catalog behavior
-exactly. `origin`/federation reservations are unchanged and orthogonal to ownership.
+exactly. A host migrating from the earlier `owner_subject` layout maps each row once — the user's
+sole active membership, else the tenant's default account, else the tenant tier — and keeps the old
+subject as attribution (`published_by`); the row itself is never dropped, and applying the migration
+is a host task described in that host's own runbook. `origin`/federation reservations are unchanged and
+orthogonal to ownership.
 
 ## Amendment: id-set lookup (2026-10-04)
 
@@ -410,7 +428,7 @@ interface ListQuery {
    * Resolve exactly this set of ids instead of a page. When present:
    *  - the result is the **union with the caller's owner scope** — the same
    *    rule `list`/`listLatest` already apply (global ∪ `caller.tenant`-owned
-   *    ∪ `caller.tenant,caller.subject`-owned); an id outside that union, or
+   *    ∪ `caller.tenant,caller.account`-owned); an id outside that union, or
    *    one that does not exist, is silently omitted — never reported as an
    *    error, the same as a page simply not containing it.
    *  - the effective-visibility default is UNCHANGED (`["public",
@@ -496,8 +514,8 @@ The rule, applied identically by every store that is handed `opts.policy`:
 - ids in `blocked` are never listed;
 - when `allowOnly` is present it restricts the result to those ids, **except** rows owned by the
   caller;
-- "owned" means `owner_tenant <> ''` and `owner_tenant = caller.tenant` and (`owner_subject = ''`
-  or `owner_subject = caller.subject`), which mirrors the owner-scope amendment's
+- "owned" means `owner_tenant <> ''` and `owner_tenant = caller.tenant` and (`owner_account = ''`
+  or `owner_account = caller.account`), which mirrors the owner-scope amendment's
   `isOwnedByCaller`;
 - an owned row is never exempt from `blocked`.
 
@@ -553,7 +571,302 @@ policy are equal.
 ### Where snapshots live
 
 Snapshot storage is a host concern and is not part of `Registry` or `DataStore`. Scope
-(tenant, subject, account), lifetime, sweeping and the de-duplication of equal queries (including
+(tenant, account), lifetime, sweeping and the de-duplication of equal queries (including
 policy) exist only in the host, and `Registry` is also a library for in-memory and CLI hosts. The
 registry surface gains only the optional `Page<T>` fields, the `ReadOpts.policy` data carrier and
 the shared cursor forms above; no method is added to either interface.
+
+---
+
+## Amendment: publishers and namespaces (2026-11-13)
+
+> Opens the registry to third-party publishers. Until now every id in the global catalog was
+> published by W6W; an account could only install into its own private tier. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-1, D-2, D-8). Reconciled 2026-11-14: a namespace is an
+> independent record that decides who may register an id, and a publisher is a facade over the
+> namespaces its tenant holds, never their owner.
+
+### Publisher
+
+A **publisher** is the named party that publishes apps. It is a first-class record with a unique,
+URL-safe `slug`, a display name, an owning tenant, a `status` (`active` | `suspended`) and a set of
+**members**, each with a role (`owner` | `developer`). A publisher MUST always have at least one owner;
+removing the last owner MUST be refused (`last_owner`). W6W is itself a publisher (slug `w6w`) and
+is the first one: there is one publishing pipeline, not a first-party path and a third-party path.
+
+A publisher holds no namespace of its own: its reach over app ids comes from the namespaces held by
+its owning tenant. Publisher membership and listing management are separate from namespace
+authority, so a tenant with no publisher still holds namespaces and a publisher gains none by
+existing.
+
+### Namespace
+
+A **namespace** is a reverse-DNS id prefix held by an operator, a tenant or (reserved) an account
+or a publisher: the domain `zapier.com` is the prefix `com.zapier`; `tables.zapier.com` is
+`com.zapier.tables`. The prefix is lowercase, IDNA-ascii only, and has at least two labels. The one
+non-DNS form is `@w6w` (below), which matches ids beginning `@w6w/`.
+
+A namespace is a **record in its own table**, independent of publishers, tenants and accounts. One
+tenant can hold several namespaces, and no holding is stored on a publisher row, an account row or a
+tenant row.
+
+| Field          | Values                                                                                |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `owner_kind`   | `operator`, `tenant`, `account`, `publisher` (the last two are reserved, not enabled) |
+| owner columns  | match `owner_kind`: a `tenant` row carries an owner tenant, an `operator` row none    |
+| `status`       | `pending`, `active`, `revoked`                                                        |
+| `verification` | `operator`, `dns`, `well_known`, `delegated`                                          |
+
+An **active** namespace matches an app id when the id equals the prefix or begins with the prefix
+followed by `.`: `vip.cohost` matches `vip.cohost` and `vip.cohost.flite`, and MUST NOT match
+`vip.cohostx.a`. `@w6w` keeps its slash form and matches ids beginning `@w6w/`. When several active
+namespaces match one id, the **longest** prefix owns it, so a longer prefix held by another tenant
+defeats an own shorter parent.
+
+| Status     | Meaning                                                                 |
+| ---------- | ----------------------------------------------------------------------- |
+| `pending`  | Claimed; a verification token has been issued; proof not yet seen.      |
+| `active`   | Control was proven, or an operator vouched; the holder owns the prefix. |
+| `revoked`  | Withdrawn by the holder or an operator.                                 |
+
+Only an `active` namespace confers registration authority; `pending` and `revoked` namespaces MUST
+NOT match any id. A prefix is active for at most one holder at a time; a claim on a prefix another
+holder has active is refused (`namespace_owned`). An id under no active namespace has no owner at
+all (see the allow-list below).
+
+### Verification
+
+A host MUST accept at least one of these proofs of domain control, each carrying the namespace's
+token, and records the method on the row:
+
+1. **`dns`** — a TXT record at `_w6w-publisher.<domain>` whose value contains the token.
+2. **`well_known`** — `https://<domain>/.well-known/w6w-publisher.txt` whose body contains the
+   token.
+
+The host MAY additionally let an operator vouch for a namespace (method `operator`); that is how the
+reserved namespaces and operator assignments are seeded. `delegated` is a storage value for a
+holding covered by an operator delegation; it has no separate public method and reports as
+`operator`. A verification that cannot yet be proven is not an error: it reports `verified: false`
+with a reason, and the holder retries.
+
+The existing publisher DNS/well-known proof flow is retained unchanged and writes a **tenant**
+holding with `dns` or `well_known`. It does not onboard a new tenant to a top-level domain and never
+stores ownership on the publisher.
+
+### Reserved namespaces
+
+`io.w6w` and `@w6w` are reserved to W6W. No other holder may claim them, and an id inside them
+(`io.w6w` or `io.w6w.*`, `@w6w/*`) MUST NOT be registered or published by anyone but an operator
+acting for the W6W publisher. A host MAY reserve further prefixes; a reserved prefix is
+operator-owned, and its refusal is distinct from `namespace_owned`.
+
+### The registration allow-list
+
+Every **non-global** registration must fall under a namespace the target tier holds: import,
+refresh, management writes, operator-initiated tenant targets, tenant boot and artifact upload all
+pass the same check, and it runs **before** any blob or catalog write, so a refused id leaves
+nothing behind. A global operator/CI registration is the only exemption. Given an actor and an app
+id, a host decides in order:
+
+1. An operator or CI registration into the **global** catalog is exempt (the operator/CI exception).
+   An operator registering into a tenant or account tier is a non-global registration and passes the
+   allow-list below like any other actor, so an unclaimed id is refused (`namespace_not_owned`).
+2. An id inside a reserved namespace is refused to every other actor.
+3. An id under an active namespace is registrable only into that namespace's holder — the holding
+   tenant's tenant tier or one of its account tiers. A prefix active for **another** tenant is
+   refused (`namespace_owned`); an id with no usable holding of the target is refused
+   (`namespace_not_owned`, whose message lists the target's prefixes or says that an operator
+   assignment is needed). A publisher actor additionally needs membership of the publisher attached
+   to that tenant, and a suspended publisher refuses new publishes (`publisher_suspended`).
+4. There is **no private-id fallback**: an id under no active namespace is refused for every
+   non-global registration, into any tier. Account namespaces, self-serve claiming and new
+   DNS-verified tenant top-level onboarding are deferred; until then a tenant with no holding
+   registers nothing non-global, and an operator assigns holdings by hand.
+
+A host's existing `allow_user_app_import` policy stays a separate per-tenant switch on self-install
+into the account tier: it neither grants nor withholds a namespace, and a namespace holding neither
+grants nor withholds that self-install.
+
+### Relation to owner scope
+
+This extends the owner scopes of _Amendment: owner-scoped registration_. An id inside an active
+namespace may be registered only into the holding tenant's tenant tier or one of that tenant's
+account tiers — never into another tenant's tier or a foreign account's. An id outside every active
+namespace has no non-global tier at all. The global tier is unchanged and remains reachable only by
+operators.
+
+Nothing is promoted automatically: an account-owned app does not become tenant- or
+publisher-owned, and a new publisher inherits no app from its tenant's existing namespaces. A row's
+owner scope is not rewritten by a publisher change; registering the same id under a different owner
+stays refused with `id_taken`.
+
+### Publisher bridge
+
+Publishers are a facade over the namespace records, not their owner. `PublisherService.ownerOfAppId`
+and `canPublish` keep their signatures. `ownerOfAppId` resolves the longest active prefix matching
+the app id and returns the **oldest** publisher, by `(created_at, id)`, of the tenant holding that
+prefix, or `null` when that tenant has no publisher. `canPublish` makes the namespace-first decision
+above: an operator is allowed anywhere, a reserved id is refused to everyone else, and an actor may
+publish only when the holding namespace is `tenant`-owned by the actor's own tenant. Publisher and
+listing membership is separate from namespace authority.
+
+### The manifest `publisher` field
+
+A manifest's `publisher` field is **informational**. The holder of the longest active namespace is
+authoritative for who published an app, and a host MUST display and enforce that holder, never the
+manifest string. A manifest may therefore claim any publisher without effect.
+
+### Revocation
+
+Revoking a namespace or suspending a publisher stops further publishing into the affected ids. A
+revoke is refused with `409 namespace_in_use` while any version of the holding tenant's apps —
+including candidates, history and apps under a child prefix the same tenant holds — matches the
+prefix on an exact or dot boundary; the response lists up to 50 ids plus the total, and publish and
+revoke take the same advisory lock, so a publish cannot slip in between the check and the revoke.
+This replaces the older "revoke keeps installed apps" promise for tenant namespaces.
+
+The registry still never deletes a version: a successful revoke withdraws the holding and nothing
+else, and removing an app stays a separate, explicit lifecycle action. Suspension is likewise not an
+uninstall — versions already registered, and installs of them, keep working.
+
+---
+
+## Amendment: submission, review and listing (2026-11-14)
+
+> Adds the path from a publisher's private app to the global catalog. It records **option (a)** of the
+> listing decision: an approved version is registered into the **global tier**, and a separate
+> listing record carries the publisher's management rights. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-3..D-5). This amendment only adds; nothing above it
+> changes meaning.
+
+### Roles
+
+The member roles are `owner` | `developer`. `developer` is the non-owner role, matching
+`publisher_members.role`, and a host MUST reject any other value. The last-owner rule is unchanged.
+(Earlier drafts of this amendment called the non-owner role `member`; `developer` is the name
+everywhere in this document.)
+
+### Listing record
+
+A **listing** is a host record, one per app id, that is separate from the registry's version rows.
+It names the publishing `publisher_id`, the listing copy, the id of the version currently listed, and
+a `state`: `private`, `in_review`, `changes_requested`, `listed`, `suspended` or `delisted`. A
+**submission** is an immutable request that binds an app id, a version and that version's digest to
+the checks run on it and the decision made.
+
+Management rights over a listed app (submitting new versions, editing copy, withdrawing) follow
+`app_listings.publisher_id` and the publisher's members, **not** the registry row's owner. After
+approval the owner of the version row is the global tier (empty owner), which no tenant can write to;
+the listing is what still ties the app to its publisher.
+
+### Approval and candidate rows
+
+A registry data store gains one operation, `approveVersion(id, version, { expectedDigest })`. In one
+transaction, holding a row lock on the app's latest pointer, it sets the owner of the named version
+row to global and advances the latest pointer to it, also global. A digest that no longer matches the
+stored row is refused with `stale_submission`; a missing version with `unknown_version`; a refusal
+changes nothing. Approval is the **only** way a version enters the global tier on behalf of a
+publisher. The `id_taken` refusal for registering under an id another owner holds stays as it is
+for every other caller.
+
+Before approval, a submitted version is a **candidate row**: stored under the publisher's own owner
+while the id already exists in the global tier. A host enables this by passing an `admitCandidate`
+port to the registry; with the port absent or returning false, behaviour is exactly as before
+(`id_taken`). A candidate row:
+
+- never advances the latest pointer;
+- is returned by `getVersion`, `getLatest`, `listVersions` and the host-internal `load` only to the
+  matching `caller`, or when the read passes `includeCandidates: true`. `unscoped: true` alone does
+  not reveal it, and neither does a different tenant or a read with no options: those see
+  `unknown_version` or absence, as if the version did not exist;
+- is never served by an explicit version or a pin to another tenant, because the check sits in the
+  store read itself, not only in the latest pointer.
+
+A non-listed private app (every row one owner) and a legacy global app (no listing row) read exactly
+as before.
+
+### Visibility is not review
+
+Two things that look alike are kept apart. **Visibility** (`public`, `unlisted`, private) says who may
+discover an app and is what the existing policy filter reads. **Review** (the listing `state`) says
+whether the host has accepted the app into the global catalog. An app's self-declared classification
+never authorizes listing. `unlisted` after approval is a listed app that is hidden from browse and
+search but still resolvable and invocable by id. `suspended` hides the app and refuses **new**
+connections while existing ones keep running; `delisted` refuses invocation, explicit and pinned
+versions included. Tenant allowlist and deny policy still applies on top of a listing and is not
+overridden by it.
+
+### What approval moves
+
+Approval moves **the app row only**: the version row's owner and the latest pointer. Connections,
+credentials, and any app-scoped OAuth client configuration stay owned by the tenant that created
+them. In particular:
+
+- `app_oauth_config` is keyed by `(app_id, auth_key)` and has no tenant column, but it is written only
+  through operator routes (`PUT /apps/:id/oauth-config/:authKey`, scope `operator:apps`), and the
+  per-tenant override (`tenant_oauth_app`) only through operator tenant routes. A publisher's tenant
+  therefore has no way to store an app-scoped OAuth client secret for its private app, and nothing of
+  that kind becomes reachable by other tenants when the app is approved. A row an operator created
+  for the id already belonged to the operator.
+- Connections are keyed by the owning tenant and stay with it; another tenant's connection to the
+  same app is its own.
+
+A host that later lets a tenant write app-scoped OAuth configuration MUST re-examine this rule
+before approval can move such a row.
+
+### Read paths and why each stays correct
+
+Every place a host reads the app catalog, under option (a):
+
+| Read path | Why it stays correct |
+| --- | --- |
+| Registry foundation (`getLatest`, `getVersion`, list) | The approved row and the latest pointer are both global, so every scope resolves them as it does any global app. Candidate rows are filtered inside the store read (above), so other scopes never see an unapproved version. |
+| Invoke (including explicit version, pins, model entitlement) | A global app resolves for every tenant and still passes the tenant allowlist/deny decision. Explicit and pinned versions go through the same candidate filter, so pointer-only approval is not what protects them. A `delisted` listing is refused at load. |
+| Connections (create, test, MCP connect) | A global id resolves across tenants as before. A `suspended` or `delisted` listing refuses a **new** connection; existing connections are untouched. |
+| Health, HTTP and MCP | Scope resolution finds the global app; an explicit-version health load honours the candidate rule. |
+| MCP search | A listed app enters the candidate set through the ordinary registry list; suspension and `unlisted` remove it from discovery without removing it from resolution. |
+| System-ops catalog | The existing predicate (both owner columns empty on both tables) is satisfied by an approved version, so no query changes; the listing state is checked in addition. |
+| Apps-catalog list (ids arm and paged snapshot arm) | Both arms read global rows that now include approved apps; the snapshot list counts only rows owned by the record's owner, so candidate rows do not inflate it. Browse additionally filters on listing state. |
+| Visibility and policy filter | The existing deny-versus-hide separation is reused: `suspended` and `unlisted` hide, `delisted` denies. Listing state is read from the listing record, never from the manifest. |
+| Publish-index (digest feed) | It reads global latest digest facts; an approved version appears there as any global version does, and first-party hash and no-op semantics are unchanged. |
+| Tenant operator catalog | The operator view opens the tenant snapshot with all visibilities, so suspended and delisted apps stay inspectable; only public browse is filtered. |
+
+### Failure of the listing record
+
+A global app with no listing row is a legacy or first-party app and is treated as listed. An app that
+has a listing row is governed by its `state`. Neither case changes how the registry stores versions.
+
+
+## Pack ownership (2026-11-13)
+
+> Names each per-repo app index and makes its app ids owned by that pack. Companion roadmap:
+> `.claude/docs/app-publishing-roadmap.md` (D-1, D-7).
+
+A **pack** is a named app index: one repository publishing its own index at
+`apps/<pack>/index.json`. `POST /system-ops/apps/publish-index` takes an optional `pack` next to
+`indexSha256`. A pack name matches `^[a-z0-9][a-z0-9-]{0,62}$` — lowercase letters, digits and `-`,
+starting with a letter or digit; any other name is `400 invalid_body`.
+
+A pack **owns an app id's index entry**: the owner is the pack whose index registered it, recorded
+as a row `app_packs(app_id, pack, claimed_at, updated_at)` with at most one owner per id. This is
+index ownership for the publish-index feed, not authority to register the id — registration
+authority is the namespace rule above, and the two are recorded separately. Ownership is
+**claimed on first publish**: publishing an id that has no owner asserts the publishing pack as its
+owner, with `from_pack = null`. A publish into a named pack registers only the ids in that pack's own
+index and never touches another pack's apps or ownership rows. An id already owned by a different
+pack P is reported `failed` with `owned_by_pack:<P>`, and its row is unchanged.
+
+Ownership is decided at the start of a publish, before it registers anything — claim before publish:
+an id another pack owns is dropped from the publish, and the ids a publish may own are claimed for its
+pack with an insert-if-absent write. The one **residual window** is a `pack-move` landing while a
+publish is in flight: that publish never sees the move, finishes under its starting ownership, and may
+register one last set of versions for the previous pack; a re-run of the move reconciles the two.
+
+Ownership moves only by an explicit, audited operation: `POST /system-ops/apps/pack-move`
+(`{appId, toPack, reason}`, ops scope `apps:publish`). It updates the owner and appends a row to the
+`app_pack_moves` audit table — `app_id`, `from_pack` (null when the app was unowned), `to_pack`,
+`reason`, `actor`, `at` — in one transaction. An unknown app id is `404`.
+
+A publish with **no `pack`** is the global-index behaviour and is exactly unchanged: it neither
+claims nor consults pack ownership. Publishing never unregisters an app: an id that leaves an index
+keeps its registered versions, and removal stays a separate, explicit lifecycle action.

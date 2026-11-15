@@ -152,10 +152,13 @@ function pair() {
 }
 
 type Opt = Record<string, unknown>;
+// Every server here is a loopback fixture, so the private-egress guard is
+// opted out (private-egress-fetch.test.ts pins the guard itself).
+const LOCAL = { egressGuard: { allowPrivate: true } };
 const OPTS: { name: string; opts: Opt; follows: boolean }[] = [
-  { name: "unset", opts: {}, follows: true },
-  { name: "same-host", opts: { redirects: "same-host" }, follows: true },
-  { name: "refuse", opts: { redirects: "refuse" }, follows: false },
+  { name: "unset", opts: { ...LOCAL }, follows: true },
+  { name: "same-host", opts: { ...LOCAL, redirects: "same-host" }, follows: true },
+  { name: "refuse", opts: { ...LOCAL, redirects: "refuse" }, follows: false },
 ];
 
 /** Run `fn` against a fresh pair per option; origin is hit once, the target only when following. */
@@ -320,7 +323,10 @@ for (const bad of ["Refuse", "REFUSE", "deny", " refuse", "", true, 1, null]) {
     const app = await makeApp();
     const p = pair();
     try {
-      const res = await signingFetch(app, undefined, undefined, { redirects: bad } as any)({
+      const res = await signingFetch(app, undefined, undefined, {
+        ...LOCAL,
+        redirects: bad,
+      } as any)({
         url: p.url,
         method: "POST",
         headers: { authorization: "Bearer live-secret" },
@@ -339,7 +345,10 @@ Deno.test("redirects: undefined (explicit) still follows same-host", async () =>
   const app = await makeApp();
   const p = pair();
   try {
-    const res = await signingFetch(app, undefined, undefined, { redirects: undefined })({
+    const res = await signingFetch(app, undefined, undefined, {
+      ...LOCAL,
+      redirects: undefined,
+    })({
       url: p.url,
       method: "POST",
       headers: {},

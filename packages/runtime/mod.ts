@@ -126,3 +126,5 @@ export type { SocketSession } from "./src/socket.ts";
 
 export { credentialError, LoadError, W6WError } from "./src/errors.ts";
 export type { ErrorPhase } from "./src/errors.ts";
+export { appAllowPrivate, assertPublicDestination, pinnedFetch } from "./src/private-egress.ts";
+export type { PublicDestination, PublicDestinationOptions } from "./src/private-egress.ts";

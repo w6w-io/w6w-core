@@ -1,24 +1,16 @@
 /**
- * Real-app builds: the six named apps from the apps pack build and verify, the output is
- * deterministic, and the source map is path-independent. These RUN whenever the sibling
- * apps checkout exists; they are `ignore`d only when it is absent.
+ * Real-app builds: the six named apps from the pack checkouts build and verify, the output is
+ * deterministic, and the source map is path-independent. These RUN whenever the six apps are
+ * checked out (see `_real_apps.ts`); they are `ignore`d only when they are not.
  */
 import { assert, assertEquals, assertNotEquals } from "jsr:@std/assert@^1.0.0";
-import { fromFileUrl, join } from "jsr:@std/path@^1.0.0";
+import { join } from "jsr:@std/path@^1.0.0";
 import { describeApp, describeExec, resolveSharedRoots } from "@w6w/runtime";
 import { type ModelProviderMeta, parseAppArtifactManifest, verifySha256 } from "@w6w/types";
 import { buildApp, computeSourceDigest } from "../mod.ts";
+import { haveApps, REAL_APPS, requireApp } from "./_real_apps.ts";
 
-const APPS = fromFileUrl(new URL("../../../../apps/apps/", import.meta.url));
-const haveApps = (() => {
-  try {
-    return Deno.statSync(APPS).isDirectory;
-  } catch {
-    return false;
-  }
-})();
-
-const SIX = ["apify", "gotify", "webex", "hubspot", "aws/s3", "salesforce"];
+const SIX = REAL_APPS;
 
 async function inTmp<T>(fn: (tmp: string) => Promise<T>): Promise<T> {
   const tmp = await Deno.makeTempDir({ prefix: "w6w-build-test-" });
@@ -45,7 +37,7 @@ for (const name of SIX) {
     ignore: !haveApps,
     fn: () =>
       inTmp(async (tmp) => {
-        const appDir = join(APPS, name);
+        const appDir = requireApp(name);
         const r = await buildApp(appDir, join(tmp, "out"));
         const manifestText = await Deno.readTextFile(join(r.outDir, "manifest.json"));
         const parsed = parseAppArtifactManifest(JSON.parse(manifestText));
@@ -63,7 +55,8 @@ for (const name of SIX) {
         const code = new TextDecoder().decode(js);
         const fromExec = await describeExec(code);
         // Same scope the loader grants: the app dir plus its declared shared roots. Shared roots
-        // come back realpath'd, so describe through the realpath'd app dir too (APPS may be a symlink).
+        // come back realpath'd, so describe through the realpath'd app dir too (a pack checkout
+        // may be reached through a symlink).
         const realDir = await Deno.realPath(appDir);
         const shared = await resolveSharedRoots(realDir);
         const fromSource = await describeApp(
@@ -87,8 +80,8 @@ Deno.test({
   ignore: !haveApps,
   fn: () =>
     inTmp(async (tmp) => {
-      const a = await buildApp(join(APPS, "apify"), join(tmp, "a"));
-      const b = await buildApp(join(APPS, "apify"), join(tmp, "b"));
+      const a = await buildApp(requireApp("apify"), join(tmp, "a"));
+      const b = await buildApp(requireApp("apify"), join(tmp, "b"));
       for (const f of ["app.js", "manifest.json"]) {
         assertEquals(
           await Deno.readFile(join(a.outDir, f)),
@@ -96,11 +89,11 @@ Deno.test({
         );
       }
       assertEquals(a.digest, b.digest);
-      const plain = await buildApp(join(APPS, "gotify"), join(tmp, "p"), { minify: false });
-      const min = await buildApp(join(APPS, "gotify"), join(tmp, "m"));
+      const plain = await buildApp(requireApp("gotify"), join(tmp, "p"), { minify: false });
+      const min = await buildApp(requireApp("gotify"), join(tmp, "m"));
       assertNotEquals(plain.execSha256, min.execSha256);
       const text = await Deno.readTextFile(join(plain.outDir, "app.js"));
-      assert(!text.includes(await Deno.realPath(join(APPS, "gotify"))), "realpath leaked");
+      assert(!text.includes(await Deno.realPath(requireApp("gotify"))), "realpath leaked");
       assertEquals(
         JSON.parse(await Deno.readTextFile(join(plain.outDir, "manifest.json")))
           .buildInfo.minify,
@@ -114,7 +107,7 @@ Deno.test({
   ignore: !haveApps,
   fn: () =>
     inTmp(async (tmp) => {
-      const appDir = join(APPS, "gotify");
+      const appDir = requireApp("gotify");
       const without = await buildApp(appDir, join(tmp, "n"));
       const a = await buildApp(appDir, join(tmp, "a"), { sourcemap: true });
       const deepRoot = join(tmp, "x", "y", "z", "b");

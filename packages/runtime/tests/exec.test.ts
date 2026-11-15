@@ -102,7 +102,10 @@ Deno.test("exec: signingFetch runs the auth `sign` hook", async () => {
   const app = await execApp();
   const { server, url } = echoServer();
   try {
-    const f = signingFetch(app, app.auths[0], { apiKey: "k-sign" }, {});
+    // The echo server is loopback: opt out of the private-egress guard.
+    const f = signingFetch(app, app.auths[0], { apiKey: "k-sign" }, {
+      egressGuard: { allowPrivate: true },
+    });
     const res = await f({ url, method: "GET", headers: {} });
     assertEquals(JSON.parse(new TextDecoder().decode(res.body)).authorization, "Bearer k-sign");
   } finally {
@@ -116,6 +119,7 @@ Deno.test("exec: needs_refresh runs the `refresh` hook, then signs with the new 
   try {
     const r = await invoke(app, inv("fetch-it", { url }), {
       connection: { ...CONN, state: "needs_refresh" },
+      egressGuard: { allowPrivate: true },
     });
     assertEquals(
       (r.value as { body: { authorization: string } }).body.authorization,

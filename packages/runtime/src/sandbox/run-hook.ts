@@ -44,6 +44,8 @@ export interface WorkerRunOptions {
    */
   readScope?: string | string[];
   timeoutMs?: number;
+  /** Per-Worker memory cap in MiB (see `memoryLimitMb`). Default: `W6W_APP_MEMORY_MB`, else 1024. */
+  memoryLimitMb?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
   /**
@@ -89,6 +91,56 @@ function execDataUrl(code: ExecCode): string {
 const EXEC_URL_PREFIX = "data:text/javascript;base64,";
 
 /**
+ * Per-Worker memory cap, MiB. Research (Deno 2.8.2): `new Worker` accepts no
+ * `resourceLimits` equivalent, and `--v8-flags=--max-old-space-size` is
+ * process-wide (it would cap the host too, and a breach aborts the whole
+ * process rather than one Worker). What enforces: a host-side watchdog that
+ * `terminate()`s the Worker once the isolate's own heap+external bytes (posted
+ * by a reporter prelude, see WORKER_ENTRY_URL) pass the cap. Process RSS is NOT
+ * the primary signal: it is shared, and the parallel test suite (one process,
+ * hundreds of Workers) tripped a 1024 MiB RSS cap on trivial hooks. RSS growth
+ * stays as a 4x backstop (+ peer slack) against an app that forges/starves reports.
+ * Default 1024 MiB; first-party pack apps measured <=113 MiB (tests/pack-sanity.test.ts).
+ * KNOWN LIMIT (measured 2.8.2): `terminate()` is honoured only when the Worker
+ * returns to its event loop; a purely synchronous / microtask-only allocation
+ * loop is not interrupted and needs process-level isolation. Measured with a
+ * 256 MiB cap: the call rejects with `memory_limit_exceeded` after ~94 ms, but
+ * the Worker thread keeps allocating (host RSS 336 MiB -> ~5 GiB within 1 s), so
+ * the host can still be OOM-killed. Same limit applies to `hook_timeout`.
+ * No in-process fix exists on Deno 2.8.2 (no thread kill, no resourceLimits).
+ * Override with host env `W6W_APP_MEMORY_MB` (positive number).
+ */
+export const DEFAULT_APP_MEMORY_MB = 1024;
+const MEMORY_SAMPLE_MS = 20;
+// RSS is process-wide, so N Workers alive together inflate each other's growth (each isolate
+// costs ~50-100 MiB: measured, a parallel suite tripped the 1024 MiB default with trivial
+// hooks). The watchdog therefore allows this much slack per OTHER live Worker it has seen.
+const PEER_SLACK_MB = 128;
+// The reporter module runs first in the Worker (static imports evaluate before the app code is
+// ever loaded) and posts that isolate's own heap + external (ArrayBuffer) bytes every sample.
+// Per-isolate, so peers' allocations do not count against this Worker. Inside a Worker
+// `Deno.memoryUsage()` heapTotal/external are that isolate's (measured: a 200 MiB typed-array
+// allocation moves external 0 -> 200 MiB while the host RSS is shared).
+const WORKER_ENTRY_URL = "data:text/javascript;charset=utf-8," + encodeURIComponent(
+  `const mu=Deno.memoryUsage.bind(Deno);const post=self.postMessage.bind(self);` +
+    `setInterval(()=>{const m=mu();post({type:"mem",mb:(m.heapTotal+m.external)/1048576})},${20});` +
+    `import ${JSON.stringify(import.meta.resolve("./worker.ts"))};`,
+);
+let liveWorkers = 0;
+
+export function memoryLimitMb(override?: number): number {
+  if (override !== undefined && override > 0) return override;
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get("W6W_APP_MEMORY_MB");
+  } catch {
+    raw = undefined;
+  }
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_APP_MEMORY_MB;
+}
+
+/**
  * THE sink for the Worker's read permission. An `entryUrl` start (exec code) gets
  * `false` — any `readScope` is ignored, and the URL must be a `data:` module so
  * nothing on disk is ever imported; an `entryPath` start gets exactly the supplied scope(s).
@@ -132,25 +184,62 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
   // Decided here, host-side, from the start message alone — never from a caller option.
   const read = workerReadPermission(start, opts.readScope);
 
-  const worker = new Worker(import.meta.resolve("./worker.ts"), {
-    type: "module",
-    // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
-    deno: { permissions: { read, ...NO_NET_PERMS } },
-  });
+  const capMb = memoryLimitMb(opts.memoryLimitMb);
+  const baseRss = Deno.memoryUsage().rss;
+  let reportedMb = 0;
+  liveWorkers++;
+  let peakPeers = liveWorkers - 1;
+  let worker: Worker;
+  try {
+    worker = new Worker(WORKER_ENTRY_URL, {
+      type: "module",
+      // @ts-ignore: `deno` worker options are Deno-specific, not in lib.dom.
+      deno: { permissions: { read, ...NO_NET_PERMS } },
+    });
+  } catch (e) {
+    liveWorkers--; // the matching decrement lives in result.finally, never attached on a throw
+    throw e;
+  }
 
-  return new Promise<T>((resolvePromise, reject) => {
+  const result = new Promise<T>((resolvePromise, reject) => {
     const timer = setTimeout(() => {
+      clearInterval(watchdog);
       worker.terminate();
       reject(new W6WError("hook_timeout", "execute", `Worker timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
 
+    const watchdog = setInterval(() => {
+      const grownMb = (Deno.memoryUsage().rss - baseRss) / 1048576;
+      peakPeers = Math.max(peakPeers, liveWorkers - 1);
+      // Primary: the Worker's own isolate. Backstop (an app that forges or starves the reports):
+      // process RSS growth, with a wide margin because RSS is shared with every peer.
+      if (reportedMb > capMb || grownMb > 4 * capMb + peakPeers * PEER_SLACK_MB) {
+        clearInterval(watchdog);
+        clearTimeout(timer);
+        worker.terminate();
+        reject(
+          new W6WError(
+            "memory_limit_exceeded",
+            "execute",
+            `Worker exceeded the ${capMb} MiB memory limit.`,
+          ),
+        );
+      }
+    }, MEMORY_SAMPLE_MS);
+
     const finish = (fn: () => void) => {
       clearTimeout(timer);
+      clearInterval(watchdog);
       worker.terminate();
       fn();
     };
 
     worker.onmessage = async (e: MessageEvent) => {
+      if ((e.data as { type?: string })?.type === "mem") {
+        const mb = Number((e.data as { mb?: number }).mb);
+        if (Number.isFinite(mb)) reportedMb = mb;
+        return;
+      }
       const msg = e.data as WorkerMessage;
       switch (msg.type) {
         case "log":
@@ -349,6 +438,9 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
     };
 
     worker.postMessage(start);
+  });
+  return result.finally(() => {
+    liveWorkers--;
   });
 }
 

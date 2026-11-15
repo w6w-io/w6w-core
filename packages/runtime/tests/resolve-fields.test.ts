@@ -107,7 +107,8 @@ Deno.test("sign injects the credential at the wire; the hook sees a redacted con
       app,
       "form",
       input({ mode: "isolation", base: `http://127.0.0.1:${port}` }),
-      { connection: CONNECTION },
+      // The capture server is loopback: opt out of the private-egress guard.
+      { connection: CONNECTION, egressGuard: { allowPrivate: true } },
     );
     assertEquals(get(), "Bearer rf-key-456");
     const label = out.fields.channel.options![0].label;
