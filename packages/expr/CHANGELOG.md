@@ -3,6 +3,19 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5]
+
+### Added
+
+- `now` evaluator operator: the current time, `{ "now": [] }` as an ISO 8601 UTC timestamp
+  (`"2026-11-15T03:40:12.345Z"`), `{ "now": ["epoch"] }` as whole seconds since the Unix epoch and
+  `{ "now": ["epoch_ms"] }` as milliseconds. The clock is read on every evaluation; an unknown
+  format throws `ExprError`.
+- `{{ }}` templates spell it `now()`, `now('epoch')` and `now('epoch_ms')`, alone or as an operand
+  of a larger inline expression (`{{ now('epoch') > var.deadline ? 'late' : 'on time' }}`), and
+  `serializeTemplate` prints it back the same way. It is the only function call the grammar knows;
+  `{{ now }}` is still a path, and any other call still falls back as malformed text.
+
 ## [0.1.4]
 
 ### Added

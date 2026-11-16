@@ -247,6 +247,12 @@ const INLINE_KEY: Record<string, string> = { "&&": "and", "||": "or" };
 /** The n-ary JSONLogic keys an unparenthesised run of the same operator flattens into. */
 const INLINE_NARY = new Set(["or", "and", "??"]);
 const INLINE_MAX_DEPTH = 64;
+/**
+ * The one call the inline grammar knows (RFC workflow.md, 2026-11-15 amendment): `now()` or
+ * `now('<format>')`, lowered to the `now` operator `@w6w/expr` evaluates. Only this exact bare name
+ * followed by `(` is a call; any other call (`var.a.toLowerCase()`) stays malformed text.
+ */
+const NOW_CALL = "now";
 
 type InlineToken =
   /** `node` is the lowered `get` chain when the path has a computed `[ref]`; else null. */
@@ -437,6 +443,19 @@ function parseInline(inner: string): InlineResult {
   const fail = (): never => {
     throw new InlineMalformed();
   };
+  /** After `now`: `()` or `('<format>')` — one string literal at most, never a path. */
+  const nowCall = (): unknown => {
+    pos += 1; // `(`
+    const args: string[] = [];
+    const t = tokens[pos];
+    if (t?.kind === "lit" && typeof t.value === "string") {
+      args.push(t.value);
+      pos += 1;
+    }
+    if (!isOp(")")) fail();
+    pos += 1;
+    return { [NOW_CALL]: args };
+  };
 
   const atom = (): unknown => {
     if (++depth > INLINE_MAX_DEPTH) fail();
@@ -449,6 +468,7 @@ function parseInline(inner: string): InlineResult {
       }
       if (t.kind === "ref") {
         pos += 1;
+        if (t.node === null && t.value === NOW_CALL && isOp("(")) return nowCall();
         if (t.node !== null) return t.node;
         if (isSecretRef(t.value)) return { var: t.value }; // refused below, whatever its spelling
         return { var: normalizeRefPath(t.value) };
@@ -542,6 +562,11 @@ function inlineNode(v: unknown): { key: string; args: unknown[] } | null {
   if (key === "if") return args.length >= 3 && args.length % 2 === 1 ? { key, args } : null;
   if (key === "!") return args.length === 1 ? { key, args } : null;
   if (key === "get") return args.length === 2 ? { key, args } : null;
+  if (key === NOW_CALL) {
+    return args.length === 0 || (args.length === 1 && typeof args[0] === "string")
+      ? { key, args }
+      : null;
+  }
   if (INLINE_NARY.has(key)) return args.length >= 2 ? { key, args } : null;
   if (Object.hasOwn(INLINE_PRECEDENCE, key)) return args.length === 2 ? { key, args } : null;
   return null;
@@ -637,7 +662,7 @@ function inlinePrecedence(v: unknown): number {
   if (!node) return 7;
   if (node.key === "if") return 0;
   if (node.key === "!") return 6;
-  if (node.key === "get") return 7;
+  if (node.key === "get" || node.key === NOW_CALL) return 7;
   const token = node.key === "and" ? "&&" : node.key === "or" ? "||" : node.key;
   return INLINE_PRECEDENCE[token];
 }
@@ -663,6 +688,8 @@ function formatInline(expr: unknown): string | null {
         const own = inlinePrecedence(v);
         if (node.key === "get") {
           text = printRefExpr(v);
+        } else if (node.key === NOW_CALL) {
+          text = `${NOW_CALL}(${node.args.map((a) => quoteInline(a as string)).join("")})`;
         } else if (node.key === "if") {
           const pieces: string[] = [];
           for (let i = 0; i < node.args.length - 1; i += 2) {

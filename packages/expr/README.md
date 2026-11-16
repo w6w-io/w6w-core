@@ -41,7 +41,9 @@ showIf({ "!": { var: "advanced" } }, { advanced: false }); // true
 · `includes` (reverse `in`) · `include-any` / `include-all` (array comparisons) · `get` — one key of
 a computed value, `{ "get": [<object>, <key>] }`: an own object key or an array index (an integer or
 a digit string), used whole (`"a.b"` is one key, not a path); `null` when missing or when the base
-is not an object.
+is not an object. · `now` — the current time: `{ "now": [] }` is an ISO 8601 UTC timestamp,
+`{ "now": ["epoch"] }` whole seconds since the Unix epoch, `{ "now": ["epoch_ms"] }` milliseconds;
+any other format throws `ExprError`.
 
 Unknown operators throw `ExprError`. JSONLogic truthiness applies (an empty array is falsy). `??` is
 the one exception: it never uses truthiness, only a `null`/`undefined` check.
@@ -126,6 +128,26 @@ operand that reads `secrets` (including a computed key, or the object a key is r
 the whole expression to a `var` part carrying the original text, as with a chain.
 `serializeTemplate` prints the expression back as infix text with single-quoted strings, and falls
 back to `{{ =<raw> }}` for a shape it cannot spell. See `rfcs/workflow.md`'s 2026-11-11 amendment.
+
+### The current time: `now()`
+
+`now` is the one function call the grammar knows, so a step can stamp the time without a script:
+
+| Text              | Value                                                                  |
+| ----------------- | ---------------------------------------------------------------------- |
+| `now()`           | ISO 8601 UTC timestamp with milliseconds, `"2026-11-15T03:40:12.345Z"` |
+| `now('epoch')`    | whole seconds since the Unix epoch, a number                           |
+| `now('epoch_ms')` | milliseconds since the Unix epoch, a number                            |
+
+```ts
+parseTemplate("{{ now('epoch') > var.deadline ? 'late' : 'on time' }}");
+// { if: [{ ">": [{ now: ["epoch"] }, { var: "var.deadline" }] }, "late", "on time"] }
+```
+
+It is an operand like any other (`{{ var.sentAt ?? now() }}`). The clock is read each time the
+expression is evaluated. `{{ now }}` without parentheses is still the path `now`, and any other call
+(`var.a.toLowerCase()`, `today()`) still falls back as malformed text. See `rfcs/workflow.md`'s
+2026-11-15 amendment.
 
 ## API
 

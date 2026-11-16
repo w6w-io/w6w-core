@@ -854,3 +854,74 @@ Deno.test("computed key: serialize prints bracket form and parse(serialize(x)) i
     assertEquals(parseTemplate(serializeTemplate(parts)), parts);
   }
 });
+
+Deno.test("now(): the one call the inline grammar knows, lowered to the now operator", () => {
+  for (
+    const [template, expr] of [
+      ["{{ now() }}", { now: [] }],
+      ["{{now()}}", { now: [] }],
+      ["{{ now('epoch') }}", { now: ["epoch"] }],
+      ['{{ now("epoch_ms") }}', { now: ["epoch_ms"] }],
+      ["{{ now( 'iso' ) }}", { now: ["iso"] }],
+      [
+        "{{ now('epoch') > var.deadline ? 'late' : 'on time' }}",
+        { if: [{ ">": [{ now: ["epoch"] }, { var: "var.deadline" }] }, "late", "on time"] },
+      ],
+      ["{{ var.at ?? now() }}", { "??": [{ var: "var.at" }, { now: [] }] }],
+    ] as const
+  ) {
+    for (const mode of ["editor", "render"] as const) {
+      assertEquals(
+        parseTemplate(template, mode),
+        [{ kind: "expr", expr }] as unknown as ExprPart[],
+        `${mode}: ${template}`,
+      );
+    }
+  }
+});
+
+Deno.test("now(): text around it stays text, and it round-trips through serializeTemplate", () => {
+  const parts = parseTemplate("sent at {{ now() }} ({{ now('epoch') }})");
+  assertEquals(parts, [
+    { kind: "text", value: "sent at " },
+    { kind: "expr", expr: { now: [] } },
+    { kind: "text", value: " (" },
+    { kind: "expr", expr: { now: ["epoch"] } },
+    { kind: "text", value: ")" },
+  ]);
+  const text = serializeTemplate(parts);
+  assertEquals(text, "sent at {{ now() }} ({{ now('epoch') }})");
+  assertEquals(parseTemplate(text), parts);
+  const ternary = "{{ now('epoch') > var.deadline ? 'late' : 'on time' }}";
+  assertEquals(serializeTemplate(parseTemplate(ternary)), ternary);
+});
+
+Deno.test("now(): has no refs, so a host's root-anchoring treats it as rooted", () => {
+  assertEquals(coalesceOperandRefs({ now: [] }), []);
+  assertEquals(coalesceOperandRefs({ now: ["epoch"] }), []);
+  assertEquals(coalesceOperandRefs({ "??": [{ var: "var.at" }, { now: [] }] }), ["var.at"]);
+});
+
+Deno.test("now(): anything but the bare name with () or ('<format>') falls back as before", () => {
+  for (
+    const [template, expected] of [
+      // Not a call at all: a path named `now`.
+      ["{{ now }}", [{ kind: "var", ref: "now" }]],
+      ["{{ vars.now }}", [{ kind: "var", ref: "vars.now" }]],
+      // Other calls, a path argument, two arguments, an unclosed call: malformed, as before.
+      ["{{ today() }}", [{ kind: "var", ref: "today()" }]],
+      ["{{ var.now() }}", [{ kind: "var", ref: "var.now()" }]],
+      ["{{ now(var.fmt) }}", [{ kind: "var", ref: "now(var.fmt)" }]],
+      ["{{ now('epoch' 'iso') }}", [{ kind: "var", ref: "now('epoch' 'iso')" }]],
+      ["{{ now(1) }}", [{ kind: "var", ref: "now(1)" }]],
+      ["{{ now( }}", [{ kind: "var", ref: "now(" }]],
+    ] as const
+  ) {
+    assertEquals(parseTemplate(template), expected as unknown as ExprPart[], template);
+  }
+});
+
+Deno.test("now(): an =<jsonlogic> payload with a computed format prints as raw JSON", () => {
+  const parts = [{ kind: "expr" as const, expr: { now: [{ var: "var.fmt" }] } }];
+  assertEquals(serializeTemplate(parts), '{{ ={"now":[{"var":"var.fmt"}]} }}');
+});

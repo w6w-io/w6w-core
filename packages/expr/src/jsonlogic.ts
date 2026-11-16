@@ -82,6 +82,32 @@ function arith(args: unknown[], data: unknown, fn: (a: number, b: number) => num
   return vals.reduce((acc, v) => fn(acc, v));
 }
 
+/**
+ * The `now` operator's formats: `iso` (the default) is an ISO 8601 UTC timestamp with milliseconds,
+ * `epoch` whole seconds since the Unix epoch, `epoch_ms` milliseconds since it.
+ */
+const NOW_FORMATS = ["iso", "epoch", "epoch_ms"] as const;
+
+/**
+ * The current time, read from `Date.now()` on every call: two `now`s in one rule may differ by the
+ * time it takes to evaluate it. A missing or `null` format is `iso`; anything else throws.
+ */
+function now(format: unknown): string | number {
+  const ms = Date.now();
+  switch (format ?? "iso") {
+    case "iso":
+      return new Date(ms).toISOString();
+    case "epoch":
+      return Math.floor(ms / 1000);
+    case "epoch_ms":
+      return ms;
+    default:
+      throw new ExprError(
+        `Unknown "now" format ${JSON.stringify(format)}; expected one of ${NOW_FORMATS.join(", ")}`,
+      );
+  }
+}
+
 /** Evaluate a JSONLogic rule against `data`. */
 export function evaluate(logic: unknown, data: unknown = {}): unknown {
   if (Array.isArray(logic)) return logic.map((l) => evaluate(l, data));
@@ -203,6 +229,8 @@ export function evaluate(logic: unknown, data: unknown = {}): unknown {
       return arith(args, data, (a, b) => a / b);
     case "%":
       return arith(args, data, (a, b) => a % b);
+    case "now":
+      return now(args[0] === undefined ? null : evaluate(args[0], data));
 
     default:
       throw new ExprError(`Unknown JSONLogic operator: "${op}"`);
