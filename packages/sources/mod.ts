@@ -39,6 +39,18 @@ export {
   parseBitbucketRef,
 } from "./src/bitbucket.ts";
 export type { BitbucketRef } from "./src/bitbucket.ts";
+export { npmResolver } from "./src/npm.ts";
+export type { NpmResolvedSource } from "./src/npm.ts";
+export { jsrResolver } from "./src/jsr.ts";
+export {
+  assertNoNodeModules,
+  assertNoPackageImports,
+  packageKey,
+  parsePackageRef,
+  selectVersion,
+  validatePackageName,
+} from "./src/package-ref.ts";
+export type { PackageRef, PackageRegistry } from "./src/package-ref.ts";
 export { defaultCacheDir, extractStripped, resolveViaTarball } from "./src/tarball.ts";
 export { applySubpath } from "./src/subpath.ts";
 export {

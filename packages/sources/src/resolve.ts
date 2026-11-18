@@ -13,12 +13,16 @@ import { localResolver } from "./local.ts";
 import { githubResolver } from "./github.ts";
 import { gitlabResolver } from "./gitlab.ts";
 import { bitbucketResolver } from "./bitbucket.ts";
+import { npmResolver } from "./npm.ts";
+import { jsrResolver } from "./jsr.ts";
 
 /** Built-in resolvers, in priority order (scheme-dispatched, so order is cosmetic). */
 export const defaultResolvers: Resolver[] = [
   githubResolver,
   gitlabResolver,
   bitbucketResolver,
+  npmResolver,
+  jsrResolver,
   localResolver,
 ];
 

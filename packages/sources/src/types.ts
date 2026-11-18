@@ -51,7 +51,8 @@ export function classSegment(base: string, cls: AuthClass): string {
 /** Result of {@link Resolver.resolveDetailed}. */
 export interface ResolvedSource {
   dir: string;
-  /** The immutable revision the fetch actually used (GitHub commit SHA); `undefined` otherwise. */
+  /** The immutable revision the fetch actually used (GitHub commit SHA); `undefined` otherwise.
+   * For `npm:`/`jsr:` packages it is the exact resolved version (not a ref). */
   revision?: string;
 }
 
