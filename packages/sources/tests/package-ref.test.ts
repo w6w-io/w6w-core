@@ -128,3 +128,15 @@ Deno.test("entry path: rooted key stripped once; unsafe refused", () => {
   ) assertEquals(code(() => assertSafeEntryPath(p)), "unsafe_entry", JSON.stringify(p));
   assertThrows(() => assertSafeEntryPath("/a/../b"), SourceError);
 });
+
+Deno.test("A3: selectVersion uses own-property lookup (toString/constructor are not versions; invalid range -> bad_ref)", () => {
+  const info = { "1.0.0": {} };
+  for (const r of ["toString", "constructor", "hasOwnProperty"]) {
+    assertEquals(code(() => selectVersion("npm", info, r, { latest: "1.0.0" })), "bad_ref", r);
+    assertEquals(code(() => selectVersion("jsr", info, r)), "bad_ref", r);
+  }
+  assertEquals(
+    code(() => selectVersion("npm", info, undefined, { latest: "toString" })),
+    "not_found",
+  );
+});

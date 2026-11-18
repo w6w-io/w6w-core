@@ -263,8 +263,14 @@ async function bufferVerified(
     buf.set(c, off);
     off += c.byteLength;
   }
-  const toks = sri.trim().split(/\s+/).map((t) => t.split("-", 2) as [string, string])
-    .filter(([a, d]) => SRI_ALGOS[a] && d);
+  // Strict: every whitespace-separated token must be `<algo>-<base64>` with a non-empty digest;
+  // a malformed/empty token refuses the whole value (never silently dropped).
+  const toks: [string, string][] = [];
+  for (const t of sri.trim().split(/\s+/)) {
+    const m = /^([a-z0-9]+)-([A-Za-z0-9+/]+={0,2})(\?.*)?$/.exec(t);
+    if (!m) throw new SourceError("integrity_mismatch", "Malformed integrity token");
+    if (SRI_ALGOS[m[1]]) toks.push([m[1], m[2]]);
+  }
   if (toks.length === 0) {
     throw new SourceError("integrity_mismatch", "No supported integrity algorithm");
   }

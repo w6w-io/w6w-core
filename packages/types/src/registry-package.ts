@@ -1,7 +1,6 @@
 /**
  * Built-package index (`index.json` written by `@w6w/app-build` pack mode) and the
- * parser a host uses before trusting a registry package. Shape-only skeleton: the
- * parser body is filled by a later slice.
+ * parser a host uses before trusting a registry package.
  */
 
 export interface PackIndexApp {
@@ -60,6 +59,7 @@ function assertSingleSegment(what: string, v: unknown): string {
   if (typeof v !== "string") bad("invalid_index", `${what} must be a string`);
   assertSafeEntryPath(v);
   if (v.includes("/")) bad("unsafe_entry", `${what} contains '/': ${JSON.stringify(v)}`);
+  if (v.includes("..")) bad("unsafe_entry", `${what} contains '..': ${JSON.stringify(v)}`);
   return v;
 }
 

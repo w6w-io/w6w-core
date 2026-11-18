@@ -222,3 +222,59 @@ Deno.test("npm: auth (AC6) — token => Bearer on every request; anonymous/host 
     assert(!(e as Error).message.includes(SECRET));
   });
 });
+
+Deno.test("AC4: node_modules symlink / hardlink / directory entries are refused (onEntry runs before the skip)", async () => {
+  const cases: Record<string, Record<string, import("./_mock_registry.ts").TgzEntry>> = {
+    symlink: { "package/node_modules/dep": { type: "symlink", linkname: "../x" } },
+    hardlink: { "package/node_modules/dep": { type: "link", linkname: "package/package.json" } },
+    directory: { "package/node_modules": { type: "directory" } },
+  };
+  for (const [name, extra] of Object.entries(cases)) {
+    await withEnv(async (m, cacheDir) => {
+      await m.addNpm("pkg", "1.0.0", {
+        files: { "package/package.json": pkgJson(), ...extra },
+      });
+      assertEquals(
+        await code(npmResolver.resolveDetailed!("npm:pkg@1.0.0", { cacheDir })),
+        "npm_dependencies_forbidden",
+        name,
+      );
+    });
+  }
+});
+
+Deno.test("A3: a range naming an Object.prototype member is rejected bad_ref, never matched as a version", async () => {
+  await withEnv(async (m, cacheDir) => {
+    await m.addNpm("pkg", "1.0.0", { files: { "package/package.json": pkgJson() } });
+    m.setTag("pkg", "latest", "1.0.0");
+    for (const r of ["toString", "constructor", "__proto__"]) {
+      assertEquals(
+        await code(npmResolver.resolveDetailed!(`npm:pkg@${r}`, { cacheDir })),
+        "bad_ref",
+        r,
+      );
+    }
+  });
+});
+
+Deno.test("A4: an oversized packument is cut off while streaming -> too_large", async () => {
+  await withEnv(async (m, cacheDir) => {
+    m.extra.push((req) => {
+      if (new URL(req.url).pathname !== "/big") return undefined;
+      const chunk = new Uint8Array(1024 * 1024).fill(32);
+      let sent = 0;
+      return new Response(
+        new ReadableStream({
+          pull(c) {
+            if (sent++ >= 40) return c.close();
+            c.enqueue(chunk);
+          },
+        }),
+      );
+    });
+    assertEquals(
+      await code(npmResolver.resolveDetailed!("npm:big@1.0.0", { cacheDir })),
+      "too_large",
+    );
+  });
+});

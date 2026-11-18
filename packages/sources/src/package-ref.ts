@@ -1,6 +1,5 @@
 /**
- * Shared grammar + policy for `npm:` / `jsr:` package refs (P1). Skeleton: signatures only;
- * bodies are filled by later slices.
+ * Shared grammar + policy for `npm:` / `jsr:` package refs (P1).
  */
 import { maxSatisfying, parse, parseRange } from "jsr:@std/semver@^1";
 import { SourceError } from "./types.ts";
@@ -131,7 +130,7 @@ export function selectVersion(
   if (range === undefined || range === "") {
     if (registry === "npm") {
       const latest = tags?.latest;
-      if (!latest || !(latest in info)) return fail("Package has no 'latest' dist-tag");
+      if (!latest || !Object.hasOwn(info, latest)) return fail("Package has no 'latest' dist-tag");
       return latest;
     }
     const stable = all.filter((v) => usable(v) && !isPrerelease(v)).sort(compareVersions);
@@ -139,11 +138,11 @@ export function selectVersion(
     return stable[stable.length - 1];
   }
 
-  if (tags && Object.hasOwn(tags, range) && tags[range] in info) {
+  if (tags && Object.hasOwn(tags, range) && Object.hasOwn(info, tags[range])) {
     if (!usable(tags[range])) return fail("Tagged version is yanked");
     return tags[range];
   }
-  if (range in info) {
+  if (Object.hasOwn(info, range)) {
     if (!usable(range)) return fail(`Version ${range} is yanked`);
     return range;
   }

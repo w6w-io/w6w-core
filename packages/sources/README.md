@@ -17,14 +17,12 @@ const b = await resolve("file:./fixtures/apps/hello"); // bare paths work too
 
 ## Resolvers
 
-| Scheme   | Form                         | Notes                                                                                                                           |
-| -------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `file`   | `file:./path` or a bare path | zero-dependency; the dir lib core already consumes                                                                              |
-| `github` | `github:owner/repo@ref`      | fetches the codeload tarball, gunzips + untars, strips the top component, caches by `owner/repo@ref` (`@ref` optional → `HEAD`) |
-
-| `npm` | `npm:[@scope/]name[@range][#app-id]` | packument from `W6W_NPM_REGISTRY`; tarball verified
-(`dist.integrity` sha512) before extraction | | `jsr` | `jsr:@scope/name[@range][#app-id]` | native
-`meta.json` / `<v>_meta.json` / files from `W6W_JSR_URL`; each file's sha256 verified |
+| Scheme   | Form                                 | Notes                                                                                                                           |
+| -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `file`   | `file:./path` or a bare path         | zero-dependency; the dir lib core already consumes                                                                              |
+| `github` | `github:owner/repo@ref`              | fetches the codeload tarball, gunzips + untars, strips the top component, caches by `owner/repo@ref` (`@ref` optional → `HEAD`) |
+| `npm`    | `npm:[@scope/]name[@range][#app-id]` | packument from `W6W_NPM_REGISTRY`; tarball verified (`dist.integrity` sha512) before extraction                                 |
+| `jsr`    | `jsr:@scope/name[@range][#app-id]`   | native `meta.json` / `<v>_meta.json` / files from `W6W_JSR_URL`; each file's sha256 verified                                    |
 
 Dispatch is by scheme; bare paths fall to the local resolver.
 

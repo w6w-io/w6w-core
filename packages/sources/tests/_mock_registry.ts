@@ -2,26 +2,58 @@
  * Local mock registry for npm (and, extended by the JSR tests, JSR). `Deno.serve({port:0})`,
  * records every request (path + headers). No live network.
  */
-import { TarStream, type TarStreamInput } from "jsr:@std/tar@^0.1";
 
 export interface RecordedRequest {
   path: string;
   headers: Headers;
 }
 
+/** A tar entry value: file text, or a non-regular entry (link/directory) the TarStream cannot emit. */
+export type TgzEntry = string | { type: "symlink" | "link"; linkname: string } | {
+  type: "directory";
+};
+
+function tarHeader(name: string, size: number, typeflag: string, linkname = ""): Uint8Array {
+  const h = new Uint8Array(512);
+  const enc = new TextEncoder();
+  const put = (off: number, v: string) => h.set(enc.encode(v), off);
+  const oct = (n: number, w: number) => n.toString(8).padStart(w - 1, "0") + "\0";
+  put(0, name);
+  put(100, oct(0o644, 8));
+  put(108, oct(0, 8));
+  put(116, oct(0, 8));
+  put(124, oct(size, 12));
+  put(136, oct(0, 12));
+  put(148, "        ");
+  put(156, typeflag);
+  put(157, linkname);
+  put(257, "ustar\0");
+  put(263, "00");
+  let sum = 0;
+  for (const b of h) sum += b;
+  put(148, sum.toString(8).padStart(6, "0") + "\0 ");
+  return h;
+}
+
+/** Build a gzip'd tarball; hand-rolled ustar so tests can emit symlink/hardlink/directory entries. */
 export async function makeTgz(
-  files: Record<string, string>,
+  files: Record<string, TgzEntry>,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const inputs: TarStreamInput[] = Object.entries(files).map(([path, text]) => {
-    const bytes = new TextEncoder().encode(text);
-    return {
-      type: "file",
-      path,
-      size: bytes.length,
-      readable: ReadableStream.from([bytes]),
-    } as TarStreamInput;
-  });
-  const gz = ReadableStream.from(inputs).pipeThrough(new TarStream()).pipeThrough(
+  const parts: Uint8Array[] = [];
+  for (const [path, v] of Object.entries(files)) {
+    if (typeof v === "string") {
+      const bytes = new TextEncoder().encode(v);
+      parts.push(tarHeader(path, bytes.length, "0"));
+      parts.push(bytes);
+      parts.push(new Uint8Array((512 - (bytes.length % 512)) % 512));
+    } else if (v.type === "directory") {
+      parts.push(tarHeader(path.endsWith("/") ? path : path + "/", 0, "5"));
+    } else {
+      parts.push(tarHeader(path, 0, v.type === "symlink" ? "2" : "1", v.linkname));
+    }
+  }
+  parts.push(new Uint8Array(1024));
+  const gz = new Blob(parts as BlobPart[]).stream().pipeThrough(
     new CompressionStream("gzip") as unknown as TransformStream<Uint8Array, Uint8Array>,
   );
   return new Uint8Array(await new Response(gz).arrayBuffer()) as Uint8Array<ArrayBuffer>;
@@ -33,7 +65,7 @@ export async function sha512Sri(b: Uint8Array<ArrayBuffer>): Promise<string> {
 }
 
 export interface NpmVersionOpts {
-  files?: Record<string, string>;
+  files?: Record<string, TgzEntry>;
   deprecated?: string;
   /** Override `dist.tarball` (e.g. an off-origin URL). */
   tarballUrl?: string;

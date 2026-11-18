@@ -192,3 +192,37 @@ Deno.test("onEntry sees every entry; a throw aborts and publishes nothing", asyn
     await srv.close();
   }
 });
+
+Deno.test("A6: malformed/empty SRI token is refused integrity_mismatch, nothing extracted", async () => {
+  const tgz = await makeTgz({ "package/a.txt": "hi" });
+  const good = await sri(tgz);
+  const srv = serve(() => new Response(tgz));
+  try {
+    for (
+      const bad of ["sha512-", `sha512- ${good.replace("sha512", "sha256")}`, `sha512- ${good}`]
+    ) {
+      await withCache(async (cacheDir) => {
+        let extracted = false;
+        const e = await assertRejects(
+          () =>
+            resolveViaTarball({
+              cacheKey: ["sri"],
+              url: `${srv.base}/x.tgz`,
+              integrity: bad,
+              onEntry: () => {
+                extracted = true;
+              },
+            }, { cacheDir }),
+          SourceError,
+          undefined,
+          `integrity ${JSON.stringify(bad)}`,
+        );
+        assertEquals((e as SourceError).code, "integrity_mismatch");
+        assertEquals(extracted, false);
+        assertEquals([...Deno.readDirSync(cacheDir)].length, 0);
+      });
+    }
+  } finally {
+    await srv.close();
+  }
+});

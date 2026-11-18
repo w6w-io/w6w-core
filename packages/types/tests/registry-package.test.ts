@@ -77,3 +77,18 @@ Deno.test("refuses empty and absolute segments", () => {
   }
   assertEquals(assertSafeEntryPath("a/b.js"), "a/b.js");
 });
+
+Deno.test("A8: id/version merely containing '..' is refused unsafe_entry", () => {
+  for (const bad of ["a..b", "1..0", "..a", "a.."]) {
+    assertEquals(
+      code(() => parseRegistryPackageIndex(idx([app({ id: bad })]))),
+      "unsafe_entry",
+      `id ${bad}`,
+    );
+    assertEquals(
+      code(() => parseRegistryPackageIndex(idx([app({ version: bad })]))),
+      "unsafe_entry",
+      `version ${bad}`,
+    );
+  }
+});

@@ -25,6 +25,31 @@ import {
 
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 const MAX_PACKUMENT_BYTES = 32 * 1024 * 1024;
+
+/** Read a response body as text, refusing to buffer more than `limit` bytes while streaming. */
+async function readBoundedText(res: Response, limit: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > limit) {
+      await reader.cancel().catch(() => {});
+      throw new SourceError("too_large", "npm packument exceeds the size limit");
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return new TextDecoder().decode(out);
+}
 const MAX_REDIRECTS = 5;
 
 /** Registry base (origin + optional path prefix), from `W6W_NPM_REGISTRY`. No trailing slash. */
@@ -95,10 +120,7 @@ async function readPackument(
     await res.body?.cancel().catch(() => {});
     throw httpFailure(cls, "npm", res.status, res.headers, `${name}`);
   }
-  const text = await res.text();
-  if (text.length > MAX_PACKUMENT_BYTES) {
-    throw new SourceError("too_large", "npm packument exceeds the size limit");
-  }
+  const text = await readBoundedText(res, MAX_PACKUMENT_BYTES);
   try {
     const doc = JSON.parse(text);
     if (!doc || typeof doc !== "object") throw new Error("not an object");
@@ -164,7 +186,10 @@ export const npmResolver: Resolver = {
         throw offRegistry(new URL(dist.tarball, base).origin);
       }
       tarball = new URL(dist.tarball, base).href;
-      if (typeof dist.integrity !== "string" || !/(^|\s)sha512-/.test(dist.integrity)) {
+      if (
+        typeof dist.integrity !== "string" ||
+        !/(^|\s)sha512-[A-Za-z0-9+/]+={0,2}(\s|$)/.test(dist.integrity)
+      ) {
         throw new SourceError(
           "integrity_mismatch",
           `${packageKey(pref)}@${version} has no sha512 dist.integrity`,
