@@ -169,6 +169,14 @@
       "order": 10
     },
     {
+      "path": "publish-to-npm-jsr.md",
+      "slug": "build-a-w6w-app/publish-to-npm-jsr",
+      "section": "build-apps",
+      "title": "Publish to npm or JSR",
+      "order": 20,
+      "summary": "Ship a prebuilt w6w package to npm or JSR: build a pack with `w6w apps package`, then publish the `w6w/` tree yourself with `npm publish` or `deno publish`."
+    },
+    {
       "path": "../README.md",
       "slug": "core",
       "section": "reference-packages",
