@@ -1,0 +1,126 @@
+/**
+ * Local mock registry for npm (and, extended by the JSR tests, JSR). `Deno.serve({port:0})`,
+ * records every request (path + headers). No live network.
+ */
+import { TarStream, type TarStreamInput } from "jsr:@std/tar@^0.1";
+
+export interface RecordedRequest {
+  path: string;
+  headers: Headers;
+}
+
+export async function makeTgz(
+  files: Record<string, string>,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const inputs: TarStreamInput[] = Object.entries(files).map(([path, text]) => {
+    const bytes = new TextEncoder().encode(text);
+    return {
+      type: "file",
+      path,
+      size: bytes.length,
+      readable: ReadableStream.from([bytes]),
+    } as TarStreamInput;
+  });
+  const gz = ReadableStream.from(inputs).pipeThrough(new TarStream()).pipeThrough(
+    new CompressionStream("gzip") as unknown as TransformStream<Uint8Array, Uint8Array>,
+  );
+  return new Uint8Array(await new Response(gz).arrayBuffer()) as Uint8Array<ArrayBuffer>;
+}
+
+export async function sha512Sri(b: Uint8Array<ArrayBuffer>): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-512", b));
+  return "sha512-" + btoa(String.fromCharCode(...d));
+}
+
+export interface NpmVersionOpts {
+  files?: Record<string, string>;
+  deprecated?: string;
+  /** Override `dist.tarball` (e.g. an off-origin URL). */
+  tarballUrl?: string;
+  /** Override `dist.integrity`. */
+  integrity?: string;
+  /** Serve the tarball path as a 302 to this URL. */
+  redirectTo?: string;
+  /** Serve these raw bytes instead of the built tarball. */
+  rawTarball?: Uint8Array<ArrayBuffer>;
+}
+
+export type ExtraHandler = (req: Request, url: URL) => Response | Promise<Response> | undefined;
+
+export class MockRegistry {
+  readonly requests: RecordedRequest[] = [];
+  readonly extra: ExtraHandler[] = [];
+  private packs = new Map<string, {
+    tags: Record<string, string>;
+    versions: Map<string, { opts: NpmVersionOpts; tgz: Uint8Array<ArrayBuffer>; sri: string }>;
+  }>();
+  private server: Deno.HttpServer;
+  readonly base: string;
+
+  constructor() {
+    this.server = Deno.serve({ port: 0, onListen() {} }, (req) => this.handle(req));
+    this.base = `http://127.0.0.1:${(this.server.addr as Deno.NetAddr).port}`;
+  }
+
+  /** Requests whose path starts with `prefix`. */
+  hits(prefix = ""): RecordedRequest[] {
+    return this.requests.filter((r) => r.path.startsWith(prefix));
+  }
+
+  async addNpm(name: string, version: string, opts: NpmVersionOpts = {}): Promise<void> {
+    const files = opts.files ?? {
+      "package/package.json": JSON.stringify({ name, version }),
+      "package/w6w/app.js": "export default 1;",
+    };
+    const tgz = await makeTgz(files);
+    let p = this.packs.get(name);
+    if (!p) this.packs.set(name, p = { tags: {}, versions: new Map() });
+    p.versions.set(version, { opts, tgz, sri: await sha512Sri(tgz) });
+  }
+
+  setTag(name: string, tag: string, version: string): void {
+    this.packs.get(name)!.tags[tag] = version;
+  }
+
+  private tarballPath(name: string, v: string): string {
+    return `/-/tgz/${name}/${v}.tgz`;
+  }
+
+  private handle(req: Request): Response | Promise<Response> {
+    const url = new URL(req.url);
+    this.requests.push({ path: url.pathname, headers: new Headers(req.headers) });
+    for (const h of this.extra) {
+      const r = h(req, url);
+      if (r) return r;
+    }
+    if (url.pathname.startsWith("/-/tgz/")) {
+      const m = /^\/-\/tgz\/(.+)\/([^/]+)\.tgz$/.exec(url.pathname);
+      const v = m && this.packs.get(m[1])?.versions.get(m[2]);
+      if (!v) return new Response("nope", { status: 404 });
+      if (v.opts.redirectTo) {
+        return new Response(null, { status: 302, headers: { location: v.opts.redirectTo } });
+      }
+      return new Response(v.opts.rawTarball ?? v.tgz);
+    }
+    const name = decodeURIComponent(url.pathname.slice(1));
+    const p = this.packs.get(name);
+    if (!p) return new Response("not found", { status: 404 });
+    const versions: Record<string, unknown> = {};
+    for (const [ver, v] of p.versions) {
+      versions[ver] = {
+        name,
+        version: ver,
+        ...(v.opts.deprecated ? { deprecated: v.opts.deprecated } : {}),
+        dist: {
+          tarball: v.opts.tarballUrl ?? `${this.base}${this.tarballPath(name, ver)}`,
+          integrity: v.opts.integrity ?? v.sri,
+        },
+      };
+    }
+    return Response.json({ name, "dist-tags": p.tags, versions });
+  }
+
+  close(): Promise<void> {
+    return this.server.shutdown();
+  }
+}
