@@ -45,6 +45,16 @@ export interface NpmVersionOpts {
   rawTarball?: Uint8Array<ArrayBuffer>;
 }
 
+export interface JsrVersionOpts {
+  yanked?: boolean;
+  /** Manifest key -> raw file text. Keys are used verbatim (e.g. `/w6w/app.js`). */
+  files?: Record<string, string>;
+  /** Manifest key -> checksum override (e.g. a wrong hash). */
+  badChecksum?: Record<string, string>;
+  /** Manifest key -> size override. */
+  badSize?: Record<string, number>;
+}
+
 export type ExtraHandler = (req: Request, url: URL) => Response | Promise<Response> | undefined;
 
 export class MockRegistry {
@@ -54,6 +64,7 @@ export class MockRegistry {
     tags: Record<string, string>;
     versions: Map<string, { opts: NpmVersionOpts; tgz: Uint8Array<ArrayBuffer>; sri: string }>;
   }>();
+  private jsr = new Map<string, Map<string, JsrVersionOpts & { files: Record<string, string> }>>();
   private server: Deno.HttpServer;
   readonly base: string;
 
@@ -78,6 +89,52 @@ export class MockRegistry {
     p.versions.set(version, { opts, tgz, sri: await sha512Sri(tgz) });
   }
 
+  addJsr(name: string, version: string, opts: JsrVersionOpts = {}): void {
+    const files = opts.files ?? {
+      "/deno.json": JSON.stringify({ name, version, exports: "./w6w/app.js" }),
+      "/w6w/app.js": "export default 1;",
+      "/README.md": "readme",
+      "/src/other.ts": "export {}",
+    };
+    let p = this.jsr.get(name);
+    if (!p) this.jsr.set(name, p = new Map());
+    p.set(version, { ...opts, files });
+  }
+
+  private async handleJsr(url: URL): Promise<Response | undefined> {
+    const m = /^\/(@[^/]+\/[^/]+)\/(.+)$/.exec(url.pathname);
+    if (!m) return undefined;
+    const p = this.jsr.get(m[1]);
+    if (!p) return undefined;
+    const rest = m[2];
+    if (rest === "meta.json") {
+      const versions: Record<string, unknown> = {};
+      for (const [v, o] of p) versions[v] = o.yanked ? { yanked: true } : {};
+      return Response.json({ scope: "", name: m[1], versions });
+    }
+    const mm = /^([^/]+)_meta\.json$/.exec(rest);
+    if (mm) {
+      const o = p.get(mm[1]);
+      if (!o) return new Response("nope", { status: 404 });
+      const manifest: Record<string, unknown> = {};
+      for (const [k, text] of Object.entries(o.files)) {
+        const b = new TextEncoder().encode(text);
+        const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))]
+          .map((x) => x.toString(16).padStart(2, "0")).join("");
+        manifest[k] = {
+          size: o.badSize?.[k] ?? b.length,
+          checksum: o.badChecksum?.[k] ?? `sha256-${h}`,
+        };
+      }
+      return Response.json({ manifest });
+    }
+    const fm = /^([^/]+)(\/.+)$/.exec(rest);
+    const o = fm && p.get(fm[1]);
+    const text = o && o.files[decodeURIComponent(fm![2])];
+    if (text === undefined || text === null) return new Response("nope", { status: 404 });
+    return new Response(text);
+  }
+
   setTag(name: string, tag: string, version: string): void {
     this.packs.get(name)!.tags[tag] = version;
   }
@@ -92,6 +149,9 @@ export class MockRegistry {
     for (const h of this.extra) {
       const r = h(req, url);
       if (r) return r;
+    }
+    if (url.pathname.startsWith("/@") && url.pathname.split("/").length > 3) {
+      return this.handleJsr(url).then((r) => r ?? new Response("not found", { status: 404 }));
     }
     if (url.pathname.startsWith("/-/tgz/")) {
       const m = /^\/-\/tgz\/(.+)\/([^/]+)\.tgz$/.exec(url.pathname);
