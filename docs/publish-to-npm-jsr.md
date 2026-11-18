@@ -142,6 +142,8 @@ uses):
 
 - `"exports": "./w6w/index.json"` — the package's single entry point is the index;
 - `"publish": { "include": [<that config file>, "w6w/"] }`;
+- `"license"` — an SPDX identifier. JSR refuses a package that does not name a license, so the
+  command always writes one (`--license <spdx>`, default `UNLICENSED`);
 - no `imports` value that starts with `npm:` or `jsr:` — the apps are prebuilt, so a package that
   would pull dependencies at publish or install time is refused.
 
@@ -151,6 +153,7 @@ Written by the command when no JSR config file exists:
 {
   "name": "@w6w-apps/my-pack",
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "exports": "./w6w/index.json",
   "publish": { "include": ["jsr.json", "w6w/"] }
 }
@@ -158,6 +161,13 @@ Written by the command when no JSR config file exists:
 
 A bare `--name` becomes `@w6w-apps/<name>` with a leading `w6w-apps-` stripped; a name that already
 starts with `@` is used as written (JSR names are always `@<scope>/<name>`).
+
+`license` is an SPDX identifier such as `MIT` or `Apache-2.0`: pass `--license <spdx>` to pick your
+own, or leave it and accept the default `UNLICENSED` — the identifier a package with no offered
+license must carry. The field is not decoration: a package whose license is missing fails
+`deno publish --dry-run` (and the publish after it), so check it before the version number is spent.
+Like every other generated file the config is only written when absent — an existing `jsr.json` is
+validated and left byte-identical, so if you hand-tune one, keep a `license` in it.
 
 ### The no-dependencies refusal
 
@@ -263,9 +273,11 @@ registration, and an npm scope or JSR scope is **not** a w6w namespace.
 - [ ] `w6w apps package w6w-pack.json --out dist` exits 0.
 - [ ] `dist/w6w/index.json` names each app with its `execSha256`; `failures` is empty.
 - [ ] `package.json` has `keywords: ["w6w-app"]`, `files: ["w6w/"]` and no dependency field.
-- [ ] `jsr.json` (or `deno.json`) has `exports: "./w6w/index.json"` and
-      `publish.include: [<config>, "w6w/"]`, and no `npm:`/`jsr:` imports.
-- [ ] `deno publish --dry-run` passes in the output directory.
+- [ ] `jsr.json` (or `deno.json`) has `exports: "./w6w/index.json"`,
+      `publish.include: [<config>, "w6w/"]` and a `license` (`--license <spdx>`, default
+      `UNLICENSED`), and no `npm:`/`jsr:` imports.
+- [ ] `deno publish --dry-run` passes in the output directory — a missing `license` is one of the
+      things it fails on.
 - [ ] `npm publish` / `deno publish` ran from the output directory, a **new** version each time.
 - [ ] The release notes say which package ref to install (`npm:<name>@<version>#<app-id>`).
 
