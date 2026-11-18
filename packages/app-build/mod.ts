@@ -25,4 +25,7 @@ export { compareDescribed } from "./src/parity.ts";
 export { jsrHost, P3_SPECS } from "./src/registry.ts";
 export type { Resolution } from "./src/registry.ts";
 export { validateApp } from "./src/validate.ts";
+// Developer-built JS (no bundling; runs under Node too) — also its own entry, `./assemble`.
+export { assembleApp, validateAssembled } from "./assemble.ts";
+export type { AssembleOptions } from "./assemble.ts";
 export type { ValidateOptions, ValidateResult } from "./src/validate.ts";

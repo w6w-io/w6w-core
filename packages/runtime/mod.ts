@@ -6,11 +6,10 @@
  * service or a CLI in a separate package; the engine itself is transport-free.
  */
 export { resolveSharedRoots } from "./src/shared.ts";
-export { loadApp } from "./src/loader.ts";
+export { assertNoNpmDependencies, loadApp } from "./src/load-dir.ts";
 export type { LoadedAction, LoadedApp } from "./src/loader.ts";
 export {
   assembleLoadedApp,
-  assertNoNpmDependencies,
   hookSource,
   loadedAppFromArtifact,
   manifestFromPackageJson,
@@ -18,6 +17,7 @@ export {
 } from "./src/loader.ts";
 export type { AppCode, AppPackageJson, DirCode, ExecCode } from "./src/loader.ts";
 export { describeApp, describeExec } from "./src/sandbox/run-hook.ts";
+export { describeExecNode } from "./src/sandbox/node-describe.ts";
 export type { DescribedApp } from "./src/sandbox/protocol.ts";
 
 export {

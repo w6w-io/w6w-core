@@ -4,19 +4,12 @@
  * (`parseAppArtifactManifest`, @w6w/types) over it. Nothing is left behind: the out root is
  * always removed, and a refusal is reported — never thrown.
  */
-import { join } from "jsr:@std/path@^1.0.0";
 import { parseAppArtifactManifest, type ParseArtifactResult } from "@w6w/types";
 import { buildApp, type BuildOptions } from "./build.ts";
 import { BuildError } from "./errors.ts";
+import { readBackManifest, type ValidateResult } from "./package.ts";
 
-/**
- * `ok` names the app the manifest describes; a refusal lists every error found. Codes are the
- * build's own {@link BuildError} codes, plus `invalid_manifest` for a built manifest the
- * artifact parser rejects.
- */
-export type ValidateResult =
-  | { ok: true; id: string; version: string }
-  | { ok: false; errors: { code: string; message: string }[] };
+export type { ValidateResult } from "./package.ts";
 
 export interface ValidateOptions extends BuildOptions {
   /**
@@ -49,29 +42,7 @@ export async function validateApp(
       // The build's own refusal class passes straight through.
       return { ok: false, errors: [{ code: e.code, message: e.message }] };
     }
-    let manifest: unknown;
-    try {
-      manifest = JSON.parse(await Deno.readTextFile(join(outDir, "manifest.json")));
-    } catch (e) {
-      return {
-        ok: false,
-        errors: [
-          {
-            code: "invalid_manifest",
-            message: `cannot read back the built manifest: ${(e as Error).message}`,
-          },
-        ],
-      };
-    }
-    // The parse is over the file read from disk — never over the build's in-memory manifest.
-    const parsed = parse(manifest);
-    if (!parsed.ok) {
-      return {
-        ok: false,
-        errors: [{ code: "invalid_manifest", message: parsed.errors.join("; ") }],
-      };
-    }
-    return { ok: true, id: parsed.value.id, version: parsed.value.version };
+    return await readBackManifest(outDir, parse);
   } finally {
     await Deno.remove(outRoot, { recursive: true }).catch(() => {});
   }

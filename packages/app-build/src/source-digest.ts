@@ -3,12 +3,21 @@
  * {@link sourceDigestOf} defines it. Test code, `node_modules/` and `.git/` are
  * excluded; a symlink anywhere in the counted tree is refused.
  */
-import { join } from "jsr:@std/path@^1.0.0";
 import { sourceDigestOf } from "@w6w/types";
 import { BuildError, isTestPath } from "./errors.ts";
 import { resolveSharedRoots } from "./shared.ts";
+import { fs, path } from "./node.ts";
+
+const { readdir, readFile, realpath } = fs;
+const { join } = path;
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "tests"]);
+/**
+ * Skipped by NAME, whatever their type: a symlinked `node_modules` (pnpm, a linked workspace) is
+ * dependency code, not app source, and must not trip the symlink refusal. A Deno build never
+ * gets here with one — `assertNoNpmDependencies` refuses any `node_modules` entry first.
+ */
+const SKIP_ANY = new Set(["node_modules"]);
 
 async function walk(
   dir: string,
@@ -16,18 +25,19 @@ async function walk(
   out: { path: string; bytes: Uint8Array }[],
   appDir: string,
 ): Promise<void> {
-  for await (const entry of Deno.readDir(dir)) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
     const relPath = rel === "" ? entry.name : `${rel}/${entry.name}`;
-    if (entry.isDirectory && SKIP_DIRS.has(entry.name)) continue;
-    if (entry.isSymlink) {
+    if (SKIP_ANY.has(entry.name)) continue;
+    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) {
       throw new BuildError("source_symlink", `symlink in app source tree: ${relPath}`, appDir);
     }
     const full = join(dir, entry.name);
-    if (entry.isDirectory) {
+    if (entry.isDirectory()) {
       await walk(full, relPath, out, appDir);
-    } else if (entry.isFile) {
+    } else if (entry.isFile()) {
       if (isTestPath(relPath)) continue;
-      out.push({ path: relPath, bytes: await Deno.readFile(full) });
+      out.push({ path: relPath, bytes: new Uint8Array(await readFile(full)) });
     } else {
       throw new BuildError("source_special_file", `not a regular file: ${relPath}`, appDir);
     }
@@ -42,7 +52,7 @@ async function walk(
 export async function computeSourceDigest(appDir: string): Promise<string> {
   let real: string;
   try {
-    real = await Deno.realPath(appDir);
+    real = await realpath(appDir);
   } catch (e) {
     throw new BuildError(
       "app_dir_invalid",

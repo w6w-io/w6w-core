@@ -4,11 +4,13 @@
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
-    "./cli": "./cli.ts"
+    "./cli": "./cli.ts",
+    "./assemble": "./assemble.ts"
   },
   "imports": {
     "@w6w/types": "../types/mod.ts",
     "@w6w/runtime": "../runtime/mod.ts",
+    "@w6w/runtime/assemble": "../runtime/assemble.ts",
     "@w6w/validator": "../validator/mod.ts"
   },
   "tasks": {

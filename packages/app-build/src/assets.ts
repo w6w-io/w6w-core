@@ -3,10 +3,15 @@
  * `data:` URI so the artifact is self-contained. Stricter than a host-side walk: refs
  * must be relative, regular files (never symlinks), inside the app or declared shared directories, a known image
  * type, and within per-file and per-app byte caps. Any failure is a refusal.
+ *
+ * Runtime-neutral (`node:*` builtins only): `assembleApp` runs it under Node.
  */
-import { extname, resolve } from "jsr:@std/path@^1.0.0";
 import type { AppManifest, ImageObject } from "@w6w/types";
 import { BuildError, isInside } from "./errors.ts";
+import { fs, path } from "./node.ts";
+
+const { lstat, readFile, realpath } = fs;
+const { extname, resolve } = path;
 
 const REMOTE_OR_DATA = /^(https?|data):/i;
 
@@ -64,15 +69,15 @@ class Inliner {
     if (!root || (root === this.realAppDir && ref.split("/").includes(".."))) {
       this.fail("asset_path", `${where}: asset ref escapes the app: ${ref}`);
     }
-    let st: Deno.FileInfo;
+    let st: Awaited<ReturnType<typeof lstat>>;
     try {
-      st = await Deno.lstat(path);
+      st = await lstat(path);
     } catch {
       this.fail("asset_missing", `${where}: asset not found: ${ref}`);
     }
-    if (st.isSymlink) this.fail("asset_symlink", `${where}: asset is a symlink: ${ref}`);
-    if (!st.isFile) this.fail("asset_not_file", `${where}: asset is not a regular file: ${ref}`);
-    const real = await Deno.realPath(path);
+    if (st.isSymbolicLink()) this.fail("asset_symlink", `${where}: asset is a symlink: ${ref}`);
+    if (!st.isFile()) this.fail("asset_not_file", `${where}: asset is not a regular file: ${ref}`);
+    const real = await realpath(path);
     if (!root || !isInside(root, real)) {
       this.fail("asset_path", `${where}: asset resolves outside the app: ${ref}`);
     }
@@ -82,7 +87,7 @@ class Inliner {
         `${where}: asset ${ref} is ${st.size} bytes (cap ${this.limits.maxAssetBytes})`,
       );
     }
-    const bytes = await Deno.readFile(real);
+    const bytes = new Uint8Array(await readFile(real));
     if (bytes.length > this.limits.maxAssetBytes) {
       this.fail("asset_too_large", `${where}: asset ${ref} exceeds ${this.limits.maxAssetBytes}`);
     }

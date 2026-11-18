@@ -3,35 +3,15 @@
  * One failing app never stops the rest; every failure is reported.
  */
 import { dirname, resolve } from "jsr:@std/path@^1.0.0";
-import { type PackManifest } from "@w6w/types";
+import type { PackIndex, PackIndexApp, PackIndexFailure, PackManifest } from "@w6w/types";
 import { buildApp, type BuildOptions, type BuildResult } from "./build.ts";
 import { BuildError } from "./errors.ts";
 
 /** Default number of apps built at once (mirrors the registry's pack loader). */
 export const DEFAULT_PACK_CONCURRENCY = 8;
 
-export interface PackIndexApp {
-  id: string;
-  version: string;
-  execSha256: string;
-  digest: string;
-  digestVersion: 1 | 2;
-  sourceDigest: string;
-}
-
-export interface PackIndexFailure {
-  /** The pack entry's `path` (or the CLI's app-dir argument). */
-  path: string;
-  /** `BuildError.code`, else `"unexpected"`. */
-  code: string;
-  message: string;
-}
-
-/** The shape of `<outRoot>/index.json`. No absolute paths: byte-identical across out dirs. */
-export interface PackIndex {
-  apps: PackIndexApp[];
-  failures: PackIndexFailure[];
-}
+// The index types live in @w6w/types (the server parses them without importing the builder).
+export type { PackIndex, PackIndexApp, PackIndexFailure };
 
 export interface PackReport {
   index: PackIndex;

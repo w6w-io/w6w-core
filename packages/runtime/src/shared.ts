@@ -1,5 +1,9 @@
-import { dirname, isAbsolute, relative, resolve } from "jsr:@std/path@^1.0.0";
+// Node builtins (Deno supports them too): this module also runs under Node in `assembleApp`.
 import { LoadError } from "./errors.ts";
+import { fs, path } from "./node.ts";
+
+const { lstat, readFile, realpath } = fs;
+const { dirname, isAbsolute, relative, resolve } = path;
 
 function isInside(root: string, child: string): boolean {
   const rel = relative(root, child);
@@ -9,8 +13,8 @@ function isInside(root: string, child: string): boolean {
 
 /** Explicit source directories shared by sibling apps; never inferred from a parent. */
 export async function resolveSharedRoots(appDir: string): Promise<string[]> {
-  appDir = await Deno.realPath(appDir);
-  const pkg = JSON.parse(await Deno.readTextFile(resolve(appDir, "package.json")));
+  appDir = await realpath(appDir);
+  const pkg = JSON.parse(await readFile(resolve(appDir, "package.json"), "utf8"));
   const includes: unknown = pkg.w6w?.build?.include;
   if (includes === undefined) return [];
   const fail = (message: string): never => {
@@ -33,13 +37,15 @@ export async function resolveSharedRoots(appDir: string): Promise<string[]> {
     let current = parent;
     for (const part of relative(parent, path).split(/[\\/]/)) {
       current = resolve(current, part);
-      let st: Deno.FileInfo;
+      let st: Awaited<ReturnType<typeof lstat>>;
       try {
-        st = await Deno.lstat(current);
+        st = await lstat(current);
       } catch {
         return fail(`shared directory does not exist: ${ref}`);
       }
-      if (!st.isDirectory || st.isSymlink) fail(`shared directory must not be a symlink: ${ref}`);
+      if (!st.isDirectory() || st.isSymbolicLink()) {
+        fail(`shared directory must not be a symlink: ${ref}`);
+      }
     }
     if (relative(parent, path).split(/[\\/]/).includes("tests")) {
       fail(`shared directory is test code: ${ref}`);
