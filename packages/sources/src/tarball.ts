@@ -126,7 +126,7 @@ function capBytes(max: number): TransformStream<Uint8Array, Uint8Array> {
 export async function extractStripped(
   body: ReadableStream<Uint8Array>,
   destDir: string,
-  opts: { maxBytes?: number } = {},
+  opts: { maxBytes?: number; onEntry?: (path: string, typeflag: string) => void } = {},
 ): Promise<void> {
   // Cast around the lib.dom Uint8Array<ArrayBuffer> generic mismatch.
   const gunzip = new DecompressionStream("gzip") as unknown as TransformStream<
@@ -140,6 +140,14 @@ export async function extractStripped(
   const entries = bounded.pipeThrough(new UntarStream());
 
   for await (const entry of entries) {
+    if (opts.onEntry) {
+      try {
+        opts.onEntry(entry.path, entry.header.typeflag);
+      } catch (e) {
+        await entry.readable?.cancel().catch(() => {});
+        throw e;
+      }
+    }
     if (SKIPPED_TYPEFLAGS.has(entry.header.typeflag)) {
       await entry.readable?.cancel();
       continue;
@@ -189,6 +197,87 @@ export interface TarballSource {
   evictStale?: boolean;
   /** Minimum sibling age (mtime) before eviction. Default {@link DEFAULT_EVICT_GRACE_MS}. */
   evictGraceMs?: number;
+  /**
+   * Subresource-integrity string (`sha512-<base64>`, optionally several
+   * space-separated). When set, the COMPRESSED bytes are buffered (capped by
+   * `maxBytes`), hashed and verified BEFORE any extraction; a mismatch is
+   * `integrity_mismatch` and nothing is written.
+   */
+  integrity?: string;
+  /**
+   * Origin every request (initial + each redirect hop) must stay on. Redirects
+   * are followed manually (max 5); a hop elsewhere is `off_registry`, refused
+   * before any body is read.
+   */
+  allowedOrigin?: string;
+  /** Called for EVERY archive entry (incl. link/skipped ones) before it is handled; may throw. */
+  onEntry?: (path: string, typeflag: string) => void;
+}
+
+const MAX_REDIRECTS = 5;
+
+function offRegistry(what: string): SourceError {
+  return new SourceError("off_registry", `Refusing request outside the registry origin: ${what}`);
+}
+
+async function fetchSameOrigin(
+  url: string,
+  origin: string,
+  init: RequestInit,
+): Promise<Response> {
+  let cur = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (new URL(cur).origin !== origin) throw offRegistry(new URL(cur).origin);
+    const res = await fetch(cur, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400) return res;
+    await res.body?.cancel().catch(() => {});
+    const loc = res.headers.get("location");
+    if (!loc) throw new SourceError("fetch_failed", `Redirect without Location: ${cur}`);
+    cur = new URL(loc, cur).href;
+  }
+  throw new SourceError("fetch_failed", "Too many redirects");
+}
+
+const SRI_ALGOS: Record<string, string> = {
+  sha512: "SHA-512",
+  sha384: "SHA-384",
+  sha256: "SHA-256",
+};
+
+/** Buffer `body` (compressed bytes, capped by `max`) and verify it against `sri`. */
+async function bufferVerified(
+  body: ReadableStream<Uint8Array>,
+  sri: string,
+  max: number | undefined,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const bounded = max === undefined ? body : body.pipeThrough(capBytes(max));
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const c of bounded) {
+    chunks.push(c);
+    total += c.byteLength;
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    buf.set(c, off);
+    off += c.byteLength;
+  }
+  const toks = sri.trim().split(/\s+/).map((t) => t.split("-", 2) as [string, string])
+    .filter(([a, d]) => SRI_ALGOS[a] && d);
+  if (toks.length === 0) {
+    throw new SourceError("integrity_mismatch", "No supported integrity algorithm");
+  }
+  // Strongest algorithm present decides.
+  const best = ["sha512", "sha384", "sha256"].find((a) => toks.some(([x]) => x === a))!;
+  const digest = new Uint8Array(await crypto.subtle.digest(SRI_ALGOS[best], buf));
+  let bin = "";
+  for (const b of digest) bin += String.fromCharCode(b);
+  const got = btoa(bin);
+  if (!toks.some(([a, d]) => a === best && d === got)) {
+    throw new SourceError("integrity_mismatch", "Package integrity check failed");
+  }
+  return buf;
 }
 
 /** Siblings younger than this are kept so an in-progress read of an older tree isn't yanked. */
@@ -305,7 +394,12 @@ async function loadTarballUnbounded(
     } catch { /* not cached yet */ }
   }
 
-  const res = await fetch(src.url, { headers: src.headers, signal: opts.signal });
+  const res = src.allowedOrigin
+    ? await fetchSameOrigin(src.url, src.allowedOrigin, {
+      headers: src.headers,
+      signal: opts.signal,
+    })
+    : await fetch(src.url, { headers: src.headers, signal: opts.signal });
   if (!res.ok || !res.body) {
     throw httpFailure(src.authClass, src.label ?? "source", res.status, res.headers, src.url);
   }
@@ -322,9 +416,12 @@ async function loadTarballUnbounded(
   const staging = `${dest}.tmp-${crypto.randomUUID()}`;
   await Deno.mkdir(staging, { recursive: true });
   try {
-    await extractStripped(abortableBody(res.body, opts.signal), staging, {
-      maxBytes: opts.maxBytes,
-    });
+    let body = abortableBody(res.body, opts.signal);
+    if (src.integrity) {
+      const buf = await bufferVerified(body, src.integrity, opts.maxBytes);
+      body = new Response(buf).body!;
+    }
+    await extractStripped(body, staging, { maxBytes: opts.maxBytes, onEntry: src.onEntry });
   } catch (e) {
     await Deno.remove(staging, { recursive: true }).catch(() => {});
     throw e;
