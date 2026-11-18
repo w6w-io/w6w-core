@@ -231,7 +231,7 @@ An app reaches a host either as a source reference or as a **package**: a prebui
 to npm or JSR and installed with an `npm:` / `jsr:` source. The package format — `w6w/index.json`
 plus `w6w/<id>/<version>/{manifest.json, app.js[, app.js.map]}`, the exact-version revision, the
 prebuilt-only and no-dependencies rules, and the integrity check between the built bundle and the
-index — is specified in the
-[registry amendment on npm and JSR package sources](./registry.md#amendment-npm-and-jsr-package-sources-2026-11-18).
+index — is specified in the registry amendment on npm and JSR package sources
+([`registry.md`](./registry.md#amendment-npm-and-jsr-package-sources-2026-11-18)).
 This RFC does not restate it, and packaging changes nothing about the manifest: the `manifest.json`
 inside a package is the same manifest this RFC describes.
