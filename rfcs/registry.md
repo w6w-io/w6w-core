@@ -870,3 +870,133 @@ Ownership moves only by an explicit, audited operation: `POST /system-ops/apps/p
 A publish with **no `pack`** is the global-index behaviour and is exactly unchanged: it neither
 claims nor consults pack ownership. Publishing never unregisters an app: an id that leaves an index
 keeps its registered versions, and removal stays a separate, explicit lifecycle action.
+
+---
+
+## Amendment: npm and JSR package sources (2026-11-18)
+
+> This section is **additive**; no existing line is changed. Until now a source reference named a
+> file or a repository (`file:`, `github:`, `gitlab:`, `folder:`); it may now also name a package
+> published to npm or JSR. Two pre-existing passages in this file enumerate source schemes, and each
+> **stands extended** by this section — the scheme list each shows gains `npm:` and `jsr:` as
+> members; neither is rewritten: `registry.md:56` (the Concept paragraph, which lists `file:` and
+> `github:` and ends in `…`) and `registry.md:113` (the `AppVersion.sourceRef` doc comment, "e.g.
+> file:..., github:owner/repo@ref"). Those are base line
+> numbers from `git show main:rfcs/registry.md` run through
+> `grep -n 'github:\|gitlab:\|folder:'`, which returns exactly those two lines and nothing else:
+> `gitlab:` and `folder:` do not occur in this file at all, and no third passage names a source
+> scheme, so no other passage needs extending. Everything else in the file — the `Origin` union, the
+> `DataStore` contract, idempotency, lifecycle, federation and the amendments above — stands as
+> written.
+
+### Reference grammar
+
+A package source is written:
+
+```
+npm:<name>[@<range|tag>][#<app-id>]
+jsr:@<scope>/<name>[@<range>][#<app-id>]
+```
+
+- `name` — the npm package name; on JSR, `@<scope>/<name>` (the scope is part of the package name,
+  not a w6w namespace; see Provenance).
+- `@<range|tag>` — optional. On npm a SemVer range or a dist-tag; on JSR a SemVer range. Absent, the
+  resolver takes npm's `latest` dist-tag, or on JSR the highest non-yanked, non-prerelease version.
+- `#<app-id>` — optional. Selects **one app out of the package's own index** (see Package layout).
+  It is **not** a subpath: the resolver always returns the package **root** directory, and the
+  selector is applied to the index entries, never to the filesystem layout.
+
+`parsePackageRef(ref)` yields `{ registry: "npm" | "jsr"; name: string; range: string | null;
+appId: string | null }` and refuses anything else with `bad_ref`; `packageKey(ref)` yields
+`"<registry>:<name>"`, the package identity shared by every range/tag and every `#app-id` of the
+same package. Resolution reports the **exact package version** it landed on as the `revision` of the
+resolved source; a range is a request, the revision is a fact, and a refresh compares revisions, not
+ranges.
+
+Two environment settings name the only registries a host talks to: `W6W_NPM_REGISTRY` (default
+`https://registry.npmjs.org`) and `W6W_JSR_URL` (default `https://jsr.io`). A `SourceAuth.token`
+for a package source is sent as `Authorization: Bearer` (private packages); the `host` auth mode on
+`npm:`/`jsr:` is **anonymous** — no ambient host credential is ever attached to a registry request.
+
+### Package layout (the w6w package format)
+
+A w6w package is **prebuilt**: it ships the artifacts an app-build produces and nothing that has to
+be built or installed. Its root holds
+
+```
+w6w/index.json
+w6w/<id>/<version>/manifest.json
+w6w/<id>/<version>/app.js
+w6w/<id>/<version>/app.js.map        # optional
+```
+
+`w6w/index.json` is the app-build `PackIndex`:
+`{ apps: [{ id, version, execSha256, digest, digestVersion, sourceDigest }], failures: [] }`. The
+index is the package's manifest of contents: an app is installable from the package only if the
+index names it, and the paths are derived from `<id>`/`<version>`, so the parser
+(`parseRegistryPackageIndex`) refuses a non-empty `failures` list, malformed or duplicate entries,
+hashes that are not lowercase hex, and `<id>`/`<version>` segments that are unsafe as path
+components. A package that does not carry `w6w/index.json` is `not_a_w6w_package`.
+
+The registry a package is published to imposes its own root metadata rules, and both are checked
+before anything is extracted:
+
+- **npm** — root `package.json` carries the keyword `w6w-app` and **no dependency field at all**:
+  `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`,
+  `bundledDependencies` and `bundleDependencies` must be absent (not merely empty).
+- **JSR** — root `jsr.json` / `deno.json` / `deno.jsonc` sets `exports: "./w6w/index.json"` and
+  `publish.include: [<the config file>, "w6w/"]`, and no `imports` value may start with `npm:` or
+  `jsr:`: the apps inside are prebuilt, so a package that would pull dependencies at publish or
+  install time is refused (`npm_dependencies_forbidden`).
+
+**No dependencies, at any level.** A w6w package is self-contained: there is no `node_modules`, no
+install step, no lifecycle script, and no transitive dependency graph to audit. Anything that would
+need one at run time belongs in the app's own bundle, not in the package.
+
+### Integrity
+
+Every installed app is checked **before** it is admitted, not after:
+
+1. the bytes of `w6w/<id>/<version>/app.js` must hash (sha-256) to the index entry's `execSha256`
+   **and** to the manifest's own `exec.sha256`;
+2. the version's content `digest` is computed as for any other registration (see Idempotency) and
+   must match the index entry.
+
+A mismatch is `integrity_mismatch`; nothing is written for that app. Tarball/archive fetches verify
+the upstream's integrity metadata (SRI) **before** extraction and enforce a size cap (`too_large`);
+redirects are followed only within the configured registry, and a source that leaves it is
+`off_registry` — the resolver never fetches from a host the operator did not name. Failure of the
+package as a whole (bad archive, bad root metadata, non-w6w package) is `bad_package` /
+`not_a_w6w_package` / `npm_dependencies_forbidden` and admits none of its apps.
+
+### Provenance
+
+The `Origin` union is unchanged: a package source is resolved by this registry, so its versions are
+`{ kind: "local" }` like any other. What is new is a package record carried **beside** the origin —
+on the artifact write input and on the stored version row:
+
+```ts
+interface PackageOrigin {
+  registry: "npm" | "jsr";
+  /** Base URL of the registry the package came from (e.g. https://registry.npmjs.org). */
+  registryUrl: string;
+  /** Package name as published: "<name>" on npm, "@<scope>/<name>" on JSR. */
+  name: string;
+  /** The ref the caller asked for, range/tag and "#<app-id>" included. */
+  requestedRef: string;
+  /** The exact package version that was resolved. */
+  resolvedVersion: string;
+}
+```
+
+Package provenance never replaces the artifact identity. A version admitted from a package keeps
+`apps.source_ref = artifact:<sha256 of the artifact>` exactly as an uploaded artifact does; the
+per-app source record (`app_source.source_ref`) records the package form
+`<registry>:<name>@<range>#<app-id>` per installed app, which is what a package-artifact refresh
+re-resolves and what "is this package already installed here?" is answered from. Two apps installed
+from the same package therefore share a `packageKey` while keeping distinct artifact identities.
+
+A package is a **transport**, not a new trust tier: its apps still pass the namespace gate (a
+package may only register ids a publisher is allowed to register), and the npm scope or JSR scope is
+not a w6w namespace. Installing from a package grants the package nothing beyond the apps the
+operator asked for.
