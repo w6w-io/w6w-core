@@ -31,8 +31,8 @@ keeps running with no network access to the registry it came from.
 ## 1. Build the apps into a pack
 
 Start from the app source you would build with `w6w apps build` (see
-[Build a w6w App](./build-a-w6w-app.md)). A **pack file** — by convention `w6w-pack.json` — lists
-the apps to ship; every `path` is relative to the pack file:
+[Build a w6w App](./build-a-w6w-app.md)). A **pack file** — by convention `w6w-pack.json` —
+lists the apps to ship; every `path` is relative to the pack file:
 
 ```json
 {
@@ -104,15 +104,15 @@ entries, hashes that are not lowercase hex, and `<id>`/`<version>` segments that
 path components. A package with no `w6w/index.json` is not a w6w package at all.
 
 `execSha256` is the sha-256 of the exact `app.js` bytes written for that app — the CLI hashes the
-file it wrote and refuses a builder-reported value that disagrees. Hosts check it again before an app
-is admitted, so never edit a built `app.js` in place; rebuild instead.
+file it wrote and refuses a builder-reported value that disagrees. Hosts check it again before an
+app is admitted, so never edit a built `app.js` in place; rebuild instead.
 
 ## 4. The root metadata rules (P2)
 
 Each registry imposes rules on the package root, and **both** are checked twice: by
 `w6w apps package` before it writes anything, and by the host before it extracts anything. An
-existing file is never rewritten — the command validates it and leaves it byte-identical, so you can
-hand-tune it and re-run the packaging.
+existing file is never rewritten — the command validates it and leaves it byte-identical, so you
+can hand-tune it and re-run the packaging.
 
 **npm** — `package.json`:
 
@@ -161,10 +161,10 @@ starts with `@` is used as written (JSR names are always `@<scope>/<name>`).
 
 ### The no-dependencies refusal
 
-A w6w package is self-contained: there is no `node_modules`, no install step, no lifecycle script and
-no transitive graph to audit. Nothing in the package may need one at run time — anything an app uses
-at run time belongs in the app's own bundle, produced by the builder. The CLI states that refusal
-once, before writing anything:
+A w6w package is self-contained: there is no `node_modules`, no install step, no lifecycle script
+and no transitive graph to audit. Nothing in the package may need one at run time — anything an app
+uses at run time belongs in the app's own bundle, produced by the builder. The CLI states that
+refusal once, before writing anything:
 
 ```
 packaging failed; nothing was written:
@@ -211,12 +211,12 @@ npm:<name>[@<range|tag>][#<app-id>]
 jsr:@<scope>/<name>[@<range>][#<app-id>]
 ```
 
-- `@<range|tag>` — optional. On npm a SemVer range or a dist-tag (`1.4`, `^1.4.0`, `next`); on JSR a
-  SemVer range. Absent, the resolver takes npm's `latest` dist-tag, or on JSR the highest non-yanked,
-  non-prerelease version. **Pin what you promise:** a range is a request, and the host records the
-  exact package version it landed on as the resolved revision. A refresh compares revisions, not
-  ranges — moving the `latest` tag forward does not change an installed app; a new version inside a
-  range is picked up by an explicit refresh.
+- `@<range|tag>` — optional. On npm a SemVer range or a dist-tag (`1.4`, `^1.4.0`, `next`); on JSR
+  a SemVer range. Absent, the resolver takes npm's `latest` dist-tag, or on JSR the highest
+  non-yanked, non-prerelease version. **Pin what you promise:** a range is a request, and the host
+  records the exact package version it landed on as the resolved revision. A refresh compares
+  revisions, not ranges — moving the `latest` tag forward does not change an installed app; a new
+  version inside a range is picked up by an explicit refresh.
 - `#<app-id>` — optional, and recommended for a pack that ships more than one app: it selects one
   app out of the package's own index. It is **not** a subpath — the resolver always returns the
   package root and the selector is applied to the index entries. Without it, a multi-app package
@@ -240,8 +240,8 @@ Before an app is admitted:
    manifest's own `exec.sha256`;
 2. the version's content `digest` matches the index entry.
 
-Archive fetches verify the upstream's integrity metadata (SRI) before extraction, enforce a size cap,
-and follow redirects only within the configured registry. The refusal codes you may see:
+Archive fetches verify the upstream's integrity metadata (SRI) before extraction, enforce a size
+cap, and follow redirects only within the configured registry. The refusal codes you may see:
 
 | code | means |
 | --- | --- |
