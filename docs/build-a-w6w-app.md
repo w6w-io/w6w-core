@@ -834,3 +834,4 @@ stub, `triggers/new-item.ts`, built on `@w6w/app-kit/poll`; replace it with your
   [`fixtures/apps/sendgrid`](../fixtures/apps/sendgrid/) (apiKey + sign) ·
   [`fixtures/apps/service-account`](../fixtures/apps/service-account/) (serviceAccount + derived
   token)
+- Publishing the built app as a package: [Publish to npm or JSR](./publish-to-npm-jsr.md)
