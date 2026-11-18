@@ -220,3 +220,18 @@ carry any particular category. Hosts MUST NOT derive `modelProvider` from `categ
 categories from `modelProvider`.
 
 Like every manifest field, `modelProvider` is part of the artifact digest.
+
+## Amendment — 2026-11-18: package distribution pointer
+
+> This section is **additive**; no existing line is changed. It leaves the Non-Goal "mandating
+> hosting, distribution, or signing mechanics" in force and only **points** at where the packaging
+> format is specified.
+
+An app reaches a host either as a source reference or as a **package**: a prebuilt bundle published
+to npm or JSR and installed with an `npm:` / `jsr:` source. The package format — `w6w/index.json`
+plus `w6w/<id>/<version>/{manifest.json, app.js[, app.js.map]}`, the exact-version revision, the
+prebuilt-only and no-dependencies rules, and the integrity check between the built bundle and the
+index — is specified in the registry amendment on npm and JSR package sources
+([`registry.md`](./registry.md#amendment-npm-and-jsr-package-sources-2026-11-18)).
+This RFC does not restate it, and packaging changes nothing about the manifest: the `manifest.json`
+inside a package is the same manifest this RFC describes.
