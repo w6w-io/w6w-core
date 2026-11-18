@@ -12,14 +12,9 @@
  *   - performs the real network call itself, after an egress allowlist check.
  */
 import type {
-  Action,
-  AppManifest,
-  Auth,
   Connection,
   ConnectionBinding,
   FileRef,
-  HealthCheck,
-  InterfaceConformance,
   Invocation,
   RedactedConnection,
   RequestOverrides,
@@ -27,7 +22,6 @@ import type {
   ResolveFieldsInput,
   ResolveFieldsOutput,
   SignableRequest,
-  Trigger,
   TriggerHookKind,
 } from "@w6w/types";
 import { redact } from "@w6w/types";
@@ -51,17 +45,9 @@ import { openConnectionSocket, type SocketSession } from "./socket.ts";
 
 export type { EgressInfo };
 export { DEFAULT_EGRESS_BODY_LIMIT } from "./egress.ts";
-
-export interface AppDescription {
-  app: AppManifest;
-  actions: Action[];
-  auth: Auth[];
-  triggers: Trigger[];
-  /** Declared, promoted and derived checks — the whole health surface. */
-  health: HealthCheck[];
-  /** This app's Interface conformance assertions. */
-  interfaces: InterfaceConformance[];
-}
+// `describe` lives in its own runtime-neutral module (reached by `@w6w/runtime/assemble`).
+export { describe } from "./description.ts";
+export type { AppDescription } from "./description.ts";
 
 export interface InvokeOptions {
   /** The full Connection, including its opaque credential. Held by the host; never exposed to the action. */
@@ -135,24 +121,6 @@ export interface InvokeOptions {
 
 export interface InvokeResult {
   value: unknown;
-}
-
-/** Return the app's public description. */
-export function describe(app: LoadedApp): AppDescription {
-  return {
-    app: app.manifest,
-    actions: [...app.actions.values()].map((a) => {
-      const appPorts = app.manifest.ports;
-      const actionPorts = a.definition.ports;
-      if (appPorts === undefined && actionPorts === undefined) return a.definition;
-      // Field-wise fold (action wins); a copy — never mutate the loaded definition.
-      return { ...a.definition, ports: { ...appPorts, ...actionPorts } };
-    }),
-    auth: app.auths.map((a) => a.auth),
-    triggers: [...app.triggers.values()].map((t) => t.trigger),
-    health: [...app.healthChecks.values()].map((h) => h.check),
-    interfaces: app.interfaces,
-  };
 }
 
 /**

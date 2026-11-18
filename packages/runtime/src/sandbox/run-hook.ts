@@ -11,6 +11,7 @@ import type { FileRef, InvocationContext, RedactedConnection, SignableRequest } 
 import { REAUTH_REQUIRED } from "@w6w/types";
 import { W6WError } from "../errors.ts";
 import type { ExecCode } from "../loader.ts";
+import { describeExecNode } from "./node-describe.ts";
 import type {
   DescribedApp,
   HostMessage,
@@ -497,8 +498,21 @@ export function describeApp(
   );
 }
 
-/** Import exec code (a `data:` module, read-less Worker) and extract its serializable app config. */
+/**
+ * Import exec code (a `data:` module, read-less Worker) and extract its serializable app config.
+ *
+ * Without a `Deno` global (Node) there is no permission sandbox to spawn: the code is described
+ * in a `node:worker_threads` Worker instead ({@link describeExecNode} — an isolate with a timeout
+ * and heap cap, NOT a sandbox). Under Deno this is unchanged: the read-less, net-less Worker.
+ */
 export function describeExec(code: string, timeoutMs?: number): Promise<DescribedApp> {
+  if ((globalThis as { Deno?: unknown }).Deno === undefined) {
+    return describeExecNode(
+      execDataUrl({ kind: "exec", sha256: "", code }),
+      timeoutMs ?? 30_000,
+      memoryLimitMb(),
+    );
+  }
   return runWorker<DescribedApp>(
     {
       type: "start",

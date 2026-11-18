@@ -134,6 +134,74 @@ rejects. Nothing is left behind: the temp out root is always removed, `./out` is
 `mod.ts`) takes `BuildOptions` and returns the same object; it reports refusals rather than
 throwing.
 
+## Developer-built JS: `assembleApp`
+
+A third-party developer builds their own app with whatever bundler they like (esbuild, tsup, rollup,
+…) and hands w6w **one ESM `.js` file**. `assembleApp` packages it without bundling anything:
+identity → describe → wiring/output checks → assets → digests →
+`<out>/<id>/<version>/{app.js, manifest.json[, app.js.map]}`. It is the same tail `buildApp` runs
+after `deno bundle` (`src/package.ts`), so a given `app.js` gets the same manifest either way.
+
+```ts
+import { assembleApp, validateAssembled } from "@w6w/app-build/assemble";
+
+const r = await assembleApp("./my-app", "./out"); // BuildResult, or throws BuildError
+const v = await validateAssembled("./my-app"); // {ok: true, id, version} | {ok: false, errors}
+```
+
+Options (`AssembleOptions`): `maxAssetBytes`, `maxAppAssetBytes`, with the same defaults as
+`buildApp`.
+
+**It runs under plain Node 24.** `assemble.ts` and everything it imports use only `node:*` builtins
+and the bare `@w6w/types`, `@w6w/validator` and `@w6w/runtime/assemble` specifiers. There is no
+`Deno.*`, no `jsr:`/`npm:`/`https:` import, and nothing resolved relative to `import.meta.url`. That
+lets `@w6w/cli` bundle it into one file and call it in-process. Builtins load through computed
+specifiers (`src/node.ts`, and the runtime's own), so the bundle has no static externals. Describing
+the app runs it in a `node:worker_threads` Worker loaded from a `data:` URL, with a 30 s timeout and
+a 1 GiB heap cap. **That Worker is not a sandbox**: it runs the developer's own code on the
+developer's machine. A host running third-party code describes it in the Deno sandbox (`buildApp`,
+or the registry's own load path). `node scripts/node-smoke.mjs` bundles `assemble.ts` with esbuild,
+then runs it with only `node` on `PATH`.
+
+Rules:
+
+- **Entry**: `w6w.entry`, else `main`, else `./index.ts`, the same rule as the runtime. It must be a
+  `.js`/`.mjs` file inside the app. Otherwise the build refuses with:
+  - `entry_not_js` for a TypeScript entry: build first, then point `w6w.entry` at the built file,
+    e.g. `dist/app.js`.
+  - `entry_outside_app` for a file outside the app.
+  - `entry_missing` for a file that does not exist.
+  - `entry_not_utf8` for a file that is not UTF-8.
+- **Self-contained**: any static `import`, `export … from` or dynamic `import()` left in the JS is
+  `bundle_not_self_contained`. Bundle every dependency in. Comments, strings, template literals,
+  regex literals and `import.meta` are not counted.
+- **npm dependencies are allowed** in `package.json`, since a developer's tree lists its bundler and
+  types. The Deno `buildApp` still refuses them (`npm_dependencies`). `node_modules/` is skipped by
+  name, whether it is a directory or a symlink, so it is outside the source digest and its `.bin`
+  symlinks never trip the symlink refusal. `dist/` is ordinary app content.
+- **Source maps**: the map is the file a trailing `//# sourceMappingURL=<file>` names inside the app
+  (resolved against the entry's directory). A map the JS does not name, such as a `dist/app.js.map`
+  left over from a build with maps turned off, is ignored, because it no longer describes this
+  `app.js`.
+
+  The map must be JSON with string `sources`; otherwise `sourcemap_invalid`. Its `sources` are
+  rewritten app-relative (through `sourceRoot`, which is then dropped), and it is written as
+  `app.js.map` with `artifact.map` and `buildInfo.sourcemap: true`. The trailing comment is removed
+  from `app.js` whenever it points at an external file, because the Deno builder's `app.js` carries
+  none: the host loads `app.js` from a `data:` URL, where a relative reference resolves to nothing.
+  A comment naming a missing map is removed with a warning. An inline `data:` map stays inside the
+  JS untouched, and `sourcemap` is `false`.
+
+### `buildInfo`
+
+`manifest.json` records how the artifact was made:
+`{builder, denoVersion | nodeVersion, minify, sourcemap}`. **Exactly one** of `denoVersion` and
+`nodeVersion` is present: `nodeVersion` when `assembleApp` ran under Node (the CLI), and
+`denoVersion` under Deno (`buildApp`, or `assembleApp` in a Deno test). Every artifact built before
+this change carries `denoVersion` and still parses. `minify` says whether **the builder** minified
+the code. `assembleApp` never transforms the developer's JS, so it is always `false` there, even if
+the developer's own bundler minified it.
+
 ## Provider folders and shared files
 
 Pack entries can point to nested apps such as `./apps/google/gmail`. Each app keeps its own
@@ -196,9 +264,10 @@ other apps still build; warnings never change it) · `2` usage error. `--validat
 See the `buildApp` doc comment in `mod.ts` / `src/build.ts` for the authoritative list: identity
 (`invalid_id`, `invalid_version`, `npm_dependencies`, `entry_outside_app`, …), module graph
 (`graph_tests`, `graph_npm`, `graph_jsr`, `graph_remote`, `graph_outside_app`, …), bundle
-(`bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`), describe
-(`worker_options_required`, `describe_failed`, `load_failed`, `artifact_invalid`), assets
-(`asset_*`), source digest (`source_*`), output (`write_failed`). A non-`BuildError` is
+(`bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`), developer-built entry
+(`entry_not_js`, `entry_not_utf8` — `assembleApp` only; its doc comment in `assemble.ts` lists the
+rest), describe (`worker_options_required`, `describe_failed`, `load_failed`, `artifact_invalid`),
+assets (`asset_*`), source digest (`source_*`), output (`write_failed`). A non-`BuildError` is
 `unexpected`.
 
 ## Parity gate

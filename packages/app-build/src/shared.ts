@@ -1,4 +1,4 @@
-import { LoadError, resolveSharedRoots as resolve } from "@w6w/runtime";
+import { LoadError, resolveSharedRoots as resolve } from "@w6w/runtime/assemble";
 import { BuildError } from "./errors.ts";
 
 /** Keep the builder's public refusal type while sharing validation with source loading. */

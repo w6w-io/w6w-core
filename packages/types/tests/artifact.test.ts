@@ -44,6 +44,16 @@ Deno.test("parse: accepts a complete literal, with and without map", () => {
   }
 });
 
+Deno.test("parse: accepts a Node-assembled buildInfo (nodeVersion instead of denoVersion)", () => {
+  for (const m of [false, true]) {
+    const a = valid(m);
+    a.buildInfo = { builder: "b", nodeVersion: "24.22.3", minify: false, sourcemap: m };
+    const r = parseAppArtifactManifest(a);
+    assert(r.ok, JSON.stringify(r));
+    if (r.ok) assertEquals(r.value.buildInfo.nodeVersion, "24.22.3");
+  }
+});
+
 Deno.test("parse: total over non-objects", () => {
   for (const v of [null, undefined, 1, "s", [], {}]) {
     const r = parseAppArtifactManifest(v);
@@ -136,6 +146,25 @@ const rules: [string, (a: Record<string, unknown>) => void, string][] = [
     "buildInfo.sourcemap type",
     (a) => (a.buildInfo as Record<string, unknown>).sourcemap = "y",
     "buildInfo.sourcemap",
+  ],
+  [
+    "buildInfo.nodeVersion empty",
+    (a) => {
+      const b = a.buildInfo as Record<string, unknown>;
+      delete b.denoVersion;
+      b.nodeVersion = "";
+    },
+    "buildInfo.nodeVersion",
+  ],
+  [
+    "buildInfo both runtime versions",
+    (a) => (a.buildInfo as Record<string, unknown>).nodeVersion = "24.0.0",
+    "exactly one of denoVersion, nodeVersion",
+  ],
+  [
+    "buildInfo no runtime version",
+    (a) => delete (a.buildInfo as Record<string, unknown>).denoVersion,
+    "buildInfo.denoVersion: missing",
   ],
   ["buildInfo unknown key", (a) => (a.buildInfo as Record<string, unknown>).z = 1, "buildInfo.z"],
   [

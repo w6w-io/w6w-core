@@ -9,21 +9,10 @@
  * credential-bearing `sign` worker and the request-making action worker are off
  * the network — the trusted host does all I/O.
  */
-import {
-  AUTH_HOOK_KINDS,
-  hookErrorCode,
-  isFileRef,
-  parseParams,
-  TRIGGER_HOOK_KINDS,
-} from "@w6w/types";
+import { hookErrorCode, isFileRef, parseParams } from "@w6w/types";
 import type { AppDefinition, FileCapability, FileRef, SocketHandle } from "@w6w/types";
-import type {
-  DescribedApp,
-  HostMessage,
-  Selector,
-  WireResponse,
-  WorkerMessage,
-} from "./protocol.ts";
+import { describeAppDefinition } from "./describe.ts";
+import type { HostMessage, Selector, WireResponse, WorkerMessage } from "./protocol.ts";
 
 declare const self: {
   onmessage: ((e: { data: HostMessage }) => void) | null;
@@ -316,62 +305,7 @@ async function handleCall(msg: Extract<HostMessage, { op: "call" }>) {
 
 async function handleDescribeApp(msg: Extract<HostMessage, { op: "describe-app" }>) {
   const app = await importApp(msg);
-
-  // Strip all functions to plain config via JSON round-trip.
-  const actions = (app.actions ?? []).map((a) =>
-    JSON.parse(JSON.stringify({
-      ...a,
-      execute: undefined,
-      // Explicit: a hand-written non-function `resolveFields` must not survive,
-      // and an action without the hook keeps the key absent (digests stable).
-      resolveFields: typeof a.resolveFields === "function" ? true : undefined,
-    }))
-  );
-  const auth = (app.auth ?? []).map((a) => {
-    const present = AUTH_HOOK_KINDS.filter((k) => typeof a[k] === "function");
-    const config = { ...a } as Record<string, unknown>;
-    for (const k of AUTH_HOOK_KINDS) delete config[k];
-    return { auth: JSON.parse(JSON.stringify(config)), hooks: present };
-  });
-  const triggers = (app.triggers ?? []).map((t) => {
-    const present = TRIGGER_HOOK_KINDS.filter((k) => typeof t[k] === "function");
-    const config = { ...t } as Record<string, unknown>;
-    for (const k of TRIGGER_HOOK_KINDS) delete config[k];
-    return { trigger: JSON.parse(JSON.stringify(config)), hooks: present };
-  });
-
-  const declared = (app.healthChecks ?? []).map((h) => {
-    const config = { ...h } as Record<string, unknown>;
-    delete config.check;
-    return {
-      check: JSON.parse(JSON.stringify(config)),
-      hasHook: typeof h.check === "function",
-    };
-  });
-  // Tagged Actions become checks too, so the health surface is one list
-  // regardless of how the publisher authored it.
-  const tagged = (app.actions ?? [])
-    .filter((a) => a.healthCheck)
-    .map((a) => ({
-      check: JSON.parse(JSON.stringify({
-        kind: "dependency",
-        ...a.healthCheck,
-        key: a.healthCheck!.key ?? a.key,
-        title: a.healthCheck!.title ?? a.title,
-      })),
-      hasHook: typeof a.execute === "function",
-    }));
-
-  // A conformance is inert data — there is no hook to strip, so the JSON
-  // round-trip here only guards against non-serializable values on interfaces.
-  const described: DescribedApp = {
-    actions,
-    auth,
-    triggers,
-    healthChecks: [...declared, ...tagged],
-    interfaces: JSON.parse(JSON.stringify(app.interfaces ?? [])),
-  };
-  post({ type: "result", value: described });
+  post({ type: "result", value: describeAppDefinition(app) });
 }
 
 async function run(msg: Extract<HostMessage, { type: "start" }>) {

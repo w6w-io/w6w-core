@@ -3,7 +3,8 @@
   "version": "0.2.0",
   "exports": {
     ".": "./mod.ts",
-    "./author": "./author.ts"
+    "./author": "./author.ts",
+    "./assemble": "./assemble.ts"
   },
   "imports": {
     "@w6w/types": "../types/mod.ts"

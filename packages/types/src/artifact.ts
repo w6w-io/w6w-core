@@ -68,8 +68,31 @@ export interface AppArtifactManifest {
   /** Digest of the app's source files (see {@link sourceDigestOf}). */
   sourceDigest: string;
   /** How the artifact was produced. */
-  buildInfo: { builder: string; denoVersion: string; minify: boolean; sourcemap: boolean };
+  buildInfo: ArtifactBuildInfo;
 }
+
+/** The fields every {@link ArtifactBuildInfo} carries, whichever runtime built it. */
+interface ArtifactBuildInfoBase {
+  /** The builder and its version, e.g. `@w6w/app-build@0.2.0`. */
+  builder: string;
+  /**
+   * Whether THE BUILDER minified `app.js`. Always `false` for an assembled artifact (developer-built
+   * JS, see `@w6w/app-build`'s `assembleApp`): the builder never transforms that code, so it
+   * records nothing about whatever the developer's own bundler did.
+   */
+  minify: boolean;
+  /** True iff the artifact carries an `app.js.map` (`map` is present). */
+  sourcemap: boolean;
+}
+
+/**
+ * How the artifact was produced. Exactly one runtime-version key is present: `denoVersion` for
+ * the Deno builder (`buildApp`: bundles source), `nodeVersion` for an artifact assembled under
+ * Node (`assembleApp`: packages developer-built JS). Both are non-empty strings.
+ */
+export type ArtifactBuildInfo =
+  | ArtifactBuildInfoBase & { denoVersion: string; nodeVersion?: never }
+  | ArtifactBuildInfoBase & { nodeVersion: string; denoVersion?: never };
 
 export type ParseArtifactResult =
   | { ok: true; value: AppArtifactManifest }
@@ -219,9 +242,17 @@ export function parseAppArtifactManifest(value: unknown): ParseArtifactResult {
     errors.push("buildInfo: must be an object");
   } else {
     const b = v.buildInfo;
-    checkKeys(b, "buildInfo", ["builder", "denoVersion", "minify", "sourcemap"], errors);
+    // Exactly one runtime-version key: `denoVersion` (Deno builder) or `nodeVersion` (Node).
+    const hasNode = "nodeVersion" in b;
+    if (hasNode && "denoVersion" in b) {
+      errors.push("buildInfo: exactly one of denoVersion, nodeVersion must be present");
+    }
+    const runtimeKey = hasNode && !("denoVersion" in b) ? "nodeVersion" : "denoVersion";
+    checkKeys(b, "buildInfo", ["builder", runtimeKey, "minify", "sourcemap"], errors);
     if (!nonEmpty(b.builder)) errors.push("buildInfo.builder: must be a non-empty string");
-    if (!nonEmpty(b.denoVersion)) errors.push("buildInfo.denoVersion: must be a non-empty string");
+    if (runtimeKey in b && !nonEmpty(b[runtimeKey])) {
+      errors.push(`buildInfo.${runtimeKey}: must be a non-empty string`);
+    }
     if (typeof b.minify !== "boolean") errors.push("buildInfo.minify: must be a boolean");
     if (typeof b.sourcemap !== "boolean") {
       errors.push("buildInfo.sourcemap: must be a boolean");
