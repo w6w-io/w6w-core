@@ -175,6 +175,7 @@ continue to store arrays. Use CSV only for choices whose values contain no comma
 | `when` | `Array<{ if, set }>` | ⬜ | Conditional overlay: the first entry whose `if` matches replaces the param's `label`, `hint`, `required`, `ui` and/or `options` with its `set`. `if` is the simple condition `{ field, equals \| in \| notIn \| truthy }` (not JSONLogic). See [the 2026-10-29 amendment](#amendment--2026-10-29-conditional-overlay-when). |
 | `options` | Options | ⬜ | For choice types. Static list or dynamic hook source. |
 | `validation` | Validation | ⬜ | Declarative rules and/or a custom hook. |
+| `row` | string | ⬜ | Layout only: adjacent params with the same `row` id render side by side (wrapping when narrow). No effect on keys or values. |
 | `children` | Param[] | ⬜ | Nested params for `type: "group"` (nested object) or `type: "section"` (flat, layout-only). |
 | `section` | `"collapsible"` \| `"group"` | ⬜ | Required when `type: "section"`. Container behavior. |
 | `title` | string | ⬜ | `section: "collapsible"` only, required there — the disclosure heading. |

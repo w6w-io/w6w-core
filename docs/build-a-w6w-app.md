@@ -667,6 +667,17 @@ advanced fields), `section: "group"` with `layout: "row" | "stack"` for side-by-
 sender email + name). Unlike `group` (which nests its value under its `key`), a section's children
 keep their own top-level keys. See [`rfcs/param.md`](../rfcs/param.md).
 
+**Lay short fields out side by side — `row`.** Adjacent params carrying the same `row` id render on
+one line (they wrap on a narrow panel), with no change to their keys or values. Use it for fields a
+user reads as a pair: Page size + Page, a range's start + end, scope + scope ID, include + exclude
+filters, a total + a capacity. The params must be next to each other in the array; a param hidden by
+`showIf` drops out and its partner keeps the line. Don't row a long text, JSON or code field.
+
+```ts
+{ key: "pageSize", label: "Page size", type: "number", row: "paging" },
+{ key: "page", label: "Page", type: "number", row: "paging" },
+```
+
 **Accept what users paste — `parse`.** An Action or Trigger param may carry `parse(value)`, a
 function the sandbox runs on that param's value before `execute` (or before a trigger hook that
 receives `params`). Use it so a field takes the form users actually have: a Google Sheets param
@@ -810,6 +821,8 @@ stub, `triggers/new-item.ts`, built on `@w6w/app-kit/poll`; replace it with your
 - [ ] `index.ts` default-exports `{ actions, auth }` satisfying `AppDefinition`.
 - [ ] Every action: unique kebab-case `key`, correct `type`, typed `params`/`output`, uses
       `ctx.fetch`, no credentials.
+- [ ] Paired short fields (paging, ranges, scope + id) share a `row`, so a form isn't one field
+      per line.
 - [ ] Auth (if any): `test` present; `sign` injects the credential; secret fields use
       `type: "secret"`.
 - [ ] Refreshable auth (OAuth2, or any auth with a `refresh` hook): refresh-token lifetime
