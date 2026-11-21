@@ -3,6 +3,7 @@ import { fromFileUrl } from "jsr:@std/path@^1.0.0";
 import {
   describe,
   invokeResolveFields,
+  invokeTriggerResolveFields,
   loadApp,
   RESOLVE_FIELDS_MAX_OPTIONS,
   RESOLVE_FIELDS_TIMEOUT_MS,
@@ -305,4 +306,74 @@ Deno.test("sanitizeResolveFieldsOutput (f): error clipped to 500; non-string err
   assertEquals(out.fields.a.error!.length, 500);
   assertEquals(out.fields.b, { options: [] });
   assertEquals(out.fields.c, { options: [{ value: "v", label: "V" }], error: "short" });
+});
+
+// ── trigger resolveFields ─────────────────────────────────────────────────
+
+Deno.test("trigger: the worker locates the trigger's resolveFields, not poll", async () => {
+  const app = await loadApp(FIXTURE);
+  assert(app.triggers.get("new-message")?.hooks.has("resolveFields"));
+  // Declaring it does not turn a poll trigger into anything else.
+  assertEquals(app.triggers.get("new-message")?.trigger.type, "poll");
+  const out = await invokeTriggerResolveFields(app, "new-message", input({}), {
+    connection: CONNECTION,
+  });
+  assertEquals(out, { fields: { channel: { options: [{ value: "general", label: "General" }] } } });
+});
+
+Deno.test("trigger: unknown trigger, undeclared hook, missing connection", async () => {
+  const app = await loadApp(FIXTURE);
+  const unknown = await rejection(() => invokeTriggerResolveFields(app, "nope", input({})));
+  assertEquals([unknown.code, unknown.phase], ["unknown_trigger", "resolution"]);
+  const undeclared = await rejection(() =>
+    invokeTriggerResolveFields(app, "plain-trigger", input({}), { connection: CONNECTION })
+  );
+  assertEquals([undeclared.code, undeclared.phase], ["hook_not_declared", "resolution"]);
+  const noConn = await rejection(() => invokeTriggerResolveFields(app, "new-message", input({})));
+  assertEquals([noConn.code, noConn.phase], ["connection_required", "auth"]);
+});
+
+Deno.test("trigger: sign injects the credential at the wire; the hook sees a redacted connection", async () => {
+  const app = await loadApp(FIXTURE);
+  const { server, port, get } = captureServer();
+  try {
+    const out = await invokeTriggerResolveFields(
+      app,
+      "new-message",
+      input({ mode: "isolation", base: `http://127.0.0.1:${port}` }),
+      { connection: CONNECTION, egressGuard: { allowPrivate: true } },
+    );
+    assertEquals(get(), "Bearer rf-key-456");
+    const label = out.fields.channel.options![0].label;
+    assertFalse(label.includes("credential"));
+    assertFalse(JSON.stringify(out).includes("rf-key-456"));
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test("trigger: raw hook output crosses the host sanitiser and the 10 s cap", async () => {
+  const app = await loadApp(FIXTURE);
+  const out = await invokeTriggerResolveFields(
+    app,
+    "new-message",
+    input({
+      mode: "raw",
+      raw: {
+        fields: {
+          channel: { options: [{ value: "ok", label: "OK" }, { value: {}, label: "bad" }] },
+          extra: { options: [{ value: "x", label: "X" }] },
+        },
+      },
+    }),
+    { connection: CONNECTION },
+  );
+  assertEquals(out, { fields: { channel: { options: [{ value: "ok", label: "OK" }] } } });
+  const slow = await rejection(() =>
+    invokeTriggerResolveFields(app, "new-message", input({ mode: "hang", ms: 2000 }), {
+      connection: CONNECTION,
+      timeoutMs: 300,
+    })
+  );
+  assertEquals([slow.code, slow.phase], ["hook_timeout", "resolution"]);
 });

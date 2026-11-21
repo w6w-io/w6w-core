@@ -256,6 +256,16 @@ export async function packageBuiltApp(input: PackageInput): Promise<BuildResult>
     outputWarnings("actions", a as { key?: unknown }, warnings, counts);
   }
   for (const t of described.triggers) {
+    const tk = (t.trigger as { key?: unknown }).key;
+    const found = checkFormResolvedFields(
+      {
+        resolveFields: t.hooks.includes("resolveFields"),
+        params: (t.trigger as { params?: unknown }).params,
+      },
+      `triggers[${tk}]`,
+    );
+    for (const e of found.errors) wiringErrors.push(`${e.path}: ${e.message}`);
+    for (const w of found.warnings) warnings.push(`${w.path}: ${w.message}`);
     outputWarnings("triggers", t.trigger as { key?: unknown }, warnings, counts);
   }
   if (wiringErrors.length > 0) {

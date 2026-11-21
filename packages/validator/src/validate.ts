@@ -209,7 +209,8 @@ function checkParamList(ctx: Ctx, params: unknown, path: string): void {
 }
 
 /**
- * Check the `resolveFields` wiring of one Action: the hook flag and the params that opt
+ * Check the `resolveFields` wiring of one Action (or of a Trigger, passed as
+ * `{ resolveFields: hooks.includes("resolveFields"), params }`): the hook flag and the params that opt
  * into it (`options.source: "resolveFields"`) must agree. Pure, and tolerant of malformed
  * input (the structural rules are `validateAction`'s job).
  *
@@ -256,7 +257,9 @@ export function checkFormResolvedFields(
         if (!hook) {
           errors.push({
             path: `${here}.options.source`,
-            message: 'is "resolveFields" but the action does not declare `resolveFields: true`',
+            message: path.startsWith("triggers")
+              ? 'is "resolveFields" but the trigger declares no `resolveFields` hook'
+              : 'is "resolveFields" but the action does not declare `resolveFields: true`',
           });
         }
       }
