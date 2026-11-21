@@ -59,7 +59,6 @@ jobs:
       - run: npm run build
       - name: Pack smoke (tarball contents + ESM/require from a scratch consumer)
         run: bash scripts/pack-smoke.sh
-      - run: npm publish --dry-run
       - name: Skip publish if this version is already on the registry
         id: exists
         env:
@@ -71,6 +70,9 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+      # After the check: npm 11's dry-run itself refuses a version npm already has.
+      - if: steps.exists.outputs.published != 'true'
+        run: npm publish --dry-run
       # No NODE_AUTH_TOKEN: npm detects the OIDC trusted publisher automatically.
       - if: steps.exists.outputs.published != 'true'
         run: npm publish --provenance --access public
