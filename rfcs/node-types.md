@@ -1362,3 +1362,132 @@ A host that implements `@w6w/csv` and `@w6w/files` MUST:
 - Classify both ids as **secret-echo** (`SECRET_ECHO_APPS`, absent from `NON_ECHO_INTERNAL_APPS`) and
   `@w6w/files` as **host-only** (`HOST_INTERNAL_APPS`), failing its step on a spoke and refusing to
   ship a workflow containing it to a spoke (`files_step`).
+
+## Amendment — 2026-11-21: the `@w6w/form` trigger
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change and edits none of the following, which **stand unedited**,
+> superseded in reading by this amendment — identified by link and location rather than reproduced:
+>
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table, which this amendment
+>   extends with one more id;
+> - the [Node kinds](#node-kinds) table's `trigger` row, whose built-in examples (`@w6w/webhook`,
+>   `@w6w/scheduler`) this amendment extends;
+> - the paragraph under [Non-echo classification](#non-echo-classification) in the 2026-10-24
+>   `@w6w/model` amendment, whose list of apps subject to the secret-echo refusal now also includes
+>   `@w6w/form`.
+
+`@w6w/form` is a new **built-in trigger**: a reserved `@w6w/*` pseudo-app whose one trigger,
+`submission`, publishes a hosted form at a URL of its own. Each accepted submission starts a run at
+the form node. The host owns the page, the submission route, validation and dispatch; the
+`packages/internal-apps` manifest declares the trigger's params and output, and its `execute` path
+is never reached. No registered app id may begin with `@w6w/`, so it cannot collide with a catalog
+app.
+
+### Kind & routing
+
+| Kind      | `uses.app`  | `uses.action` | Executed by                                             |
+| --------- | ----------- | ------------- | ------------------------------------------------------- |
+| `trigger` | `@w6w/form` | `submission`  | the **host's form route**, then the internal entry node |
+
+`isTriggerNode` is `true` for a `@w6w/form` node: it is a graph entry (`ports.in = 0`), and the
+engine never schedules it from an upstream edge. At run time the entry node is a **passthrough**,
+exactly like `@w6w/webhook`'s: it emits the event the form route built as its `output`.
+
+### The form definition
+
+The node's `with.form` is a **form definition**, version 1 — one JSON value the editor authors and
+the host renders and validates from:
+
+```ts
+interface FormDefinition {
+  version?: 1;
+  title: string;
+  description?: string;
+  fields: FormField[]; // at most 200
+  submitLabel?: string;
+  completion?: {
+    type?: "message" | "redirect";
+    title?: string;
+    message?: string;
+    redirectUrl?: string;
+    allowAnother?: boolean;
+  };
+  settings?: {
+    allowPrefill?: boolean;
+    showProgress?: boolean;
+    theme?: "auto" | "light" | "dark";
+    accentColor?: string;
+    customCss?: string;
+    hideBranding?: boolean;
+    closed?: boolean;
+    closedMessage?: string;
+  };
+}
+```
+
+A field has a stable `id` (editor-only, never in the output), a `type`, and — for an input type — a
+`name` matching `^[A-Za-z_][A-Za-z0-9_]{0,63}$`, unique in the form, under which its answer is
+recorded. The twenty types are: input `text` `textarea` `email` `number` `phone` `url` `password`
+`date` `time` `datetime` `select` `radio` `checkboxes` `checkbox` `rating` `file` `hidden`, and
+layout `heading` `paragraph` `pageBreak` (no `name`, no answer; `pageBreak` splits pages). A field
+MAY carry `showIf: { field, op, value? }` naming an **earlier** field, with `op` one of `equals`
+`notEquals` `contains` `notContains` `isEmpty` `isNotEmpty` `greaterThan` `lessThan`; a field whose
+condition does not hold is neither required nor recorded. The canonical declaration, with every
+per-type key, is `packages/internal-apps/apps/form/schema.ts`.
+
+### The subscription and the URL
+
+The form's URL is a `@w6w/form` · `submission` trigger subscription on the workflow,
+connection-less, whose `params` name the node: `{ node: "<node id>" }`. The host serves it at
+`/forms/<subscription id>`:
+
+- `GET` renders the form, read from the workflow's **live** definition (the named node, else the
+  workflow's only `@w6w/form` node) on every request — there is no copy of the form on the
+  subscription to drift. Query parameters pre-fill fields when `settings.allowPrefill` is not
+  `false`.
+- `POST` (multipart or urlencoded) is a submission.
+
+The subscription id is the bearer secret; `auth: "basic"` adds an HTTP Basic challenge on both
+methods. Because the binding is the `params.node` value rather than a `nodeId`, publishing the
+workflow does not reconcile the subscription away.
+
+### Submission
+
+A host MUST validate every submission **server-side** against the definition — required, type,
+length, pattern, bounds, choices, file type, size and count, and conditions — whatever the browser
+sent, and answer a failing one with the per-field errors and **no run**. Uploaded files are stored
+as run files in the run's own scope (at most 10 MiB each, 50 MiB per submission). An accepted
+submission enqueues a run at the form node with this event:
+
+| Field         | Value                                                                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data`        | answers by `name`, typed: numbers for `number`/`rating`, a boolean for `checkbox`, a string list for `checkboxes` and multi `select`, a `FileRef` (a list when `multiple`) for `file` |
+| `submittedAt` | ISO 8601                                                                                                                                                                              |
+| `mode`        | `"production"`, or `"test"` while an editor is listening on the subscription                                                                                                          |
+| `formTitle`   | the definition's `title`                                                                                                                                                              |
+| `meta`        | `{ subscriptionId, runId, userAgent?, referrer?, language?, query? }`                                                                                                                 |
+
+`responseMode` selects when the submitter is answered: `onSubmit` (on acceptance), `lastNode` (when
+the run ends, bounded by the host), or `responseNode` (by a `@w6w/respond` step, as for a webhook).
+
+**Test mode.** While an editor holds a listen session on the subscription, a submission is captured
+into that session with `mode: "test"` and its run is enqueued **even when the workflow is not
+published**; otherwise an unpublished workflow refuses the submission as a webhook would.
+
+### Secret echo
+
+`@w6w/form` is a **secret-echo** app: it is listed in the engine's `SECRET_ECHO_APPS` and **absent**
+from the host's `NON_ECHO_INTERNAL_APPS`, so a step whose raw `with` reads a vault secret is refused
+before invoke. The Basic-auth password is a `secret`-typed param resolved by the form route only.
+
+### Conformance (additive)
+
+A host that implements `@w6w/form` MUST:
+
+- Treat a `@w6w/form` node as a trigger (`isTriggerNode`), support exactly the one trigger key
+  `submission`, and emit the route-built event unchanged from its entry node.
+- Serve the form from the workflow's live definition, keyed by the subscription's `params.node`.
+- Validate every submission server-side against the definition and start no run for a failing one.
+- Run a test-mode submission (an open listen session) on an unpublished workflow, and no other.
+- Classify the id as **secret-echo** and as host-internal (`HOST_INTERNAL_APPS`).
