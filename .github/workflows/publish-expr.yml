@@ -1,26 +1,15 @@
 name: Publish @w6w/expr
 
-# Publishes @w6w/expr (built ESM + .d.ts) to npm — tokenless, via OIDC.
-# No NPM_TOKEN / secrets: each run mints a short-lived credential.
-#
-# Release flow:
-#   1. bump "version" in packages/expr/package.json AND packages/expr/deno.json
-#      (and add a CHANGELOG.md entry)
-#   2. commit
-#   3. publish a GitHub Release with tag "expr-vX.Y.Z"
-#      (only `expr-v…` tags run this workflow; `types-v…` tags run publish-types.yml)
-#
-# One-time setup (a brand-new package name cannot have a Trusted Publisher until it exists):
-#   1. Manual first publish, from a clean checkout of the tagged commit:
-#        cd packages/expr && npm publish --access public      (no --provenance: not in CI)
-#   2. Attach the Trusted Publisher (org/repo "w6w-io/w6w-core", workflow "publish-expr.yml"):
-#        npm trust github @w6w/expr --file publish-expr.yml --repo w6w-io/w6w-core --allow-publish
-#      The workflow FILENAME is part of the credential — renaming this file breaks publishing
-#      until the Trusted Publisher is re-attached.
+# Continuous delivery: every push to main that touches packages/expr publishes the version in
+# packages/expr/package.json to npm, unless npm already has it (tests, build and pack smoke first).
+# Bumping the version IS the release. Tokenless via OIDC (npm trusted publisher bound to this file
+# name, "publish-expr.yml" — never rename it).
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths: ["packages/expr/**", ".github/workflows/publish-expr.yml"]
+  workflow_dispatch:
 
 # Required for OIDC. This is what replaces stored tokens.
 permissions:
@@ -33,23 +22,23 @@ defaults:
 
 jobs:
   verify:
-    # Fork guard (no secrets on a personal fork) AND own tag prefix only.
-    if: github.repository == 'w6w-io/w6w-core' && startsWith(github.event.release.tag_name, 'expr-v')
+    # Fork guard: a personal fork has no trusted publisher.
+    if: github.repository == 'w6w-io/w6w-core'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v6
-      - name: Release tag must match package.json and deno.json versions
-        env:
-          TAG: ${{ github.event.release.tag_name }}
+      - name: package.json and deno.json must agree
+        id: ver
         run: |
-          VER="${TAG#expr-v}"
           PKG="$(node -p "require('./package.json').version")"
           DEN="$(node -p "require('./deno.json').version")"
-          echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"
-          if [ "$VER" != "$PKG" ] || [ "$VER" != "$DEN" ]; then
-            echo "::error::Release tag '$TAG' (version $VER) must match package.json ($PKG) and deno.json ($DEN)"
+          if [ "$PKG" != "$DEN" ]; then
+            echo "::error::@w6w/expr package.json ($PKG) != deno.json ($DEN)"
             exit 1
           fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
 
   npm:
     needs: verify
@@ -74,9 +63,8 @@ jobs:
       - name: Skip publish if this version is already on the registry
         id: exists
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          VER: ${{ needs.verify.outputs.version }}
         run: |
-          VER="${TAG#expr-v}"
           if npm view "@w6w/expr@$VER" version >/dev/null 2>&1; then
             echo "::notice::@w6w/expr@$VER is already published; skipping publish"
             echo "published=true" >> "$GITHUB_OUTPUT"

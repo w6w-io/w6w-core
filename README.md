@@ -126,7 +126,7 @@ core/
 │   ├── expr/              # @w6w/expr — JSONLogic engine
 │   └── credential-providers/ # @w6w/credential-providers — host-side token derivation
 ├── fixtures/apps/         # Example apps the runtime is tested against
-└── .github/workflows/     # CI (tests) + publish (npm OIDC + JSR, on release)
+└── .github/workflows/     # CI (tests) + publish on version bump (npm OIDC + JSR)
 ```
 
 A Deno workspace (`deno.json`). The runtime is transport-free lib core; HTTP and
