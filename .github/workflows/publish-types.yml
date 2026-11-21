@@ -1,59 +1,35 @@
-name: Publish @w6w/types
+name: Publish @w6w/types (npm)
 
-# Publishes the types package to npm and JSR — tokenless, via OIDC.
-# No NPM_TOKEN / secrets: each run mints a short-lived credential.
+# Continuous delivery: every push to main that touches packages/types publishes the version in
+# packages/types/package.json to npm, unless npm already has it. Bumping the version IS the release:
+# there is no tag or GitHub Release to remember. JSR is published by publish-author-packages.yml,
+# which orders types before the packages that import it.
 #
-# One-time setup:
-#   npm — npmjs.com → @w6w/types → Settings → Trusted Publisher → add a GitHub
-#         Actions publisher: org/repo "w6w-io/w6w-core", workflow
-#         "publish-types.yml". (A brand-new package name may need one manual
-#         `npm publish` to exist before the trusted publisher can be attached.)
-#   JSR — jsr.io → create the "@w6w" scope → create the "@w6w/types" package →
-#         link it to the GitHub repo "w6w-io/w6w-core" (enables OIDC publishing).
-#
-# Release flow:
-#   1. bump "version" in packages/types/package.json AND packages/types/deno.json
-#   2. commit
-#   3. publish a GitHub Release with tag "types-vX.Y.Z"
+# Tokenless via OIDC (npm trusted publisher: repo w6w-io/w6w-core, workflow "publish-types.yml" —
+# the trust is bound to this FILE NAME, so never rename it).
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths: ["packages/types/**", ".github/workflows/publish-types.yml"]
+  workflow_dispatch:
 
-# Required for OIDC. This is what replaces stored tokens.
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: publish-types
+  cancel-in-progress: false
 
 defaults:
   run:
     working-directory: packages/types
 
 jobs:
-  verify:
-    # Fork guard: this workflow reaches PRODUCTION (see the header) and a personal fork
-    # carries none of the secrets it needs, so on `segevsh/*` it fails on every push instead of
-    # doing nothing. Mirrors `w6w-io/w6w`'s deploy workflows, which have carried this since day one.
-    # Own tag prefix only: an `expr-v…` release must not run this workflow (and vice versa).
-    if: github.repository == 'w6w-io/w6w-core' && startsWith(github.event.release.tag_name, 'types-v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Release tag must match package.json and deno.json versions
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          VER="${TAG#types-v}"
-          PKG="$(node -p "require('./package.json').version")"
-          DEN="$(node -p "require('./deno.json').version")"
-          echo "release tag=$TAG  version=$VER  package.json=$PKG  deno.json=$DEN"
-          if [ "$VER" != "$PKG" ] || [ "$VER" != "$DEN" ]; then
-            echo "::error::Release tag '$TAG' (version $VER) must match package.json ($PKG) and deno.json ($DEN)"
-            exit 1
-          fi
-
   npm:
-    needs: verify
+    # Fork guard: a personal fork has no trusted publisher.
+    if: github.repository == 'w6w-io/w6w-core'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -61,19 +37,27 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      - name: package.json and deno.json must agree
+        id: ver
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          DEN="$(node -p "require('./deno.json').version")"
+          if [ "$PKG" != "$DEN" ]; then
+            echo "::error::@w6w/types package.json ($PKG) != deno.json ($DEN)"
+            exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+      - name: Already on npm?
+        id: exists
+        run: |
+          if npm view "@w6w/types@${{ steps.ver.outputs.version }}" version >/dev/null 2>&1; then
+            echo "::notice::@w6w/types@${{ steps.ver.outputs.version }} is already on npm; nothing to publish"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       # Trusted publishing (OIDC) requires npm >= 11.5.1.
-      - run: npm install --global npm@latest
-      # No NODE_AUTH_TOKEN: npm detects the OIDC trusted publisher automatically.
-      - run: npm publish --provenance --access public
-
-  jsr:
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-      # OIDC: with id-token:write and the package linked to this repo on JSR,
-      # no token is needed.
-      - run: npx --yes jsr publish
+      - if: steps.exists.outputs.published != 'true'
+        run: npm install --global npm@latest
+      - if: steps.exists.outputs.published != 'true'
+        run: npm publish --provenance --access public
