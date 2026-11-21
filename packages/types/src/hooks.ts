@@ -113,7 +113,10 @@ export interface ResolveFieldsOutput {
   fields: Record<string, { options?: Option[]; error?: string }>;
 }
 
-/** Action `resolveFields` — one hook per form populating `source: "resolveFields"` params. */
+/**
+ * Action or Trigger `resolveFields` — one hook per form populating `source: "resolveFields"`
+ * params.
+ */
 export type ResolveFieldsHook = (
   input: ResolveFieldsInput,
   ctx: HookContext,

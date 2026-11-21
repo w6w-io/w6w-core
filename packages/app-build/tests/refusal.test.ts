@@ -256,6 +256,29 @@ Deno.test("fields_hook_invalid: a hook no param opts in to builds with a warning
   }
 });
 
+Deno.test("refuse: fields_hook_invalid — a trigger param opts in to resolveFields but the trigger has no hook", () =>
+  refuse("fields_hook_invalid", {
+    "index.ts": `export default { triggers: [{ key: "t", title: "T", params: [${FORM_PARAM}],
+      poll() { return { events: [], nextState: {} }; } }] };\n`,
+  }));
+
+Deno.test("fields_hook_invalid: a trigger with a valid hook builds and lists resolveFields among its hooks", async () => {
+  const f = await fixture({
+    "index.ts":
+      `export default { triggers: [{ key: "t", title: "T", output: [], params: [${FORM_PARAM}],
+      poll() { return { events: [], nextState: {} }; },
+      resolveFields() { return { fields: {} }; } }] };\n`,
+  });
+  try {
+    const r = await buildApp(f.app, f.out);
+    assertEquals("warnings" in r, false);
+    const art = JSON.parse(await Deno.readTextFile(join(r.outDir, "manifest.json")));
+    assertEquals(art.triggers[0].hooks, ["poll", "resolveFields"]);
+  } finally {
+    await Deno.remove(f.tmp, { recursive: true });
+  }
+});
+
 Deno.test("shared includes: sibling apps build standalone code/assets, hash shared changes, and preserve identity", async () => {
   const f = await fixture({
     "package.json": pkgJson({}, {

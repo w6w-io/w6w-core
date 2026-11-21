@@ -23,10 +23,11 @@ models the user's Anthropic key can reach, the organizers under one Eventbrite o
 **dynamic field** fetches those choices from the user's own connection while they fill the form,
 instead of shipping a fixed list that goes stale.
 
-One hook per Action, `resolveFields`, answers for all of them in a single call: the editor sends the
-form's literal values, the hook returns options for the keys it was asked about, and every picker
-fills at once. The feature is specified in the [Param](/reference-spec/app-contract/param/) and
-[Action](/reference-spec/app-contract/action/) RFCs; this page is how to use it in an App.
+One hook per Action (or per Trigger), `resolveFields`, answers for all of them in a single call: the
+editor sends the form's literal values, the hook returns options for the keys it was asked about,
+and every picker fills at once. The feature is specified in the
+[Param](/reference-spec/app-contract/param/) and [Action](/reference-spec/app-contract/action/)
+RFCs; this page is how to use it in an App.
 
 ## Declare a dynamic field
 
@@ -193,6 +194,42 @@ That is why a field can usefully be dynamic _and_ `allowCustom` _and_ still expr
 hook is a convenience, not a validator. Invocation re-checks nothing about `resolveFields`; validate
 what matters in the Action's own code.
 
+## On a trigger
+
+A trigger's params can be dynamic too — the calendar to watch, the board, the form whose responses
+start the workflow. Declare `resolveFields` on the trigger exactly as on an Action, and opt params
+in with `options: { source: "resolveFields" }`:
+
+```ts
+const newResponse: TriggerDefinition = {
+  key: "new-response",
+  title: "New Form Response",
+  params: [
+    {
+      key: "formId",
+      label: "Form",
+      type: "string",
+      required: true,
+      options: { source: "resolveFields" },
+      config: { allowCustom: true },
+    },
+  ],
+  poll({ params, state }, ctx) {/* … */},
+  async resolveFields(input, ctx) {
+    const res = await ctx.fetch(`${API}/forms`);
+    if (!res.ok) return { fields: { formId: { error: `Forms returned ${res.status}` } } };
+    const { items } = await res.json();
+    return {
+      fields: { formId: { options: items.map((f: Form) => ({ value: f.id, label: f.title })) } },
+    };
+  },
+};
+```
+
+The hook runs only while the trigger is being set up — never on subscribe, poll or delivery — and it
+does not change whether the trigger is a webhook or a poll. Everything else on this page (the input,
+the editor rules, `refreshOn`, the 10 s cap) is the same as for an Action.
+
 ## Change a field's label or requirement with `when`
 
 A param can adapt to another param's value. `when` is an ordered list of `{ if, set }` entries; the
@@ -223,7 +260,8 @@ value) is what Invocation enforces. Tooling that cannot express a conditional `r
 
 ## Checklist
 
-- Declare the hook once on the Action, next to `params`, and export the function from your app.
+- Declare the hook once on the Action or Trigger, next to `params`, and export the function from
+  your app.
 - Ask only for what you return, and return options for every key in `input.fields` — a missing key
   reads as "no options" to the user.
 - Use `refreshOn` for the parent key instead of `dependsOn`, unless the child genuinely cannot be

@@ -1,4 +1,9 @@
-import type { ActionDefinition, AppDefinition, AuthDefinition } from "@w6w/types";
+import type {
+  ActionDefinition,
+  AppDefinition,
+  AuthDefinition,
+  TriggerDefinition,
+} from "@w6w/types";
 
 /** Same shape as the sendgrid fixture's api-key auth: `sign` stamps a Bearer header. */
 const apiKey: AuthDefinition = {
@@ -100,7 +105,36 @@ const fake = {
   },
 } as unknown as ActionDefinition;
 
+/**
+ * A poll trigger whose subscription form opts into `resolveFields`: the same hook as the `form`
+ * action, so a test proves the trigger path runs it under the same posture. `poll` returns a shape
+ * the hook never does.
+ */
+const newMessage: TriggerDefinition = {
+  key: "new-message",
+  title: "New Message",
+  params: [
+    { key: "mode", label: "Mode", type: "string" },
+    { key: "channel", label: "Channel", type: "string", options: { source: "resolveFields" } },
+  ],
+  poll() {
+    return { events: [{ ranPoll: true }], nextState: {} };
+  },
+  resolveFields: form.resolveFields,
+};
+
+/** A trigger with no options hook. */
+const plainTrigger: TriggerDefinition = {
+  key: "plain-trigger",
+  title: "Plain Trigger",
+  params: [],
+  poll() {
+    return { events: [], nextState: {} };
+  },
+};
+
 export default {
   actions: [form, plain, fake],
+  triggers: [newMessage, plainTrigger],
   auth: [apiKey],
 } satisfies AppDefinition;

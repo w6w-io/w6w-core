@@ -164,6 +164,7 @@ Deno.test("(h) types: handleIngest raw is a TriggerCall; poll needs no handleIng
     "handleIngest",
     "poll",
     "parseOutput",
+    "resolveFields",
   ]);
 });
 

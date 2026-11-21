@@ -256,6 +256,7 @@ The complete set of hook kinds, their input/output shapes, and the lifecycle pha
 | `action.execute` | [Action RFC](./action.md) | resolved `params` | action `output` | `execute` | No |
 | `action.output.source` | [Action RFC](./action.md) | `{ form }` | `OutputField[]` | `resolution` | No |
 | `action.resolveFields` | [Action RFC](./action.md) | `{ reason, form, previous?, changed?, fields, unresolved }` | `{ fields: Record<key, { options?, error? }> }` | `resolution` | No |
+| `trigger.resolveFields` | [Trigger RFC](./trigger.md) | as `action.resolveFields` | as `action.resolveFields` | `resolution` | No |
 | `param.options.source` | [Param RFC](./param.md) | `{ form, dependsOn }` | `Option[]` | `resolution` | No |
 | `param.validation.hook` | [Param RFC](./param.md) | `{ value, form }` | `{ ok, message? }` | `resolution` | No |
 | `auth.preflight` | [Auth RFC](./auth.md) | `{ fields? }` | implementation-defined setup data | `auth` | No |
@@ -600,3 +601,12 @@ closed code set of the Codes table above through this amendment, all in phase `a
 `credential_invalid`. The host or runtime preparation step raises them (and a provider it calls);
 **hook code never does.** "New codes require an RFC bump" is satisfied by this amendment; the set stays
 closed for `manifestVersion: "1"`.
+
+## Amendment — 2026-11-21: `trigger.resolveFields`
+
+A Trigger may declare `resolveFields` with exactly `action.resolveFields`'s contract (input, output,
+phase `resolution`, signed `ctx.fetch` behind `network.allow`, redacted `ctx.connection`, the 10 s
+cap and the host-side output sanitising). The worker addresses it as the trigger hook
+`resolveFields`; it receives no `params` envelope, so a param's `parse` does not run on its input.
+It is editor-time only and is never called by the trigger lifecycle.
+

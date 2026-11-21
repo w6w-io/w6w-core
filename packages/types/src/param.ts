@@ -60,7 +60,7 @@ export interface Option {
 export interface DynamicOptions {
   /**
    * Either the reserved string `"resolveFields"` (options come from the
-   * Action's form-level `resolveFields` hook) or a `./`-relative path to a
+   * Action's or Trigger's form-level `resolveFields` hook) or a `./`-relative path to a
    * per-field hook returning `Option[]` (receives `{ form, dependsOn }`).
    */
   source: string;

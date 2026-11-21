@@ -599,3 +599,27 @@ The reply always carries `x-content-type-options: nosniff`, and `content-type` d
 It is never partially honoured. A hook that wants to reject a delivery still throws.
 
 State writes from `handleIngest` are not part of this amendment: `nextState` is a `poll` result only.
+
+## Amendment — 2026-11-21: `resolveFields` on a trigger
+
+Additive. A Trigger may declare the same form-level options hook an Action can
+([Action RFC amendment of 2026-10-24](./action.md#amendment--2026-10-24-the-resolvefields-hook-and-when-resolution-runs)),
+so a subscription's params can offer choices read from the user's own account (the calendars,
+boards or forms they can see) instead of asking them to paste an id.
+
+- **Declaration.** `resolveFields` joins `TRIGGER_HOOK_KINDS`. A trigger param opts in exactly as an
+  Action's does, with `options: { source: "resolveFields" }`; `refreshOn`, `config.allowCustom` and
+  the editor rules are those of the [Param RFC](./param.md). `describe` reports the hook in the
+  trigger's `hooks` list; there is no separate flag. A param that opts in on a trigger without the
+  hook, or a `refreshOn` that names no sibling, is refused at build (`fields_hook_invalid`), as for
+  an Action.
+- **Contract.** Input, output, phase, sandbox posture, the 10 s cap and the host-side sanitising are
+  `action.resolveFields`'s ([Hook runtime RFC](./hook-runtime.md#amendment--2026-11-21-triggerresolvefields)).
+  The hook sees literal form values only; it never sees the credential.
+- **When it runs.** Only while the trigger's params are being edited. It is not a lifecycle hook:
+  it never runs on subscribe, poll, ingest or delivery, and it does not change the trigger's form
+  (`type` is still `"poll"` iff the trigger declares `poll`). A subscription created with a value
+  the hook never offered is not re-checked.
+- **Host route.** `POST /apps/:id/triggers/:key/fields`, the same body and answers as
+  `POST /apps/:id/actions/:key/fields`.
+

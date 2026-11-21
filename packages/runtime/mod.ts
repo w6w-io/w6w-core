@@ -27,6 +27,7 @@ export {
   invoke,
   invokeResolveFields,
   invokeTriggerHook,
+  invokeTriggerResolveFields,
   prepareAuthorization,
   runAuthHook,
   signingFetch,

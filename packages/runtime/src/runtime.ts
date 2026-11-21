@@ -985,7 +985,8 @@ export async function invoke(
  * same way as for actions: the trigger sees a redacted connection; outbound
  * fetches route through the auth `sign` hook when the app declares one.
  *
- * Hook-generic: any of the five `TRIGGER_HOOK_KINDS` the trigger declares.
+ * Hook-generic: any of the `TRIGGER_HOOK_KINDS` the trigger declares (`resolveFields` goes
+ * through `invokeTriggerResolveFields`, which sanitises and caps it).
  * Host callers:
  *   - registration (subscription create / publish) → "onSubscribe"
  *   - destroy (subscription delete / any dependency deleted) → "onUnsubscribe"
@@ -1070,7 +1071,7 @@ export async function invokeTriggerHook(
  * the hook call itself is re-thrown in phase `resolution` (code kept), and the
  * return is sanitised as untrusted on THIS side of the boundary.
  */
-export async function invokeResolveFields(
+export function invokeResolveFields(
   app: LoadedApp,
   actionKey: string,
   input: ResolveFieldsInput,
@@ -1087,6 +1088,41 @@ export async function invokeResolveFields(
       `Action "${actionKey}" does not declare resolveFields.`,
     );
   }
+  return runResolveFields(app, { kind: "action", key: actionKey }, input, opts);
+}
+
+/**
+ * A Trigger's `resolveFields`: the options of its subscription form, run exactly as an Action's
+ * (`invokeResolveFields`) — same signing and egress posture, same cap, same sanitising. Only the
+ * hook it addresses differs.
+ */
+export function invokeTriggerResolveFields(
+  app: LoadedApp,
+  triggerKey: string,
+  input: ResolveFieldsInput,
+  opts: InvokeOptions = {},
+): Promise<ResolveFieldsOutput> {
+  const trigger = app.triggers.get(triggerKey);
+  if (!trigger) {
+    throw new W6WError("unknown_trigger", "resolution", `Unknown trigger "${triggerKey}".`);
+  }
+  if (!trigger.hooks.has("resolveFields")) {
+    throw new W6WError(
+      "hook_not_declared",
+      "resolution",
+      `Trigger "${triggerKey}" does not declare resolveFields.`,
+    );
+  }
+  return runResolveFields(app, { kind: "trigger", key: triggerKey }, input, opts);
+}
+
+async function runResolveFields(
+  app: LoadedApp,
+  target: { kind: "action" | "trigger"; key: string },
+  input: ResolveFieldsInput,
+  opts: InvokeOptions,
+): Promise<ResolveFieldsOutput> {
+  const what = target.kind === "action" ? "Action" : "Trigger";
 
   const auth = opts.connection ? authFor(app, opts.connection) : undefined;
   let credential: unknown;
@@ -1109,7 +1145,7 @@ export async function invokeResolveFields(
     throw new W6WError(
       "connection_required",
       "auth",
-      `Action "${actionKey}" requires a connection — the app declares auth.`,
+      `${what} "${target.key}" requires a connection — the app declares auth.`,
     );
   }
 
@@ -1125,7 +1161,9 @@ export async function invokeResolveFields(
   try {
     raw = await runHook({
       ...hookSource(app),
-      selector: { kind: "action", key: actionKey, hook: "resolveFields" },
+      selector: target.kind === "action"
+        ? { kind: "action", key: target.key, hook: "resolveFields" }
+        : { kind: "trigger", key: target.key, hook: "resolveFields" },
       input,
       connection: redacted,
       timeoutMs,

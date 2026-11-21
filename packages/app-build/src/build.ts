@@ -98,7 +98,7 @@ async function bundle(
  * - bundle: `bundle_failed`, `bundle_not_self_contained`, `sourcemap_invalid`
  * - describe: `worker_options_required` (run with `--unstable-worker-options`), `describe_failed`,
  *   `load_failed`, `artifact_invalid`
- * - form fields: `fields_hook_invalid` (an action's `resolveFields` wiring is inconsistent)
+ * - form fields: `fields_hook_invalid` (an action's or trigger's `resolveFields` wiring is inconsistent)
  * - assets: `asset_path`, `asset_extension`, `asset_missing`, `asset_symlink`, `asset_not_file`,
  *   `asset_too_large`, `asset_total_too_large`
  * - source digest: `source_symlink`, `source_special_file`

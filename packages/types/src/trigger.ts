@@ -12,6 +12,7 @@ import type {
   OnUnsubscribeHook,
   ParseOutputHook,
   PollHook,
+  ResolveFieldsHook,
 } from "./hooks.ts";
 
 /**
@@ -26,6 +27,7 @@ export const TRIGGER_HOOK_KINDS = [
   "handleIngest",
   "poll",
   "parseOutput",
+  "resolveFields",
 ] as const;
 export type TriggerHookKind = typeof TRIGGER_HOOK_KINDS[number];
 
@@ -111,4 +113,9 @@ export interface TriggerDefinition<
   handleIngest?: HandleIngestHook<P, S, E>;
   poll?: PollHook<P, S, E>;
   parseOutput?: ParseOutputHook<E>;
+  /**
+   * Editor-time options for params with `options: { source: "resolveFields" }`, exactly as on an
+   * Action: the host calls it while the subscription is being configured (never on delivery).
+   */
+  resolveFields?: ResolveFieldsHook;
 }
