@@ -690,7 +690,7 @@ export function foldStateLog(rows: readonly StateLogRow[], uptoSeq?: number): St
 // --- starting data ----------------------------------------------------------------------------
 
 /**
- * The twelve run-scope roots (core/rfcs/workflow.md, the run state tree amendment). A `{{ }}`
+ * The thirteen run-scope roots (core/rfcs/workflow.md, the run state tree amendment). A `{{ }}`
  * marker whose first segment is none of these is a vendor placeholder and stays literal, exactly
  * as in a `with` value; it is never an expression of ours.
  */
@@ -704,6 +704,7 @@ const RUN_SCOPE_ROOTS: ReadonlySet<string> = new Set([
   "trigger",
   "secrets",
   "documents",
+  "connections",
   "inputs",
   "output",
   "foreach",

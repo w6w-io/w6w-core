@@ -1915,3 +1915,36 @@ A host that implements the `{{ }}` grammar MUST:
 - Treat `now` as having no `{ "var": … }` operand for root-anchoring, so `{{ now() }}` alone
   resolves.
 - Serialize `{"now":[]}` and `{"now":["<format>"]}` back to `now()` and `now('<format>')`.
+
+## Amendment — 2026-11-22: the `connections` run-scope root
+
+A run's expressions may read the workflow's bound connections (the 2026-11-01 `connections` map)
+by their binding name, under a new root, `connections`:
+
+| Ref                                   | Value                                                     |
+| ------------------------------------- | --------------------------------------------------------- |
+| `connections.<name>.id`               | the bound connection's id                                 |
+| `connections.<name>.app`              | the app it authenticates to                               |
+| `connections.<name>.name`             | its display name                                          |
+| `connections.<name>.state`            | `connected`, `needs_refresh`, `broken`, …                 |
+| `connections.<name>.profile.<field>`  | what the app's `afterConnect` recorded (Auth RFC), e.g. a base URL, an account email or organization |
+
+So a step can build a vendor URL from the account it is connected to, e.g.
+`{{ connections.gitlab_1.profile.baseUrl }}/api/v4/projects`, without copying it into a variable.
+
+A host that implements this root MUST:
+
+- Populate it before the run from the effective definition's `connections` map, looking each bound
+  entry up under the run's own actor, exactly the visibility its credential resolution applies. An
+  unbound entry (`connection: null`) or one the actor cannot see is **absent**, so its refs read
+  `undefined` and its existence is not revealed.
+- Expose only the five fields above. The credential, its ciphertext, its id and any other column
+  never enter the scope. `profile` is non-secret by the Auth RFC's contract for `afterConnect`.
+- Supply it again on every resumed leg (it is host-loaded and never persisted, like `documents`),
+  and to a single-node Test of a saved workflow, so the editor resolves what a run will.
+- Treat `connections` as ordinary data reachable through the generic data root, and as one of the
+  run-scope roots that make a `{{ }}` marker ours rather than a vendor placeholder. That brings the
+  count of roots to thirteen.
+
+`nodes.<id>.meta.connectionId` is unchanged; it names a node's connection, while this root reads a
+binding's account details.
