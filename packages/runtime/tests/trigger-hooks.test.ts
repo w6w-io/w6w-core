@@ -174,3 +174,37 @@ Deno.test("a trigger declaring no hooks loads as a webhook", async () => {
     assertEquals(app.triggers.get("t")?.trigger.type, "webhook");
   });
 });
+
+Deno.test("(m1) a manual webhook declaration loads and is described as authored", async () => {
+  await withTempApp(
+    body(
+      `{ key: "t", title: "T", webhook: { registration: "manual", instructions: "Settings, Webhooks, Add" } }`,
+    ),
+    async (dir) => {
+      const app = await loadApp(dir);
+      assertEquals(app.triggers.get("t")?.trigger.webhook, {
+        registration: "manual",
+        instructions: "Settings, Webhooks, Add",
+      });
+      assertEquals(
+        describe(app).triggers.find((t) => t.key === "t")?.webhook?.registration,
+        "manual",
+      );
+    },
+  );
+});
+
+Deno.test("(m2) webhook on a poll trigger is invalid_trigger", async () => {
+  await assertInvalidTrigger(
+    body(
+      `{ key: "t", title: "T", webhook: { registration: "manual" }, poll() { return { events: [] }; } }`,
+    ),
+  );
+});
+
+Deno.test("(m3) a webhook registration other than manual is invalid_trigger", async () => {
+  await assertInvalidTrigger(body(`{ key: "t", title: "T", webhook: { registration: "auto" } }`));
+  await assertInvalidTrigger(
+    body(`{ key: "t", title: "T", webhook: { registration: "manual", instructions: 3 } }`),
+  );
+});

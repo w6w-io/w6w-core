@@ -794,6 +794,18 @@ forms, and the loader derives which (`type`) from the hooks you declare:
   `onSubscribe` without `onUnsubscribe` (`invalid_trigger`). The optional `handleIngest` turns the
   whole inbound call (`{ method, path, query, headers, body }`) into 0..N events; without it the
   body is the event. A trigger with no hooks is a plain receiver.
+- **Manual webhook** — when the vendor has no API to register a webhook and the user must paste
+  the URL into the vendor's dashboard, declare it instead of writing hooks:
+  `webhook: { registration: "manual", instructions: "…" }`. W6W mints the receive URL as soon as
+  the trigger is placed (before publish), shows it in the trigger's editor with your
+  `instructions` and a warning that nothing arrives until the URL is added, and keeps that URL
+  stable across edits to the trigger's params and connection. Write `instructions` as plain text,
+  one step per line, without numbering (the editor numbers them); name the exact dashboard place,
+  call the URL "the URL above", and name any value the user copies back by its param label. Do
+  not write an `onSubscribe` that only returns `{ callbackUrl }`: it registers nothing. Keep hooks
+  only when they do real work (e.g. `handleIngest` checking a signature over
+  `state.callbackUrl`). `webhook` on a poll or protocol trigger is `invalid_trigger`. Mirror
+  `airparser`'s `lib/triggers.ts`; see rfcs/trigger.md, Amendment 2026-11-22.
 - **Poll** — `poll({ params, state, subscriptionId }, ctx)` returns `{ events, nextState? }` and the
   host calls it on an interval (`minIntervalMs` is your floor; the host may set a higher one).
   Dedupe from your own cursor in `state`. A poll trigger MUST NOT declare `onSubscribe`.

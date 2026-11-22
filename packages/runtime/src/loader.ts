@@ -341,6 +341,24 @@ export function assembleLoadedApp(
       : declared.has("poll")
       ? "poll"
       : "webhook";
+    if (trigger.webhook !== undefined) {
+      const w = trigger.webhook as unknown as Record<string, unknown> | null;
+      if (trigger.type !== "webhook") {
+        throw new LoadError(
+          "invalid_trigger",
+          `Trigger "${trigger.key}" in ${label} declares \`webhook\` but is a ${trigger.type} trigger: only a webhook trigger has a URL to register.`,
+        );
+      }
+      if (
+        w === null || typeof w !== "object" || w.registration !== "manual" ||
+        (w.instructions !== undefined && typeof w.instructions !== "string")
+      ) {
+        throw new LoadError(
+          "invalid_trigger",
+          `Trigger "${trigger.key}" in ${label}: \`webhook\` must be { registration: "manual", instructions?: string }.`,
+        );
+      }
+    }
     triggers.set(trigger.key, { trigger, hooks: declared });
   }
 
