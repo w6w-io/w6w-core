@@ -41,6 +41,25 @@ export type TriggerHookKind = typeof TRIGGER_HOOK_KINDS[number];
 export type TriggerType = "webhook" | "poll" | "protocol";
 
 /**
+ * How a webhook trigger's receive URL reaches the vendor. Authored, webhook form only
+ * (rfcs/trigger.md, Amendment 2026-11-22).
+ *
+ * `"manual"`: the vendor has no registration API (or the app does not use one), so the USER adds
+ * the URL in the vendor's own settings. The host mints the URL with the trigger's subscription and
+ * shows it in the trigger's editor, before publish, with `instructions` — and says plainly that the
+ * trigger fires nothing until the URL has been added there. The URL stays the same while the
+ * trigger's params or connection change, so a URL already pasted keeps working.
+ */
+export interface WebhookSetup {
+  registration: "manual";
+  /**
+   * Where in the vendor the URL goes, and anything else to set there (events to tick, the
+   * signing secret to copy back). Plain text; newlines separate steps. Shown under the URL.
+   */
+  instructions?: string;
+}
+
+/**
  * A Trigger's serializable configuration — its metadata minus the hook
  * functions. This is what `describe()` returns and what the editor / host
  * renders.
@@ -76,6 +95,12 @@ export interface Trigger {
   delivery?: "w6w-protocol";
   /** Authored, with `delivery: "w6w-protocol"`: the partner events this trigger delivers. */
   protocol?: TriggerProtocol;
+  /**
+   * Authored, webhook form only: how the receive URL is registered with the vendor. Absent means
+   * the app registers it itself (`onSubscribe`) or the trigger is not a webhook. A poll or protocol
+   * trigger that declares it is refused at load.
+   */
+  webhook?: WebhookSetup;
   /**
    * Vendor floor (ms) for a poll trigger's check interval. The host applies its
    * own floor on top; the larger wins.

@@ -623,3 +623,45 @@ boards or forms they can see) instead of asking them to paste an id.
 - **Host route.** `POST /apps/:id/triggers/:key/fields`, the same body and answers as
   `POST /apps/:id/actions/:key/fields`.
 
+
+## Amendment — 2026-11-22: manual webhook registration
+
+Additive. Many vendors have no API for registering a webhook: the user creates it in the vendor's
+own settings and pastes a URL there. Until this amendment, such a trigger was a webhook with no
+way for the user to learn its URL. An app had to return `callbackUrl` from a no-op `onSubscribe`
+so the URL at least appeared on the subscription's state. Now the app declares the form, and the
+host mints the URL and shows it.
+
+- **Declaration.** `Trigger.webhook?: { registration: "manual"; instructions?: string }`. This is
+  authored and allowed on the webhook form only. A poll or protocol trigger that declares it is
+  refused at load (`invalid_trigger`), as is any `registration` other than `"manual"` or an
+  `instructions` that is not a string. `instructions` is plain text, with newlines separating
+  steps. It says where in the vendor the URL goes and what else to set there, such as the events
+  to tick or the signing secret to copy back into a param. A manual webhook needs no hooks.
+  `onSubscribe`/`onUnsubscribe` remain allowed and keep their meaning, but an app SHOULD drop a
+  no-op pair once it declares `webhook`.
+- **The URL.** It is the subscription's receive URL (`/triggers/webhooks/:subscriptionId`, see
+  [HTTPS (v1)](#https-v1)). The host MUST return it as `webhookUrl` on every subscription
+  response whose `type` is `"webhook"`, for any app.
+- **Before publish.** The editor MUST be able to show the URL while the trigger is still being
+  configured, because the user pastes it into the vendor first. It creates the trigger node's
+  node-bound subscription (`POST /apps/:id/triggers/:key/subscriptions` with `nodeId`). A second
+  create for the same `(workflow, node)` returns the existing row instead of minting another URL.
+  While that row is still `pending`, the repeat create also hands it the node's current `params`
+  and `connectionId` under the same id, with the same connection checks and sealing as a create.
+  A vendor that checks the URL when it is saved (a verify token, a signing secret) therefore
+  checks it against what the user just entered. A `registered` row changes only at publish. The
+  publish-time reconcile adopts the row by `node_id`
+  ([B-1](#amendment--2026-10-30-trigger-nodes-bind-subscriptions-b-1)) and registers it. Until
+  then the receive URL answers as usual, including any `handleIngest` handshake, but a delivery
+  to a node-bound row still `pending` is recorded as `ignored` and starts no run: the unpublished
+  draft never runs from a vendor's test delivery.
+- **A stable URL.** For a manual webhook row whose app and trigger are unchanged, the reconcile
+  MUST update `params` and `connectionId` in place and keep the subscription id. It does not
+  destroy and re-create the row, because a new id is a new URL and the one already pasted into
+  the vendor would stop working. Removing the node or changing its app or trigger still destroys
+  the row.
+- **What the user is told.** The editor shows the URL beside `instructions`. It says that the
+  trigger receives nothing until the URL has been added in the vendor. `registered` on such a
+  row means only that the host is listening; whether the vendor has the URL is known only from
+  the first delivery.
