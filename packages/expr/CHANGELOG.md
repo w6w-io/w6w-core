@@ -3,6 +3,14 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.6]
+
+### Changed
+
+- `connections` is a run-scope root (core/rfcs/workflow.md, the 2026-11-22 amendment): a
+  `{{ connections.<name>.* }}` marker in state config is an expression of ours, no longer a vendor
+  placeholder left literal.
+
 ## [0.1.5]
 
 ### Added
