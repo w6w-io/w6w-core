@@ -194,6 +194,33 @@ Deno.test("(m1) a manual webhook declaration loads and is described as authored"
   );
 });
 
+Deno.test("(m4) a webhook trigger with no onSubscribe is manual: the user adds the URL", async () => {
+  // Flite's shape: a webhook that only ingests. Nothing registers its URL, so the user must.
+  await withTempApp(
+    body(`{ key: "t", title: "T", handleIngest() { return []; } }`),
+    async (dir) => {
+      const app = await loadApp(dir);
+      assertEquals(app.triggers.get("t")?.trigger.webhook, { registration: "manual" });
+      assertEquals(describe(app).triggers.find((t) => t.key === "t")?.webhook, {
+        registration: "manual",
+      });
+    },
+  );
+});
+
+Deno.test("(m5) a self-registering webhook (onSubscribe) and a poll trigger stay unmarked", async () => {
+  await withTempApp(
+    body(
+      `{ key: "w", title: "W", onSubscribe() { return {}; }, onUnsubscribe() {} }, { key: "p", title: "P", poll() { return { events: [] }; } }`,
+    ),
+    async (dir) => {
+      const app = await loadApp(dir);
+      assertEquals(app.triggers.get("w")?.trigger.webhook, undefined);
+      assertEquals(app.triggers.get("p")?.trigger.webhook, undefined);
+    },
+  );
+});
+
 Deno.test("(m2) webhook on a poll trigger is invalid_trigger", async () => {
   await assertInvalidTrigger(
     body(

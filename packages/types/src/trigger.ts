@@ -96,9 +96,10 @@ export interface Trigger {
   /** Authored, with `delivery: "w6w-protocol"`: the partner events this trigger delivers. */
   protocol?: TriggerProtocol;
   /**
-   * Authored, webhook form only: how the receive URL is registered with the vendor. Absent means
-   * the app registers it itself (`onSubscribe`) or the trigger is not a webhook. A poll or protocol
-   * trigger that declares it is refused at load.
+   * Webhook form only: how the receive URL is registered with the vendor. Authored, or derived by
+   * the host for a webhook trigger that declares no `onSubscribe` ({@link withWebhookRegistration}).
+   * Absent on a webhook trigger means the app registers the URL itself (`onSubscribe`). A poll or
+   * protocol trigger that declares it is refused at load.
    */
   webhook?: WebhookSetup;
   /**
@@ -143,4 +144,26 @@ export interface TriggerDefinition<
    * Action: the host calls it while the subscription is being configured (never on delivery).
    */
   resolveFields?: ResolveFieldsHook;
+}
+
+/**
+ * A webhook trigger reaches its vendor in exactly one of two ways: the app registers the receive
+ * URL itself (`onSubscribe`), or the USER adds it in the vendor (`webhook.registration: "manual"`),
+ * which needs the host to show them the URL. There is no third way, so a webhook trigger that
+ * declares no `onSubscribe` is manual whether or not it says so (rfcs/trigger.md, Amendment
+ * 2026-11-23). Returns `trigger` with `webhook: { registration: "manual" }` in that case, and
+ * `trigger` itself otherwise: an authored `webhook` is kept, a poll or protocol trigger is left
+ * alone, and `hooks` absent (not known) derives nothing.
+ */
+export function withWebhookRegistration<T extends Trigger>(
+  trigger: T,
+  hooks: readonly string[] | undefined,
+): T {
+  if (
+    trigger.webhook !== undefined || trigger.type !== "webhook" || trigger.delivery !== undefined
+  ) {
+    return trigger;
+  }
+  if (hooks === undefined || hooks.includes("onSubscribe")) return trigger;
+  return { ...trigger, webhook: { registration: "manual" } };
 }
