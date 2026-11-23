@@ -17,7 +17,12 @@ import type {
   TriggerHookKind,
   W6WPackageMetadata,
 } from "@w6w/types";
-import { isProtocolTrigger, protocolDeclarationErrors, verifySha256 } from "@w6w/types";
+import {
+  isProtocolTrigger,
+  protocolDeclarationErrors,
+  verifySha256,
+  withWebhookRegistration,
+} from "@w6w/types";
 import { LoadError } from "./errors.ts";
 import type { DescribedApp } from "./sandbox/protocol.ts";
 import { path } from "./node.ts";
@@ -359,7 +364,11 @@ export function assembleLoadedApp(
         );
       }
     }
-    triggers.set(trigger.key, { trigger, hooks: declared });
+    // Neither self-registering (`onSubscribe`) nor declared manual: the user must add the URL.
+    triggers.set(trigger.key, {
+      trigger: withWebhookRegistration(trigger, [...declared]),
+      hooks: declared,
+    });
   }
 
   const protocolErrors = protocolDeclarationErrors(manifest, [...triggers.values()]);

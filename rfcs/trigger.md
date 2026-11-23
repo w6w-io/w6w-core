@@ -665,3 +665,21 @@ host mints the URL and shows it.
   trigger receives nothing until the URL has been added in the vendor. `registered` on such a
   row means only that the host is listening; whether the vendor has the URL is known only from
   the first delivery.
+
+## Amendment — 2026-11-23: a webhook trigger registers itself or is manual
+
+Normative. A webhook trigger's receive URL reaches the vendor in exactly one of two ways: the app
+registers it (`onSubscribe`), or the user adds it in the vendor (`webhook.registration:
+"manual"`, above), which requires the host to show them the URL. There is no third way. Before
+this amendment, a webhook trigger that declared neither (one that only ingests, such as a vendor
+whose webhook is created through one of the app's own actions) had a URL nobody could see.
+
+- **Derivation.** A webhook-form trigger (`type: "webhook"`, no `delivery`) that declares no
+  `onSubscribe` and no `webhook` IS a manual webhook: the loader sets `webhook: { registration:
+  "manual" }` on it, and every rule of the 2026-11-22 amendment applies (the URL before publish,
+  the stable URL, what the user is told). `@w6w/types` `withWebhookRegistration` is the one
+  statement of the rule.
+- **Already registered versions.** A host MUST apply the same derivation when it serves a stored
+  trigger whose declared hooks it knows, so a version registered before this amendment shows its
+  URL without being re-registered. When the hooks are not known it derives nothing.
+- An authored `webhook` is kept as written; a trigger with `onSubscribe` stays app-registered.
