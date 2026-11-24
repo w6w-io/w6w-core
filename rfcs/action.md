@@ -300,6 +300,7 @@ Resolution in a programmatic Invocation with `params: { productId: "shoes-42", v
 | `description` | string | ⬜ | One-line summary of what the action does. |
 | `resource` | string | ⬜ | UI grouping hint. Actions sharing the same `resource` value (e.g. `"channel"`, `"message"`) are grouped together in the editor. Purely presentational — no structural meaning. |
 | `idempotent` | boolean | ⬜ | `perform` Actions only. Declares the operation is safe to re-execute with the same inputs (e.g. `PUT`-shaped). Drives the platform's retry policy and lets [Invocation](./invocation.md) use `invocationId` as a dedupe key. Defaults to `false`. |
+| `timeoutMs` | number | ⬜ | How long `execute` (and each request it makes) may run, in ms, when the caller names no limit. 1 000–280 000; outside is clamped. Absent ⇒ 120 000. A caller's own per-call limit (a workflow step's `timeoutMs`) wins. See [Amendment — 2026-11-24](#amendment--2026-11-24-timeoutms-and-a-generous-default). |
 | `requiresAuth` | boolean | ⬜ | When the enclosing App declares Auth methods, set `false` to opt this Action out of requiring a Connection (e.g. a public `health` endpoint). Defaults to `true` when the App has auth, `false` when it doesn't. |
 | `params` | [Param](./param.md)[] | ⬜ | Inputs collected from the user in the workflow editor. |
 | `execute` | string (path) \| function | ✅ (⬜ for `control`) | The method that executes this action. Path reference or co-located function — see [Hook Runtime RFC §Module format](./hook-runtime.md#module-format). Omitted for `type: "control"` — the engine interprets those instead. |
@@ -512,3 +513,37 @@ Editors layer it as follows:
   `output` exists either. A mismatch never removes a key.
 
 A `sample` should match `output`; `w6w-app-build` warns (never fails) when it does not.
+
+## Amendment — 2026-11-24: `timeoutMs` and a generous default
+
+> Additive. No existing Action changes meaning except that it now gets more time.
+
+**Why.** Every `execute` ran under the [Hook Runtime](./hook-runtime.md#timeouts-and-cancellation)
+default of 30 s, with no way for an author or a user to give a slow vendor more. Vendor list and
+report endpoints routinely run longer: Eventbrite's organization orders endpoint answered the same
+request in 4.5 s, 80.3 s and 3.9 s on three consecutive calls (measured 2026-11-24). A healthy step
+failed on a slow-but-correct vendor, with the opaque "Worker timed out after 30000ms".
+
+**The field.** `timeoutMs?: number` on an Action: how long its `execute` may run, in milliseconds.
+It is the limit for the sandbox AND for each outbound request `execute` makes through `ctx.fetch`,
+so a request is never cut off before the budget the Action declared.
+
+**Precedence for one call**, first match wins:
+
+1. the caller's own per-call limit: a workflow step's `timeoutMs` ([Workflow RFC](./workflow.md#amendment--2026-11-24-steptimeoutms)),
+   a Function's action-arm `timeoutMs`, or a direct invoke's `timeoutMs`;
+2. the Action's `timeoutMs`;
+3. the platform default, **120 000 ms** (`ACTION_TIMEOUT_DEFAULT_MS`).
+
+Values from (1) and (2) are clamped to **1 000–280 000 ms** (`clampTimeoutMs`). The ceiling sits
+below the hosted API's 300 s request limit, so a synchronous call that runs out of time reports its
+own error rather than a gateway one. Each retry attempt gets the full limit again.
+
+**The error.** When the limit fires while a request is still waiting on the vendor, the error is
+`fetch_timeout` (phase `execute`) naming the host and the limit: *Request to
+"www.eventbriteapi.com" got no answer within the 120000ms limit for this call.* `details` carries
+`{ hosts, timeoutMs }`. When nothing is in flight (the code itself ran long), it stays
+`hook_timeout`.
+
+**Not changed.** `resolveFields` keeps its 10 s cap (it sits in the editor's critical path), and
+trigger and auth hooks keep the 30 s hook default.

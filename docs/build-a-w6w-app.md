@@ -166,6 +166,7 @@ const sendEmail: ActionDefinition<Input> = {
   title: "Send Email",
   description: "Send a transactional email.",
   idempotent: false, // perform only: is it safe to retry? drives dedupe/retry
+  // timeoutMs: 180_000, // optional: a slow vendor endpoint needs longer than the 120 s default (max 280 s)
   params: [
     { key: "to", label: "To", type: "string", required: true },
     { key: "subject", label: "Subject", type: "string", required: true },

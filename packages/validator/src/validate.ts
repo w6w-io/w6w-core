@@ -1,4 +1,6 @@
 import {
+  ACTION_TIMEOUT_MAX_MS,
+  ACTION_TIMEOUT_MIN_MS,
   AUTH_TYPES,
   CREDENTIAL_CONTRACT_ID_RE,
   isFormResolvedOptions,
@@ -403,6 +405,19 @@ function validateActionInto(ctx: Ctx, action: unknown, path: string): void {
   ctx.warnings.push(...resolved.warnings);
 
   checkPorts(ctx, action.ports, `${path}.ports`);
+
+  if (action.timeoutMs !== undefined) {
+    const t = action.timeoutMs;
+    if (
+      typeof t !== "number" || !Number.isInteger(t) || t < ACTION_TIMEOUT_MIN_MS ||
+      t > ACTION_TIMEOUT_MAX_MS
+    ) {
+      ctx.err(
+        `${path}.timeoutMs`,
+        `must be a whole number of milliseconds from ${ACTION_TIMEOUT_MIN_MS} to ${ACTION_TIMEOUT_MAX_MS}`,
+      );
+    }
+  }
 
   // A tagged Action is projected into the health surface and invoked with `{}`,
   // so it has to be safe to call unattended.
