@@ -45,6 +45,7 @@
     "resolveFields": { "const": true },
     "resource": { "type": "string", "minLength": 1 },
     "idempotent": { "type": "boolean" },
+    "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 280000 },
     "requiresAuth": { "type": "boolean" },
     "params": { "type": "array", "items": { "$ref": "param.schema.json" } },
     "execute": { "type": ["string", "object"], "minLength": 1 },

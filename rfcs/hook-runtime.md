@@ -333,6 +333,7 @@ A `false` result is a soft failure: the runtime converts it to a typed error (`p
 | `param_invalid` | `resolution` | Declarative validation, validation hook `{ ok: false }`, or supplied value not in the resolved option set. |
 | `connection_pending` / `connection_broken` / `connection_revoked` | `auth` | Connection lifecycle gates ([Invocation RFC](./invocation.md)). |
 | `egress_denied` | `execute` | `ctx.fetch` URL host not in the App's `network.allow`. |
+| `fetch_timeout` | `execute` | A `ctx.fetch` request got no answer within the call's limit: the request's own timer, or the hook's `timeoutMs` firing while the request was still in flight. `details` carries `{ hosts, timeoutMs }` in the second case. |
 | `invalid_request_url` | `execute` | `ctx.fetch` (or a `sign` hook's return) produced an unparseable URL. |
 | `socket_denied` | `execute` | The pre-connect [target check](#the-target-check) refused `Connection.target` — an unresolvable host, or a resolved loopback/private-range address without `target.allowPrivate`. |
 | `socket_unavailable` | `execute` | The host could not establish the real connection (`Deno.connect`/`Deno.connectTls` refused, timed out, or the App declares no `socket` capability / the Connection carries no `target`). |
@@ -359,6 +360,10 @@ Each hook invocation has a timeout in milliseconds. The runtime SHOULD apply a d
 1. The hook's sandbox is terminated.
 2. The runtime synthesizes a `hook_timeout` error in the current phase.
 3. If the hook had produced a partial result, it is discarded.
+
+An Action's `execute` is the one hook whose limit an author and a user can set: the caller's
+per-call limit, else the Action's own `timeoutMs`, else **120 000 ms**. Each outbound request
+`execute` makes shares that limit. See [Action RFC · Amendment — 2026-11-24](./action.md#amendment--2026-11-24-timeoutms-and-a-generous-default).
 
 Cancellation by the caller is OPTIONAL for `manifestVersion: "1"`. A host that supports it MUST use the same termination semantics (terminate the sandbox, treat as `hook_timeout`-equivalent with a host-defined code).
 

@@ -118,6 +118,7 @@ The engine never touches the outside world directly. Every operational effect �
 | `uses.connection` | string \| null | ⬜ | Connection id. Required when the action's app declares auth and the action doesn't opt out with `requiresAuth: false`. |
 | `with` | object | ⬜ | Param values. Each value is a literal, an object, an array, or an expression marker. See [Expression markers](#expression-markers). |
 | `retry` | [RetryPolicy](#retrypolicy) | ⬜ | How to retry on failure. Defaults to no retry. |
+| `timeoutMs` | number | ⬜ | How long one attempt of this step may run, in ms. Absent ⇒ the Action's own `timeoutMs`, else 120 000. Clamped by the host to 1 000–280 000. See [Amendment — 2026-11-24](#amendment--2026-11-24-steptimeoutms). |
 | `onError` | enum | ⬜ | `"fail"` (default), `"continue"`, or `"continue-record"`. Applied when retries are exhausted: `fail` aborts the run; `continue` swallows the failure and proceeds; `continue-record` proceeds **and** rolls the step's [StepError](#steperror) into the run's end state (`RunState.stepErrors`) so the failure stays observable. Overridden, for the step it is declared on, by an authored error edge — see [Amendment — 2026-07-29](#amendment--2026-07-29-failure-conditioned-edges-edgewhen). |
 | `ports` | object | ⬜ | `{ in?, out? }` — declared port cardinality. Omitted ⇒ `{ in: 1, out: 1 }`. `in > 1` opts the step into accepting multiple inbound edges (a fan-in node). See [Node Types RFC · Ports & cardinality](./node-types.md#ports--cardinality). |
 | `notes` | string | ⬜ | Free-form author notes carried on the step. Declarative only — the engine ignores it. |
@@ -1948,3 +1949,19 @@ A host that implements this root MUST:
 
 `nodes.<id>.meta.connectionId` is unchanged; it names a node's connection, while this root reads a
 binding's account details.
+
+## Amendment — 2026-11-24: `Step.timeoutMs`
+
+> Additive. A step without it behaves exactly as before, under the new 120 s default.
+
+A step may set `timeoutMs?: number`: how long ONE attempt of the step may run, in milliseconds,
+covering the Action's `execute` and every vendor request it makes. It is how a user gives a slow
+vendor more time without changing the app. Precedence and the clamp (1 000–280 000) are those of
+the [Action RFC · Amendment — 2026-11-24](./action.md#amendment--2026-11-24-timeoutms-and-a-generous-default):
+the step's value wins over the Action's own `timeoutMs`, which wins over the 120 000 ms default.
+
+The engine forwards the step's value, unclamped, to the host on `InvokeStepRequest.timeoutMs` for
+every attempt. It does not send the field when the step does not set it. The host clamps it. Each retry attempt
+gets the full limit; `retry.delayMs` waits are not counted. App-Action steps read it; control,
+`@w6w/call` and Function steps ignore it. A Function's own action arm carries the same field
+(`impl.timeoutMs`).

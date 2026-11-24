@@ -24,7 +24,7 @@ import type {
   SignableRequest,
   TriggerHookKind,
 } from "@w6w/types";
-import { redact } from "@w6w/types";
+import { ACTION_TIMEOUT_DEFAULT_MS, actionTimeoutMs, redact } from "@w6w/types";
 import { hookSource } from "./loader.ts";
 import type { LoadedApp, LoadedAuth } from "./loader.ts";
 import { applyOverrides, dedupeSignedHeaders, selectsRequest } from "./overrides.ts";
@@ -457,18 +457,34 @@ export function signingFetch(
  */
 function withDeniedUnwrap(
   onFetch: (request: SignableRequest) => Promise<WireResponse>,
+  hookTimeoutMs: number = ACTION_TIMEOUT_DEFAULT_MS,
 ): {
   onFetch: (request: SignableRequest) => Promise<WireResponse>;
   unwrap: (err: unknown) => never;
 } {
   let denied: W6WError | undefined;
+  // Requests still waiting on the vendor, by sequence number → hostname. When the hook's own
+  // deadline fires while one of these is open, the vendor is what the hook was waiting on, so the
+  // error names it (`fetch_timeout`) instead of the opaque `hook_timeout` "Worker timed out".
+  // `hostFetch`'s own timer cannot do this: it starts after the worker's and has the same length,
+  // so the worker's always fires first.
+  const inFlight = new Map<number, string>();
+  let seq = 0;
   return {
     onFetch: async (request: SignableRequest): Promise<WireResponse> => {
+      const id = seq++;
+      let host = "";
+      try {
+        host = new URL(request.url).hostname;
+      } catch { /* hostFetch reports the bad URL itself */ }
+      inFlight.set(id, host);
       try {
         return await onFetch(request);
       } catch (err) {
         if (err instanceof W6WError) denied = err;
         throw err;
+      } finally {
+        inFlight.delete(id);
       }
     },
     unwrap: (err: unknown): never => {
@@ -477,6 +493,16 @@ function withDeniedUnwrap(
         err.message === denied.message
       ) {
         throw denied;
+      }
+      if (err instanceof W6WError && err.code === "hook_timeout" && inFlight.size > 0) {
+        const hosts = [...new Set(inFlight.values())].filter((h) => h !== "");
+        const named = hosts.length > 0 ? `"${hosts.join('", "')}"` : "the remote host";
+        throw new W6WError(
+          "fetch_timeout",
+          err.phase,
+          `Request to ${named} got no answer within the ${hookTimeoutMs}ms limit for this call.`,
+          { hosts, timeoutMs: hookTimeoutMs },
+        );
       }
       throw err;
     },
@@ -908,9 +934,17 @@ export async function invoke(
   // 3. Resolve params.
   const resolved = resolveParams(loaded.definition.params ?? [], invocation.params ?? {});
 
+  // The limit for `execute` and for each request it makes: the host's per-call override when it
+  // names one (hook-runtime.md §Timeouts and cancellation), else what the Action declares, clamped
+  // (action.md §Amendment — 2026-11-24), else the 30 s default. Requests share it so a slow
+  // vendor answer the Action budgeted for is not cut off at the request layer's own 30 s.
+  const timeoutMs = opts.timeoutMs ?? actionTimeoutMs(loaded.definition);
+  const execOpts: InvokeOptions = { ...opts, timeoutMs };
+
   // 4. Build the signing fetch handler the action's ctx.fetch routes through.
   const { onFetch, unwrap } = withDeniedUnwrap(
-    signingFetch(app, auth, credential, opts, app.netAllowlist, invocation.overrides),
+    signingFetch(app, auth, credential, execOpts, app.netAllowlist, invocation.overrides),
+    timeoutMs,
   );
 
   // 5. Open ctx.socket when, and only when, the Connection carries a target
@@ -962,7 +996,7 @@ export async function invoke(
       input: resolved,
       connection: redacted,
       invocation: invocation.context,
-      timeoutMs: opts.timeoutMs,
+      timeoutMs,
       onLog: opts.onLog,
       onFetch,
       onSocket: socket?.onSocket,
@@ -1038,7 +1072,10 @@ export async function invokeTriggerHook(
       },
     ));
   }
-  const { onFetch, unwrap } = withDeniedUnwrap(signingFetch(app, auth, credential, opts));
+  const { onFetch, unwrap } = withDeniedUnwrap(
+    signingFetch(app, auth, credential, opts),
+    opts.timeoutMs,
+  );
 
   try {
     return await runHook({
@@ -1155,6 +1192,7 @@ async function runResolveFields(
   );
   const { onFetch, unwrap } = withDeniedUnwrap(
     signingFetch(app, auth, credential, { ...opts, timeoutMs }),
+    timeoutMs,
   );
 
   let raw: unknown;
