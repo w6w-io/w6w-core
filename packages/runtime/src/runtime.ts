@@ -117,6 +117,13 @@ export interface InvokeOptions {
   redirects?: "same-host" | "refuse";
   /** Private-egress guard seam: inject a resolver (tests) or `allowPrivate`. */
   egressGuard?: PublicDestinationOptions;
+  /**
+   * How long a read-only request (GET/HEAD, no body) may wait for response
+   * headers before a second copy is sent; the first to answer wins. Default
+   * `HEDGE_AFTER_MS_DEFAULT` (15 s); `0` turns hedging off. Only applies when
+   * the request's limit leaves room for the second copy (limit > 2 × this).
+   */
+  hedgeAfterMs?: number;
 }
 
 export interface InvokeResult {
@@ -176,6 +183,18 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_SAME_HOST_REDIRECTS = 5;
 
 /**
+ * How long a read-only request (GET/HEAD, no body) may go without response
+ * headers before a second, identical request is sent beside it. Whichever
+ * answers first is used; the other is aborted. A vendor that intermittently
+ * stalls one request for a minute while its next answers in a second
+ * (Eventbrite, measured 2026-11-24: ~1 s normally, 65–78 s stalls at random,
+ * all of it before the first byte) then costs ~15 s, not ~70 s. The original
+ * request is never cut short, so a GET that is merely slow every time is no
+ * slower than before. See hook-runtime.md §Timeouts and cancellation.
+ */
+export const HEDGE_AFTER_MS_DEFAULT = 15_000;
+
+/**
  * Perform a request on the host: enforce the allowlist, then fetch — in
  * manual-redirect mode, since "follow" cannot be selected per-host (the
  * option is chosen before the destination is known). Every redirect
@@ -213,6 +232,7 @@ async function hostFetch(
   timeoutMs = 30_000,
   redirects?: InvokeOptions["redirects"],
   egressGuard?: PublicDestinationOptions,
+  hedgeAfterMs = HEDGE_AFTER_MS_DEFAULT,
 ): Promise<WireResponse> {
   let host: string;
   try {
@@ -243,22 +263,28 @@ async function hostFetch(
       try {
         // F-1: resolve + refuse private on EVERY hop, then connect to the
         // address that was checked (http: pinned; https: see private-egress.ts).
-        const dest = await assertPublicDestination(currentUrl, egressGuard);
-        ({ response: res } = await pinnedFetch(currentUrl, dest, {
-          method,
-          headers: req.headers,
-          // A5 (runtime.ts:180): a Uint8Array body passes through to the real
-          // fetch UNCHANGED — no stringify, no re-encode. Deno's own `lib`
-          // types this call's `body` as `BufferSource | ... | string`, which
-          // structurally includes `Uint8Array` at runtime (confirmed:
-          // `fetch`'s body accepts a `Uint8Array` directly in Deno), but the
-          // compiler's overload resolution here narrows on the union in a way
-          // that rejects it type-only — the cast documents that mismatch
-          // rather than papering over an actual behavior change.
-          body: body as BodyInit | null | undefined,
-          redirect: "manual",
-          signal: controller.signal,
-        }, egressGuard?.fetchImpl));
+        const readOnly = (method.toUpperCase() === "GET" || method.toUpperCase() === "HEAD") &&
+          (body === undefined || body === null);
+        res = await hedgedFetch(
+          currentUrl,
+          {
+            method,
+            headers: req.headers,
+            // A5 (runtime.ts:180): a Uint8Array body passes through to the real
+            // fetch UNCHANGED — no stringify, no re-encode. Deno's own `lib`
+            // types this call's `body` as `BufferSource | ... | string`, which
+            // structurally includes `Uint8Array` at runtime (confirmed:
+            // `fetch`'s body accepts a `Uint8Array` directly in Deno), but the
+            // compiler's overload resolution here narrows on the union in a way
+            // that rejects it type-only — the cast documents that mismatch
+            // rather than papering over an actual behavior change.
+            body: body as BodyInit | null | undefined,
+            redirect: "manual",
+          },
+          controller.signal,
+          egressGuard,
+          readOnly && hedgeAfterMs > 0 && timeoutMs > 2 * hedgeAfterMs ? hedgeAfterMs : 0,
+        );
       } catch (err) {
         if (err instanceof W6WError) throw err;
         if (controller.signal.aborted) {
@@ -329,6 +355,75 @@ async function hostFetch(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * One hop of `hostFetch`: resolve + refuse private (F-1), then the pinned fetch.
+ * With `hedgeAfterMs > 0`, a request with no response headers after that long
+ * gets a second identical copy; the first to answer wins and the other is
+ * aborted (its pinned proxy and client close with it). Before the hedge fires,
+ * a failure is final; after, the request fails only when both copies have.
+ * `outer` (the whole-request timer) aborts every copy, so the overall limit and
+ * the `fetch_timeout` it maps to are unchanged.
+ */
+function hedgedFetch(
+  url: string,
+  init: RequestInit,
+  outer: AbortSignal,
+  egressGuard: PublicDestinationOptions | undefined,
+  hedgeAfterMs: number,
+): Promise<Response> {
+  const attempt = () => {
+    const ac = new AbortController();
+    if (outer.aborted) ac.abort();
+    else outer.addEventListener("abort", () => ac.abort(), { once: true });
+    const p = (async () => {
+      const dest = await assertPublicDestination(url, egressGuard);
+      return (await pinnedFetch(url, dest, { ...init, signal: ac.signal }, egressGuard?.fetchImpl))
+        .response;
+    })();
+    return { p, ac };
+  };
+  const first = attempt();
+  if (hedgeAfterMs <= 0) return first.p;
+  return new Promise<Response>((resolve, reject) => {
+    const copies = [first];
+    let settled = false;
+    let failed = 0;
+    let lastErr: unknown;
+    const watch = (c: ReturnType<typeof attempt>) =>
+      c.p.then(
+        (res) => {
+          if (settled) {
+            res.body?.cancel().catch(() => {});
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          for (const o of copies) if (o !== c) o.ac.abort();
+          resolve(res);
+        },
+        (err) => {
+          failed++;
+          lastErr ??= err;
+          if (settled) return;
+          // Before the hedge fires there is no other copy to wait for.
+          if (failed >= copies.length) {
+            settled = true;
+            clearTimeout(timer);
+            for (const o of copies) o.ac.abort();
+            reject(lastErr);
+          }
+        },
+      );
+    const timer = setTimeout(() => {
+      if (settled || outer.aborted) return;
+      const second = attempt();
+      copies.push(second);
+      watch(second);
+    }, hedgeAfterMs);
+    watch(first);
+  });
 }
 
 /**
@@ -421,9 +516,14 @@ export function signingFetch(
     const capture = { capture: opts.captureEgress, bodyLimit: opts.egressBodyLimit, durationMs: 0 };
     const egressStart = Date.now();
     try {
-      const res = opts.egressTransport
-        ? await opts.egressTransport(signed)
-        : await hostFetch(allowlist, signed, opts.timeoutMs, opts.redirects, opts.egressGuard);
+      const res = opts.egressTransport ? await opts.egressTransport(signed) : await hostFetch(
+        allowlist,
+        signed,
+        opts.timeoutMs,
+        opts.redirects,
+        opts.egressGuard,
+        opts.hedgeAfterMs,
+      );
       opts.onEgress?.(
         egressInfo(signed, res, { ...capture, durationMs: Date.now() - egressStart }),
       );
