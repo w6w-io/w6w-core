@@ -615,3 +615,36 @@ cap and the host-side output sanitising). The worker addresses it as the trigger
 `resolveFields`; it receives no `params` envelope, so a param's `parse` does not run on its input.
 It is editor-time only and is never called by the trigger lifecycle.
 
+
+## Amendment — 2026-11-24: hedged read-only requests
+
+> Additive. Changes how long a stalled read-only `ctx.fetch` takes, never its result.
+
+**Why.** Some vendors stall a request at random before sending any response.
+Eventbrite's orders endpoint, measured 2026-11-24 with no w6w code in the path,
+usually answers in about 1 s but now and then holds the first byte for 65–78 s.
+The request looks healthy: DNS, connect and TLS finish in under 60 ms. An
+identical request sent at the same moment answers in about 1 s.
+
+**The rule.** Some requests are read-only: method `GET` or `HEAD`, with no body.
+If one of these has no response headers after `hedgeAfterMs`, the host sends a
+second, identical request beside it. The default for `hedgeAfterMs` is 15 000 ms.
+Whichever copy answers first is returned, and the other is aborted. The
+original is never cut short, so a request that is slow every time takes no
+longer than before.
+
+- A failure before the second copy is sent is final, exactly as before.
+- After the second copy is sent, the request fails only when both copies have.
+- The call's overall limit still applies to both copies. When it fires, the
+  error is still `fetch_timeout`.
+- Hedging is skipped when the limit leaves no room for the second copy, that
+  is when `timeoutMs` ≤ 2 × `hedgeAfterMs`.
+- A request with a body, or any other method, is never sent twice.
+
+The second copy goes through the same signing, allowlist and private-egress
+checks as the first. The host may set `hedgeAfterMs` per invocation
+(`InvokeOptions.hedgeAfterMs`); `0` turns hedging off.
+
+**Cost.** In the worst case a vendor sees one extra identical read: the
+request the action asked for, sent a second time. Nothing that changes state is
+sent twice.
