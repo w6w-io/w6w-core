@@ -48,6 +48,11 @@ export interface WorkerRunOptions {
   /** Per-Worker memory cap in MiB (see `memoryLimitMb`). Default: `W6W_APP_MEMORY_MB`, else 1024. */
   memoryLimitMb?: number;
   onLog?: (level: string, message: string, data?: unknown) => void;
+  /**
+   * Called before a Worker that failed to load its own modules (an OS error while importing,
+   * before the host serviced anything) is started again. Default: a `console.warn`.
+   */
+  onBootRetry?: (attempt: number, message: string) => void;
   onFetch?: (request: SignableRequest) => Promise<WireResponse>;
   /**
    * Host-mediated socket proxy, servicing the worker's `ctx.socket` calls.
@@ -181,9 +186,47 @@ function workerReadPermission(
  * `runWorker` directly can construct that scenario.
  */
 export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promise<T> {
-  const timeoutMs = opts.timeoutMs ?? 30_000;
   // Decided here, host-side, from the start message alone — never from a caller option.
+  // Synchronous on purpose: a refused start throws before anything is spawned.
   const read = workerReadPermission(start, opts.readScope);
+  const attempt = async (n: number): Promise<T> => {
+    try {
+      return await runWorkerOnce<T>(start, opts, read);
+    } catch (err) {
+      if (!bootFailures.has(err as Error) || n >= BOOT_ATTEMPTS) throw err;
+      const message = (err as Error).message;
+      if (opts.onBootRetry) opts.onBootRetry(n, message);
+      else console.warn(`[sandbox] worker failed to load (attempt ${n}), retrying: ${message}`);
+      await new Promise((r) => setTimeout(r, BOOT_RETRY_DELAY_MS * n));
+      return attempt(n + 1);
+    }
+  };
+  return attempt(1);
+}
+
+/**
+ * A Worker that dies while its own module graph is still loading — Deno reports
+ * `Import 'file:///…/types/src/x.ts' failed. 0: Bad file descriptor (os error 9)` — never
+ * ran a line of the app and never reached the host, so starting it again is free of side
+ * effects. Production (Cloud Run) hits this transiently on a fresh Worker's file reads; the
+ * same Worker started again succeeds. Only a failure that arrived before the host serviced ANY
+ * effectful message (fetch, socket, file, result) is marked; a timeout, a memory kill, or an
+ * app's own thrown error never is.
+ */
+const bootFailures = new WeakSet<Error>();
+const BOOT_ATTEMPTS = 3;
+const BOOT_RETRY_DELAY_MS = 50;
+const BOOT_FAILURE = /^Import '[^']*' failed\b|\(os error \d+\)/;
+const APP_IMPORT_OS_FAILURE = /Import '[^']*' failed[\s\S]*\(os error \d+\)/;
+
+function runWorkerOnce<T>(
+  start: HostMessage,
+  opts: WorkerRunOptions,
+  read: false | string[],
+): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  /** Set once the host services anything but a memory report — from then on, never retried. */
+  let engaged = false;
 
   const capMb = memoryLimitMb(opts.memoryLimitMb);
   const baseRss = Deno.memoryUsage().rss;
@@ -242,6 +285,7 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
         return;
       }
       const msg = e.data as WorkerMessage;
+      if (msg.type !== "log" && msg.type !== "error") engaged = true;
       switch (msg.type) {
         case "log":
           opts.onLog?.(msg.level, msg.message, msg.data);
@@ -422,20 +466,26 @@ export function runWorker<T>(start: HostMessage, opts: WorkerRunOptions): Promis
           // A hook that says the user must sign in again (`ReauthRequiredError`, or any error whose
           // `code` is `reauth_required`) is its own typed failure; every other one is `hook_failed`,
           // its well-formed `code` (if any) kept in `details`.
-          finish(() =>
-            reject(
-              msg.error.code === REAUTH_REQUIRED
-                ? new W6WError(REAUTH_REQUIRED, "auth", msg.error.message, msg.error)
-                : new W6WError("hook_failed", "execute", msg.error.message, msg.error),
-            )
-          );
+          {
+            const err = msg.error.code === REAUTH_REQUIRED
+              ? new W6WError(REAUTH_REQUIRED, "auth", msg.error.message, msg.error)
+              : new W6WError("hook_failed", "execute", msg.error.message, msg.error);
+            // The app's own module failing to READ (an OS error on import) is the same
+            // transient boot failure, reported through the worker instead of as a crash.
+            if (!engaged && APP_IMPORT_OS_FAILURE.test(msg.error.message ?? "")) {
+              bootFailures.add(err);
+            }
+            finish(() => reject(err));
+          }
           return;
       }
     };
 
     worker.onerror = (e: ErrorEvent) => {
       e.preventDefault();
-      finish(() => reject(new W6WError("hook_crashed", "execute", e.message || "Worker crashed.")));
+      const err = new W6WError("hook_crashed", "execute", e.message || "Worker crashed.");
+      if (!engaged && BOOT_FAILURE.test(e.message ?? "")) bootFailures.add(err);
+      finish(() => reject(err));
     };
 
     worker.postMessage(start);
