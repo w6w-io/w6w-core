@@ -68,7 +68,9 @@ Deno.test("hedge: a stalled GET gets a second copy, which answers; the stall is 
   assertEquals(res.value.body, "answer-1");
   assertEquals(calls.length, 2);
   assert(calls[0].aborted, "the stalled copy is aborted once the hedge answers");
-  assert(performance.now() - t0 < 5_000);
+  // Well inside the 20 s limit the stall would otherwise wait out. The margin covers loading the
+  // app and booting the sandbox on a busy CI runner, which a tighter bound (5 s) did not.
+  assert(performance.now() - t0 < 15_000);
 });
 
 Deno.test("hedge: when the original answers first it wins and the copy is aborted", async () => {
@@ -99,8 +101,11 @@ Deno.test("hedge: not used when the limit leaves no room for a second copy", asy
   const res = await run(roomy.fetchImpl, 300, 6_000);
   assertEquals(res.value.body, "answer-0");
   assertEquals(roomy.calls.length, 2);
-  const tight = scripted([3_500]);
-  const res2 = await run(tight.fetchImpl, 3_000, 6_000); // 6000 <= 2 × 3000: not hedged
+  // 12000 <= 2 × 6000: not hedged. The answer comes after the hedge time (so a hedge, had one
+  // been sent, would be counted) and leaves the sandbox's boot ~5.8 s of the limit — a 6 s limit
+  // with a 3.5 s answer timed out on a busy CI runner.
+  const tight = scripted([6_200]);
+  const res2 = await run(tight.fetchImpl, 6_000, 12_000);
   assertEquals(res2.value.body, "answer-0");
   assertEquals(tight.calls.length, 1);
 });
