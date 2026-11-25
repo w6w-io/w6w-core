@@ -66,8 +66,10 @@ Deno.test("serialize is the inverse of parse (round-trip)", () => {
 });
 
 Deno.test("round-trip of an expr part", () => {
-  const parts = parseTemplate('{{ ={"+":[1,2]} }}');
-  assertEquals(serializeTemplate(parts), '{{ ={"+":[1,2]} }}');
+  const parts = parseTemplate('{{ ={"cat":["a","b"]} }}');
+  assertEquals(serializeTemplate(parts), '{{ ={"cat":["a","b"]} }}');
+  // An arithmetic payload is an inline shape (2026-11-25): it prints as infix.
+  assertEquals(serializeTemplate(parseTemplate('{{ ={"+":[1,2]} }}')), "{{ 1 + 2 }}");
 });
 
 Deno.test("serialize prunes nothing and masks nothing structurally", () => {
@@ -379,8 +381,8 @@ Deno.test("serialize: a hand-written or-chain JSONLogic payload PROMOTES to infi
 
 Deno.test("serialize: every other JSONLogic shape keeps the `{{ =<raw> }}` escape hatch", () => {
   assertEquals(
-    serializeTemplate([{ kind: "expr", expr: { "+": [1, 2] } }]),
-    "{{ =" + JSON.stringify({ "+": [1, 2] }) + " }}",
+    serializeTemplate([{ kind: "expr", expr: { cat: ["a", "b"] } }]),
+    "{{ =" + JSON.stringify({ cat: ["a", "b"] }) + " }}",
   );
   // A length-1 `or` array is not a recognised chain (parseCoalesceChain requires length >= 2).
   assertEquals(
@@ -418,7 +420,7 @@ Deno.test("coalesceOperandRefs: the var refs of a recognised chain, in order; nu
     ["vars.a", "vars.b"],
   );
   assertEquals(coalesceOperandRefs({ or: [{ var: "a" }] }), null);
-  assertEquals(coalesceOperandRefs({ "+": [1, 2] }), null);
+  assertEquals(coalesceOperandRefs({ cat: ["a", "b"] }), null);
 });
 
 Deno.test("hasRefusedChainToken: true only for a ref still carrying a top-level chain token", () => {
@@ -710,7 +712,7 @@ Deno.test("inline: shapes the grammar cannot spell keep the {{ =<raw> }} escape 
       { if: [{ var: "secrets.K" }, 1, 2] }, // would be refused if printed
       { if: [{ var: 'steps.a"b.output' }, 1, 2] }, // a segment with no bracket spelling
       { if: [{ var: "var.a" }, "}}", 2] }, // would close the marker early
-      { "==": [{ var: "var.a" }, { "+": [1, 2] }] }, // an operator outside the grammar
+      { "==": [{ var: "var.a" }, { cat: ["a", "b"] }] }, // an operator outside the grammar
       { "<": [1, { var: "var.a" }, 3] }, // three-argument between
       { "!": { var: "var.a" } }, // unary without the array
     ]
@@ -733,7 +735,7 @@ Deno.test("inline: coalesceOperandRefs returns an inline expression's refs for r
   // Bare refs / unknown operators stay opaque (null).
   assertEquals(coalesceOperandRefs({ var: "var.a" }), null);
   assertEquals(coalesceOperandRefs({ if: [{ var: "a" }, 1] }), null);
-  assertEquals(coalesceOperandRefs({ if: [{ "+": [1, 2] }, 1, 2] }), null);
+  assertEquals(coalesceOperandRefs({ if: [{ cat: ["a", "b"] }, 1, 2] }), null);
 });
 
 // --- computed bracket keys: `state[nodes.x.output.id]` (2026-11-11) -----------------------
@@ -924,4 +926,93 @@ Deno.test("now(): anything but the bare name with () or ('<format>') falls back 
 Deno.test("now(): an =<jsonlogic> payload with a computed format prints as raw JSON", () => {
   const parts = [{ kind: "expr" as const, expr: { now: [{ var: "var.fmt" }] } }];
   assertEquals(serializeTemplate(parts), '{{ ={"now":[{"var":"var.fmt"}]} }}');
+});
+
+// --- arithmetic in inline expressions (2026-11-25) ----------------------------------------------
+
+Deno.test("arithmetic: the user's `page_number  +1` lowers to + and evaluates", () => {
+  const ref = "nodes.list_events_1.output.pagination.page_number";
+  const parts = parseTemplate(`{{ ${ref}  +1 }}`);
+  assertEquals(parts, [{ kind: "expr", expr: { "+": [{ var: ref }, 1] } }]);
+  const data = { nodes: { list_events_1: { output: { pagination: { page_number: 3 } } } } };
+  assertEquals(evaluate(parts[0].expr, data), 4);
+});
+
+Deno.test("arithmetic: every operator, JS precedence and associativity", () => {
+  for (
+    const [template, expr, value] of [
+      ["{{ var.a + 1 }}", { "+": [{ var: "var.a" }, 1] }, 11],
+      ["{{ var.a - 1 }}", { "-": [{ var: "var.a" }, 1] }, 9],
+      ["{{ var.a -1 }}", { "-": [{ var: "var.a" }, 1] }, 9],
+      ["{{ var.a * 2 }}", { "*": [{ var: "var.a" }, 2] }, 20],
+      ["{{ var.a / 4 }}", { "/": [{ var: "var.a" }, 4] }, 2.5],
+      ["{{ var.a % 3 }}", { "%": [{ var: "var.a" }, 3] }, 1],
+      ["{{var.a+var.b}}", { "+": [{ var: "var.a" }, { var: "var.b" }] }, 12],
+      ["{{ var.a + var.b * 3 }}", { "+": [{ var: "var.a" }, { "*": [{ var: "var.b" }, 3] }] }, 16],
+      [
+        "{{ (var.a + var.b) * 3 }}",
+        { "*": [{ "+": [{ var: "var.a" }, { var: "var.b" }] }, 3] },
+        36,
+      ],
+      ["{{ var.a - var.b - 1 }}", { "-": [{ "-": [{ var: "var.a" }, { var: "var.b" }] }, 1] }, 7],
+      ["{{ var.a + var.b + 1 }}", { "+": [{ var: "var.a" }, { var: "var.b" }, 1] }, 13],
+      ["{{ -var.a + 1 }}", { "+": [{ "-": [{ var: "var.a" }] }, 1] }, -9],
+      ["{{ var.a * -1 }}", { "*": [{ var: "var.a" }, -1] }, -10],
+      ["{{ var.a + 1 > 10 ? 'big' : 'small' }}", {
+        if: [{ ">": [{ "+": [{ var: "var.a" }, 1] }, 10] }, "big", "small"],
+      }, "big"],
+      ["{{ (var.missing ?? 0) + 1 }}", { "+": [{ "??": [{ var: "var.missing" }, 0] }, 1] }, 1],
+    ] as const
+  ) {
+    const parts = parseTemplate(template);
+    assertEquals(parts, [{ kind: "expr", expr }] as unknown as ExprPart[], template);
+    assertEquals(evaluate(parts[0].expr, { var: { a: 10, b: 2 } }), value, template);
+  }
+});
+
+Deno.test("arithmetic: a hyphen inside a path is still part of the name", () => {
+  assertEquals(parseTemplate("{{ nodes.list-events.output }}"), [
+    { kind: "var", ref: "nodes.list-events.output" },
+  ]);
+  assertEquals(parseTemplate("{{ var.a-1 }}"), [{ kind: "var", ref: "var.a-1" }]);
+  // A dangling operator is malformed: today's var arm, never a throw.
+  assertEquals(parseTemplate("{{ var.a + }}"), [{ kind: "var", ref: "var.a +" }]);
+  assertEquals(parseTemplate("{{ * var.a }}"), [{ kind: "var", ref: "* var.a" }]);
+});
+
+Deno.test("arithmetic: a secrets operand refuses the whole expression", () => {
+  assertEquals(parseTemplate("{{ secrets.K + 1 }}"), [{ kind: "var", ref: "secrets.K + 1" }]);
+});
+
+Deno.test("arithmetic: serialize prints infix and parse(serialize(x)) is stable", () => {
+  for (
+    const template of [
+      "{{ var.a + 1 }}",
+      "{{ var.a - var.b - 1 }}",
+      "{{ var.a - (var.b - 1) }}",
+      "{{ (var.a + var.b) * 3 }}",
+      "{{ var.a + var.b * 3 }}",
+      "{{ var.a + var.b + 1 }}",
+      "{{ -var.a % 2 }}",
+      "{{ var.a + 1 > 10 ? 'big' : 'small' }}",
+    ]
+  ) {
+    const parts = parseTemplate(template);
+    assertEquals(serializeTemplate(parts), template, template);
+    assertEquals(parseTemplate(serializeTemplate(parts)), parts, template);
+  }
+  // `(a + b) + c` from raw JSON keeps its grouping on the way back.
+  const nested = [{
+    kind: "expr",
+    expr: { "+": [{ "+": [{ var: "var.a" }, 1] }, 2] },
+  }] as ExprPart[];
+  assertEquals(serializeTemplate(nested), "{{ (var.a + 1) + 2 }}");
+  assertEquals(parseTemplate(serializeTemplate(nested)), nested);
+});
+
+Deno.test("arithmetic: coalesceOperandRefs returns its refs for root-anchoring", () => {
+  assertEquals(
+    coalesceOperandRefs({ "+": [{ var: "nodes.x.output.n" }, { "*": [{ var: "var.k" }, 2] }] }),
+    ["nodes.x.output.n", "var.k"],
+  );
 });

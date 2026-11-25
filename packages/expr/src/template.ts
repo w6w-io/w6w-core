@@ -188,13 +188,13 @@ function tryChain(inner: string, tokens: ChainToken[]): ExprPart | null {
 //
 // The second infix production (RFC workflow.md, 2026-11-11 amendment). It engages ONLY when the
 // marker carries at least one top-level operator the flat chain does not know (`?`, `:`, a
-// comparison, `&&`, `!`, a parenthesis) or a COMPUTED bracket key (`state[nodes.x.output.id]`, an
+// comparison, `&&`, `!`, arithmetic, a parenthesis) or a COMPUTED bracket key (`state[nodes.x.output.id]`, an
 // unquoted path inside `[…]`) — so a static path, a vendor `{{name}}`, and every `||`/`??` chain
 // over static paths keep exactly the dispatch above. It lowers to the JSONLogic `@w6w/expr`
 // evaluates (`if`, `===`, `and`, `!`, `get`, …); malformed text falls back to the pre-existing arms.
 
 /** Infix tokens: the longest spelling first, so `===` never reads as `==` + `=`. */
-const INLINE_OP = /(===|!==|==|!=|>=|<=|&&|\|\||\?\?|[!<>()?:])/y;
+const INLINE_OP = /(===|!==|==|!=|>=|<=|&&|\|\||\?\?|[!<>()?:+\-*/%])/y;
 /** The operators that make a marker an inline expression rather than a path or a flat chain. */
 const INLINE_ONLY_OPS = new Set([
   "===",
@@ -211,6 +211,11 @@ const INLINE_ONLY_OPS = new Set([
   ")",
   "?",
   ":",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
 ]);
 /** A reference operand's head, its `.name` segments, and its static `[n]`/`["key"]`/`['key']`. */
 const REF_HEAD = /[A-Za-z_$][\w$-]*/y;
@@ -228,7 +233,11 @@ const STRING_ESCAPES: Record<string, string> = {
   "'": "'",
   "/": "/",
 };
-/** Binding strength of each infix operator; the ternary binds looser than all of them. */
+/**
+ * Binding strength of each infix operator; the ternary binds looser than all of them, and prefix
+ * `!` / `-` ({@link INLINE_PREFIX_PRECEDENCE}) tighter. Arithmetic (2026-11-25 amendment) binds as
+ * in JavaScript: `*` `/` `%` over `+` `-`, both over the comparisons.
+ */
 const INLINE_PRECEDENCE: Record<string, number> = {
   "??": 1,
   "||": 2,
@@ -241,11 +250,20 @@ const INLINE_PRECEDENCE: Record<string, number> = {
   ">=": 5,
   "<": 5,
   "<=": 5,
+  "+": 6,
+  "-": 6,
+  "*": 7,
+  "/": 7,
+  "%": 7,
 };
+/** Prefix `!` and unary `-`. */
+const INLINE_PREFIX_PRECEDENCE = 8;
+/** A path, literal, `get` chain or call: never needs parentheses. */
+const INLINE_OPERAND_PRECEDENCE = 9;
 /** Infix spelling → JSONLogic key. */
 const INLINE_KEY: Record<string, string> = { "&&": "and", "||": "or" };
 /** The n-ary JSONLogic keys an unparenthesised run of the same operator flattens into. */
-const INLINE_NARY = new Set(["or", "and", "??"]);
+const INLINE_NARY = new Set(["or", "and", "??", "+", "*"]);
 const INLINE_MAX_DEPTH = 64;
 /**
  * The one call the inline grammar knows (RFC workflow.md, 2026-11-15 amendment): `now()` or
@@ -371,6 +389,15 @@ function tokenizeInline(s: string): InlineToken[] | null {
       i = q.end;
       continue;
     }
+    // After an operand, `-` is subtraction (`page -1`), never the sign of a number literal.
+    const last = tokens[tokens.length - 1];
+    const afterOperand = last !== undefined &&
+      (last.kind !== "op" || last.value === ")");
+    if (ch === "-" && afterOperand) {
+      tokens.push({ kind: "op", value: "-" });
+      i += 1;
+      continue;
+    }
     const num = sticky(INLINE_NUMBER);
     if (num) {
       const value = Number(num);
@@ -477,6 +504,10 @@ function parseInline(inner: string): InlineResult {
         pos += 1;
         return { "!": [atom()] };
       }
+      if (t.value === "-") {
+        pos += 1;
+        return { "-": [atom()] };
+      }
       if (t.value === "(") {
         pos += 1;
         const value = conditional();
@@ -561,6 +592,7 @@ function inlineNode(v: unknown): { key: string; args: unknown[] } | null {
   const key = keys[0];
   if (key === "if") return args.length >= 3 && args.length % 2 === 1 ? { key, args } : null;
   if (key === "!") return args.length === 1 ? { key, args } : null;
+  if (key === "-" && args.length === 1) return { key, args };
   if (key === "get") return args.length === 2 ? { key, args } : null;
   if (key === NOW_CALL) {
     return args.length === 0 || (args.length === 1 && typeof args[0] === "string")
@@ -656,13 +688,15 @@ function printRefExpr(v: unknown): string | null {
   return computed === null ? null : `${head}[${computed}]`;
 }
 
-/** How tightly a printed node binds: ternary 0, the infix table, `!` 6, an operand 7. */
+/** How tightly a printed node binds: ternary 0, the infix table, prefix `!`/`-`, an operand. */
 function inlinePrecedence(v: unknown): number {
   const node = inlineNode(v);
-  if (!node) return 7;
+  if (!node) return INLINE_OPERAND_PRECEDENCE;
   if (node.key === "if") return 0;
-  if (node.key === "!") return 6;
-  if (node.key === "get" || node.key === NOW_CALL) return 7;
+  if (node.key === "!" || (node.key === "-" && node.args.length === 1)) {
+    return INLINE_PREFIX_PRECEDENCE;
+  }
+  if (node.key === "get" || node.key === NOW_CALL) return INLINE_OPERAND_PRECEDENCE;
   const token = node.key === "and" ? "&&" : node.key === "or" ? "||" : node.key;
   return INLINE_PRECEDENCE[token];
 }
@@ -701,12 +735,16 @@ function formatInline(expr: unknown): string | null {
           const e = print(node.args[node.args.length - 1], 1);
           if (e === null) return null;
           text = `${pieces.join(" ")} ${e}`;
-        } else if (node.key === "!") {
-          const inner = print(node.args[0], 6);
-          text = inner === null ? null : `!${inner}`;
+        } else if (node.key === "!" || (node.key === "-" && node.args.length === 1)) {
+          const inner = print(node.args[0], INLINE_PREFIX_PRECEDENCE);
+          text = inner === null ? null : `${node.key}${inner}`;
         } else {
           const token = node.key === "and" ? "&&" : node.key === "or" ? "||" : node.key;
-          const rendered = node.args.map((a) => print(a, own + 1));
+          // A binary operator is left-associative, so its LEFT operand may bind as loosely as
+          // itself (`a - b - c`); an n-ary one flattens instead, so a nested one needs parentheses.
+          const rendered = node.args.map((a, i) =>
+            print(a, i === 0 && !INLINE_NARY.has(node.key) ? own : own + 1)
+          );
           text = rendered.some((r) => r === null) ? null : rendered.join(` ${token} `);
         }
       }

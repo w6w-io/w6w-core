@@ -103,10 +103,14 @@ parseTemplate("{{ var.n > 10 ? 'big' : var.n > 0 ? 'small' : 'none' }}");
 | `c ? a : b` (right-associative)         | `if`                              |
 | `===` `==` `!==` `!=` `<` `<=` `>` `>=` | the operator of the same name     |
 | `&&` · `\|\|` · `??` · `!x` · `( … )`   | `and` · `or` · `??` · `!` · group |
+| `+` `-` `*` `/` `%` · `-x`              | the operator of the same name     |
 
-From loosest to tightest: the ternary, `??`, `||`, `&&`, equality, relational, `!`. Operands are
-paths (`steps.s.output.rows[0]['name']`), single- or double-quoted strings, numbers, `true`, `false`
-and `null`. A `?` or `:` inside a string or a bracket index is not an operator.
+From loosest to tightest: the ternary, `??`, `||`, `&&`, equality, relational, `+` `-`, `*` `/` `%`,
+prefix `!` and `-`. Arithmetic is numeric (operands go through `Number`). A `-` right after an
+operand subtracts (`{{ var.n -1 }}`); a `-` inside a path name is still part of it (`{{ var.a-1 }}`
+is a path). Operands are paths (`steps.s.output.rows[0]['name']`), single- or double-quoted strings,
+numbers, `true`, `false` and `null`. A `?` or `:` inside a string or a bracket index is not an
+operator.
 
 A bracket may also hold an unquoted path — a **computed key**, read at run time and used as the key
 or index:
@@ -121,11 +125,11 @@ A path may continue after it (`state[var.k].a.b`) and nest (`a[b[c]]`); each seg
 computed key is its own `get`, so a key containing dots is never split. A quoted or numeric bracket
 (`a["k"]`, `a[0]`) stays a static path segment, as before.
 
-The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!`, a
-parenthesis or a computed key. A static path, `secrets.NAME`, a vendor placeholder and a flat
-`||`/`??` chain parse as before. Malformed text falls back the same way, to a `var` part. Any
-operand that reads `secrets` (including a computed key, or the object a key is read from) refuses
-the whole expression to a `var` part carrying the original text, as with a chain.
+The grammar engages only when the marker contains one of `?`, `:`, a comparison, `&&`, `!`, an
+arithmetic operator, a parenthesis or a computed key. A static path, `secrets.NAME`, a vendor
+placeholder and a flat `||`/`??` chain parse as before. Malformed text falls back the same way, to a
+`var` part. Any operand that reads `secrets` (including a computed key, or the object a key is read
+from) refuses the whole expression to a `var` part carrying the original text, as with a chain.
 `serializeTemplate` prints the expression back as infix text with single-quoted strings, and falls
 back to `{{ =<raw> }}` for a shape it cannot spell. See `rfcs/workflow.md`'s 2026-11-11 amendment.
 
