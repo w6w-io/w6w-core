@@ -523,7 +523,7 @@ Deno.test("[A14] frozen constants and reserved keys", () => {
   assert(Object.isFrozen(STATE_LIMITS) && Object.isFrozen(STATE_FORBIDDEN_KEYS));
   assert(Object.isFrozen(STATE_RESERVED_TOP_KEYS));
   assertEquals([...STATE_FORBIDDEN_KEYS], ["__proto__", "constructor", "prototype"]);
-  assertEquals([...STATE_RESERVED_TOP_KEYS], ["nodes", "trigger", "foreach"]);
+  assertEquals([...STATE_RESERVED_TOP_KEYS], ["nodes", "trigger", "foreach", "loop"]);
   assertEquals({ ...STATE_LIMITS }, {
     writeChars: 65536,
     runChars: 1048576,

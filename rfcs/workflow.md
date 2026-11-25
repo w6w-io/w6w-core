@@ -1993,3 +1993,34 @@ every attempt. It does not send the field when the step does not set it. The hos
 gets the full limit; `retry.delayMs` waits are not counted. App-Action steps read it; control,
 `@w6w/call` and Function steps ignore it. A Function's own action arm carries the same field
 (`impl.timeoutMs`).
+
+## Amendment — 2026-11-25: the `loop` run-scope root
+
+> **Additive.** Companion to [Engine RFC — Amendment — 2026-11-25: conditional loops](./engine.md#amendment--2026-11-25-conditional-loops--w6wcontrol--while-and-paginate),
+> which adds `while` / `while-end` and `paginate` / `paginate-end` to the canonical control set. No
+> earlier sentence is edited. Read under this amendment:
+>
+> - the [Resolved questions](#resolved-questions) row **Control-flow step types** — "the canonical
+>   set (`if`, `foreach`, `parallel`, `wait`)" and "extension controls beyond the canonical four are
+>   a future RFC": the canonical set has grown by Engine RFC amendment (`aggregate` and `merge` on
+>   2026-10-07, these four actions here). Partner-supplied *extension* controls remain a future RFC
+>   (Engine RFC Open question 5);
+> - the closed root set of the [2026-08-14 root-anchoring rule](#amendment--2026-08-14-root-anchored-template-strings-in-with-values)
+>   (its "eight-member `RunScope` root set", as widened by the 2026-10-29 and 2026-11-22
+>   amendments) — it also holds `loop`, bringing the count of roots to fourteen.
+
+Inside a While or Paginate body, a run's expressions may read the pass they run in under a new root,
+`loop`: `loop.index`, `loop.iteration`, `loop.page`, `loop.continuation`, `loop.meta`,
+`loop.previous` and `loop.loops.<openerId>`, with the values the Engine RFC amendment defines.
+`loop` always names the innermost While or Paginate; it is independent of `foreach`. Outside such a
+body the root is absent, so its refs read `undefined` (a template renders `""`).
+
+A host that implements this root MUST:
+
+- Treat `loop` as one of the run-scope roots that make a `{{ }}` marker ours rather than a vendor
+  placeholder, and as ordinary data reachable through the generic data root.
+- Reserve it as a top-level run-state key, like `nodes`, `trigger` and `foreach`: a static
+  `Node.state` write to a top-level `loop` key draws the plan-time `state_reserved_key` warning.
+- Let a single-node Test supply it, as it may supply `foreach`: the Test's start state carries
+  `loop` (and `loop.loops`) as data only, sanitised like `foreach`, and a sealed secret envelope
+  substituted from it is refused (`sealed_secret_in_state`).

@@ -3,6 +3,13 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- `loop` is a run-scope root (core/rfcs/workflow.md, the 2026-11-25 `loop` amendment) and a reserved
+  top-level state key: a `{{ loop.* }}` marker is ours, and `initialState` may not use it.
+
 ## [0.1.7]
 
 ### Added

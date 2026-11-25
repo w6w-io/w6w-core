@@ -1582,3 +1582,33 @@ A host that implements these nodes MUST classify `@w6w/datetime`, `@w6w/crypto` 
 host-internal (`HOST_INTERNAL_APPS`): `@w6w/datetime` and `@w6w/list` in `SECRET_ECHO_APPS`,
 `@w6w/crypto` in `NON_ECHO_INTERNAL_APPS`; and refuse a vault secret at a `SECRET_ECHO_PARAMS` key at
 every place it refuses one on a `SECRET_ECHO_APPS` node.
+
+## Amendment — 2026-11-25: conditional loops in `@w6w/control`
+
+> **Additive.** Companion to [Engine RFC — Amendment — 2026-11-25: conditional loops](./engine.md#amendment--2026-11-25-conditional-loops--w6wcontrol--while-and-paginate).
+> It edits none of the following, which **stand unedited**, superseded in reading by this amendment:
+>
+> - the `control` row of the [Node kinds](#node-kinds) table (`if` · `foreach` · `parallel` · `wait`)
+>   and the `@w6w/control` row of the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps)
+>   table (`if`, `foreach`, `parallel`, `wait`) — `@w6w/control` also has `while`, `while-end`,
+>   `paginate` and `paginate-end` (as it already has `aggregate` and `merge`);
+> - the `run` row of the [2026-11-01 `@w6w/script` amendment](#amendment--2026-11-01-run-and-state-in-w6wscript)
+>   (`{ nodes, trigger, foreach? }`) — it reads `{ nodes, trigger, foreach?, loop? }`, `run.loop`
+>   holding the same value as `{{ loop }}` inside a While or Paginate body.
+
+| Action         | Title     | Input (`with`)                                              | Output (decision)                            |
+| -------------- | --------- | ----------------------------------------------------------- | -------------------------------------------- |
+| `while`        | Repeat    | `maxIterations`, `onMax`, `body`                            | `{ iterations, reachedMax, last }`           |
+| `while-end`    | Repeat?   | `continue`                                                  | `{ continue }`                               |
+| `paginate`     | Paginate  | `start`, `increment`, `maxIterations`, `onMax`, `body`      | `{ pages, reachedMax, items, continuation, meta }` |
+| `paginate-end` | Next page | `hasMore`, `continuation`, `meta`, `items`                  | `{ hasMore, continuation, meta, items }`     |
+
+Like every control, each routes through the one invoke seam: the host computes the decision
+(`controlDecision`) and the engine keeps the traversal (running the body, feeding the closer's
+decision into the next pass). An opener's output is the loop's result, read downstream through its
+Done port; a closer's output is its decision. The closer is a node of its own kind (`control`), not
+an edge, so the workflow graph stays a DAG.
+
+A single-node Test of a body step may carry the pass it is tested in as its start state's `loop`
+(`index`, `iteration`, `page`, `continuation`, `meta`, `previous`, `loops`), as it may carry
+`foreach`; the host treats it as data only.
