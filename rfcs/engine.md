@@ -625,3 +625,23 @@ the final tree and log with an uninterrupted run; no `append` is applied twice.
 An engine that populates `state` beside `vars`, `steps` and `trigger` as Conformance item 6 and the
 [Workflow RFC amendment](./workflow.md#amendment--2026-11-01-the-run-state-tree-workflowinitialstate-nodestate)
 describe conforms; the root list of item 6 is read as ending with `state`.
+
+## Amendment — 2026-11-25: an entry trigger with inbound edges
+
+Additive, refining the 2026-10-30 trigger-entry rule. A trigger node may have inbound edges — the
+`@w6w/form` trigger takes them from its **pre-form steps**, the steps the host runs when the form's
+page opens so their outputs can fill the form (choices, autocomplete, defaults).
+
+- **The entry is never skipped through its inbound edges.** With `entry` set, the entry node
+  executes even when every inbound edge is skipped (its sources are roots the fire did not run, so
+  their edges say nothing about whether the trigger fired). Every other node — a non-entry trigger
+  included — follows ordinary edge-skip, unchanged.
+- **Pre-form outputs.** A host that wants the pre-form steps' outputs readable downstream of the
+  entry supplies them as `startFrom: { node: <entry>, nodes: { <pre-form id>: { output } } }` — the
+  2026-10-31 partial-run mechanism, unchanged: they are recorded `succeeded` with those outputs and
+  never executed by the run.
+
+### Conformance (additive)
+
+For P→F→Z with F a trigger node and `entry: "F"`, an engine MUST run F and Z and record P skipped,
+under both schedulers.
