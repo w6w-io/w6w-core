@@ -1917,6 +1917,34 @@ A host that implements the `{{ }}` grammar MUST:
   resolves.
 - Serialize `{"now":[]}` and `{"now":["<format>"]}` back to `now()` and `now('<format>')`.
 
+## Amendment — 2026-11-25: arithmetic in `{{ }}`
+
+> Additive to [Amendment — 2026-11-11](#amendment--2026-11-11-inline-expressions-in--). It adds
+> operators to that production; its engagement, refusal, root-anchoring and serialization rules are
+> unchanged and apply to them. 0 lines are deleted.
+
+The inline-expression production also takes the arithmetic operators `+` `-` `*` `/` `%` and a
+prefix `-`, lowered to the JSONLogic operator of the same name, which `@w6w/expr` evaluates on
+numbers (each operand is converted with `Number`). `+` and `*` flatten an unparenthesised run into
+one array, as `&&` and `||` do; `-`, `/` and `%` are left-associative. Precedence, from loosest:
+ternary, `??`, `||`, `&&`, equality, relational, `+` `-`, `*` `/` `%`, prefix `!` and `-`.
+Example: `{{ nodes.list.output.pagination.page_number + 1 }}` →
+`{"+":[{"var":"nodes.list.output.pagination.page_number"},1]}`, and, as the field's only content,
+resolves to the number (type-preserved, as any single marker).
+
+A host that implements the `{{ }}` grammar MUST:
+
+- Engage the production for a top-level `+`, `-`, `*`, `/` or `%`, as for the 2026-11-11
+  operators.
+- Read a `-` directly after an operand (a path, a literal or `)`) as subtraction, so
+  `{{ vars.n -1 }}` is `{"-":[{"var":"vars.n"},1]}`; elsewhere `-1` is a number literal and `-x`
+  is negation. A `-` inside a path name stays part of the name, as before:
+  `{{ nodes.list-events.output }}` and `{{ vars.a-1 }}` are paths. Testably, `{{ vars.a - 1 }}`
+  subtracts and `{{ vars.a-1 }}` does not.
+- Fall back to the earlier productions for a dangling operator (`{{ vars.a + }}`); never fail.
+- Serialize such a payload back to infix (`{"+":[1,2]}` → `{{ 1 + 2 }}`), parenthesizing only
+  where re-parsing would otherwise differ.
+
 ## Amendment — 2026-11-22: the `connections` run-scope root
 
 A run's expressions may read the workflow's bound connections (the 2026-11-01 `connections` map)

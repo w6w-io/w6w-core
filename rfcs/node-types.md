@@ -1491,3 +1491,94 @@ A host that implements `@w6w/form` MUST:
 - Validate every submission server-side against the definition and start no run for a failing one.
 - Run a test-mode submission (an open listen session) on an unpublished workflow, and no other.
 - Classify the id as **secret-echo** and as host-internal (`HOST_INTERNAL_APPS`).
+
+## Amendment — 2026-11-25: `@w6w/datetime`, `@w6w/crypto`, `@w6w/list`; stop with error, HTTP pagination, store `update`
+
+> This section is **additive** to the node kinds, routing, and reserved-pseudo-app tables above; it
+> introduces no breaking change for an existing workflow. It edits none of the following, which
+> **stand unedited**, superseded in reading by this amendment:
+> - the [Reserved internal pseudo-apps](#reserved-internal-pseudo-apps) table, which this amendment
+>   extends with three more ids;
+> - the `@w6w/store` conformance bullet "Support exactly the seven actions …" in the
+>   [2026-10-30 `@w6w/store` amendment](#amendment--2026-10-30-the-w6wstore-host-node-f-2), which
+>   now reads **eight**, adding `update`;
+> - the `@w6w/stop` decision `{ stopped }`, which now also has a failing outcome.
+>
+> It has no companion amendment in [`invocation.md`](./invocation.md): the host performs the work.
+
+### New internal host nodes
+
+All three are **pure** computations: no connection, no I/O, no scope. They route through the one
+invoke seam to the host's internal node processor (`isInternalApp` is `true` for the reserved
+prefix) and stay **spoke-eligible**.
+
+| Id              | Actions                                                                               | Class           |
+| --------------- | ------------------------------------------------------------------------------------- | --------------- |
+| `@w6w/datetime` | `now` `format` `parse` `add` `subtract` `difference` `extract` `round` `convert`      | **secret-echo** |
+| `@w6w/crypto`   | `hash` `hmac` `verify-hmac` `uuid` `random`                                           | **non-echo**    |
+| `@w6w/list`     | `filter` `sort` `limit` `pluck` `unique` `chunk` `join` `summarize`                   | **secret-echo** |
+
+`@w6w/datetime` reads an ISO 8601 string or an epoch (`|n| < 1e11` is seconds, otherwise
+milliseconds) and an IANA `timezone` (default `UTC`). An action that yields a moment outputs
+`{ iso, epochMs, timezone, offset }`, `iso` carrying the zone's offset; `format` adds `formatted`,
+`extract` adds `part` and `value`, and `difference` outputs `{ value, unit, start, end, timezone }`
+(calendar-aware for years, quarters and months; elapsed time below).
+
+`@w6w/crypto` outputs only digests, flags and freshly generated values — never a param, nor anything
+derived from `key` — and its error messages are fixed strings. That is what makes it **non-echo**: an
+`hmac`/`verify-hmac` `key` may read a vault secret. `verify-hmac` compares in constant time.
+
+`@w6w/list` takes the array to operate on as a param (`items`; `left` and `right` for `join`) and
+outputs an object (`{ items }`, `{ values }`, `{ chunks, count }` or `{ groups }`). A field is a dot
+path into an item; an empty field is the item itself; a `__proto__`, `prototype` or `constructor`
+segment is refused.
+
+Every refusal by these nodes is deterministic: `phase: "resolution"`, never retried.
+
+### `@w6w/stop` — stop with error
+
+`@w6w/stop` gains `outcome` (`success`, the default and the existing behaviour, or `error`) and
+`message`. When the condition holds and `outcome` is `error`, the step **fails** with code
+`stopped_with_error`, phase `resolution`, non-retryable, and `message` as the error message (default
+`Stopped by workflow`); `onError`, error edges and the workflow error reroute apply as to any failed
+step. Any other `outcome` is `param_invalid`.
+
+`@w6w/stop` stays **non-echo**, but it copies `message` into the step error, which is persisted with
+the run. The engine's `SECRET_ECHO_PARAMS` (`{ "@w6w/stop": ["message"] }`) names such a param: a
+step whose raw `with` reads a vault secret **at that key** is refused before the invoke
+(`param_invalid`), as is an invoke whose params carry one there (a named ref to be resolved, or an
+inline sealed envelope). Every other key — notably `condition` — may still read a secret.
+
+### `@w6w/http` — pagination
+
+`@w6w/http` accepts `HEAD` and `OPTIONS`, and an optional `pagination`: `off` (default; output
+unchanged), `next_url` (`nextUrlPath` in the body), `link_header` (RFC 8288 `rel="next"`), `page`
+(`pageParam` from `pageStart`), `offset` (`offsetParam`, advanced by the items received; optional
+`limitParam`/`limitValue`) or `cursor` (`cursorParam` from `cursorPath`). Items are read at
+`itemsPath` (empty: the body itself). With pagination on, the output is
+`{ status, statusText, ok, headers, body, pages, items }`, the first five from the last response.
+
+A host MUST: never follow a next URL on another **origin** than the first request (the request
+headers may carry credentials); reuse the method, headers and body for every page; bound all pages
+by the step's one timeout; stop at no next page, an empty page, a non-2xx response (returning what
+was collected) or `maxPages` (default 10, at most 100); and refuse `responseType: "file"` with
+pagination.
+
+### `@w6w/store` — `update`
+
+| action   | type    | params                                                   | output                               |
+| -------- | ------- | -------------------------------------------------------- | ------------------------------------ |
+| `update` | perform | `store`*, `key`*, `fields`* (json object), `ifVersion`   | `{ key, value, version, expiresAt }` |
+
+`update` reads the entry, shallow-merges `fields` into its object value and writes it under
+`ifVersion` (the caller's, else the version it read), so a concurrent write fails `version_conflict`
+rather than being lost. A missing key fails `entry_not_found`; a non-object value fails
+`param_invalid`. A table store validates the merged row as for `set`. The entry keeps its remaining
+time to live.
+
+### Conformance (additive)
+
+A host that implements these nodes MUST classify `@w6w/datetime`, `@w6w/crypto` and `@w6w/list` as
+host-internal (`HOST_INTERNAL_APPS`): `@w6w/datetime` and `@w6w/list` in `SECRET_ECHO_APPS`,
+`@w6w/crypto` in `NON_ECHO_INTERNAL_APPS`; and refuse a vault secret at a `SECRET_ECHO_PARAMS` key at
+every place it refuses one on a `SECRET_ECHO_APPS` node.

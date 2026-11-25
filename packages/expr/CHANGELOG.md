@@ -3,6 +3,16 @@
 All notable changes to `@w6w/expr` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Arithmetic in `{{ }}` (core/rfcs/workflow.md, the 2026-11-25 amendment): `+` `-` `*` `/` `%` and a
+  prefix `-`, with JavaScript precedence, lowered to the evaluator's existing numeric operators —
+  `{{ nodes.list.output.page + 1 }}` → `{"+":[{"var":"nodes.list.output.page"},1]}`. Before, such a
+  marker parsed as one `var` path that never existed and resolved empty. `serializeTemplate` prints
+  these payloads as infix, so `{{ ={"+":[1,2]} }}` now round-trips as `{{ 1 + 2 }}`.
+
 ## [0.1.6]
 
 ### Changed
