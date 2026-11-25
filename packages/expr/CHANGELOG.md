@@ -5,6 +5,8 @@ All notable changes to `@w6w/expr` are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.8]
+
 ### Changed
 
 - `loop` is a run-scope root (core/rfcs/workflow.md, the 2026-11-25 `loop` amendment) and a reserved
