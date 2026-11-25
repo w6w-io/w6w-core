@@ -101,9 +101,8 @@ export const STATE_LIMITS: Readonly<{
 export const STATE_SECRET_MASK = "__stored__";
 export const STATE_FORBIDDEN_KEYS: readonly ["__proto__", "constructor", "prototype"] = Object
   .freeze(["__proto__", "constructor", "prototype"] as const);
-export const STATE_RESERVED_TOP_KEYS: readonly ["nodes", "trigger", "foreach"] = Object.freeze(
-  ["nodes", "trigger", "foreach"] as const,
-);
+export const STATE_RESERVED_TOP_KEYS: readonly ["nodes", "trigger", "foreach", "loop"] = Object
+  .freeze(["nodes", "trigger", "foreach", "loop"] as const);
 
 const WARNING_CODES: readonly StateWarningCode[] = [
   "not_object",
@@ -690,7 +689,7 @@ export function foldStateLog(rows: readonly StateLogRow[], uptoSeq?: number): St
 // --- starting data ----------------------------------------------------------------------------
 
 /**
- * The thirteen run-scope roots (core/rfcs/workflow.md, the run state tree amendment). A `{{ }}`
+ * The fourteen run-scope roots (core/rfcs/workflow.md, the run state tree amendment). A `{{ }}`
  * marker whose first segment is none of these is a vendor placeholder and stays literal, exactly
  * as in a `with` value; it is never an expression of ours.
  */
@@ -708,6 +707,7 @@ const RUN_SCOPE_ROOTS: ReadonlySet<string> = new Set([
   "inputs",
   "output",
   "foreach",
+  "loop",
 ]);
 
 /** The roots `Workflow.initialState` may read (2026-11-01 seed-expressions addendum). */

@@ -645,3 +645,136 @@ page opens so their outputs can fill the form (choices, autocomplete, defaults).
 
 For P→F→Z with F a trigger node and `entry: "F"`, an engine MUST run F and Z and record P skipped,
 under both schedulers.
+
+## Amendment — 2026-11-25: conditional loops — `@w6w/control` · `while` and `paginate`
+
+> **Additive.** Adds two loops to the canonical control set, each a **tandem** of an opener and a
+> closer: `while` / `while-end` ("Repeat") and `paginate` / `paginate-end` ("Paginate"). No earlier
+> sentence is edited. Read under this amendment:
+>
+> - the canonical-controls list (Summary, Goals, the section heading's "four", Conformance 5, and
+>   the 2026-10-07 amendment's reading of them) — the set also contains these four actions;
+> - Conformance 6's root list — within a While or Paginate body, `loop` is added (below);
+> - Open question 1 — nesting is settled for these loops: they nest in each other and in `foreach`,
+>   and `foreach` nests in them;
+> - the [2026-10-30](#amendment--2026-10-30-per-iteration-records-for-foreach),
+>   [2026-10-31](#amendment--2026-10-31-a-foreach-body-may-branch) and
+>   [2026-11-01 ports](#amendment--2026-11-01-a-foreachs-ports-as-edge-routes) amendments — their
+>   per-iteration records, body edges and `"each"` / `"done"` routes apply to a `while` or
+>   `paginate` opener exactly as to a `foreach`, a pass standing for an item.
+>
+> Companions: [Workflow RFC — the `loop` run-scope root](./workflow.md#amendment--2026-11-25-the-loop-run-scope-root)
+> and [Node Types RFC — conditional loops](./node-types.md#amendment--2026-11-25-conditional-loops-in-w6wcontrol).
+
+`foreach` iterates a list known before its first item. A loop whose number of passes is known only
+after each pass (poll a job until it is done; walk a vendor's pages while it says there are more)
+cannot be a back-edge, because the graph stays a DAG. It is a tandem instead: the opener runs a body,
+the body ends with the closer, and the engine feeds the closer's decision into the next pass.
+
+### The tandem
+
+| Loop     | Opener     | Closer         | The closer decides with                                 |
+| -------- | ---------- | -------------- | ------------------------------------------------------- |
+| While    | `while`    | `while-end`    | `continue` (boolean)                                    |
+| Paginate | `paginate` | `paginate-end` | `hasMore` (boolean), plus `continuation`, `meta`, `items` |
+
+1. An opener's `with.body` lists its body step ids exactly as `foreach`'s does, and the body may
+   branch through body edges.
+2. **The closer is the body's last id and its unique sink:** every other body step reaches it, and it
+   has no outgoing body edge. An opener has exactly one closer, of its own kind (`while-end` in a
+   `while`, `paginate-end` in a `paginate`). Each violation is a `PlanError` at load time: a closer
+   that is not directly in the body of an opener of its kind is `loop_closer_orphan`; an opener
+   without one is `loop_closer_missing`; a second closer, a closer that is not last, a closer with an
+   outgoing body edge, or a body step that does not reach the closer is `loop_closer_not_sink`.
+3. A body may be the closer alone (`body: ["end"]`).
+4. **Do-while.** The body always runs at least once; the closer is evaluated at the end of each pass.
+
+### Params and decisions
+
+The host computes each decision through the one invoke seam, as for every control. Every refusal is
+`param_invalid` and never echoes an input value.
+
+| Action         | Params (default)                                                                                   | Decision                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `while`        | `maxIterations` (`200`, an integer 1–10,000), `onMax` (`"fail"` or `"stop"`, default `"fail"`), `body` | `{ maxIterations, onMax }`                                                   |
+| `paginate`     | as `while`, plus `start` (`1`, finite) and `increment` (`1`, finite and not `0`)                    | `{ maxIterations, onMax, start, increment }`                                 |
+| `while-end`    | `continue` (`false`)                                                                               | `{ continue }`, a strict boolean: a non-boolean is refused, never coerced    |
+| `paginate-end` | `hasMore` (required), `continuation`, `meta`, `items`                                              | `{ hasMore: boolean, continuation: string \| null, meta: object \| null, items: unknown[] \| null }` |
+
+An empty or absent `continuation` is `null`. A closer's decision is its output. Because the closer's
+`continuation`, `meta` and `items` are stored with the loop's records and handed to the next pass, a
+closer whose `with` reads a vault secret at one of those keys is refused (`param_invalid`), as a
+`merge` entry is; `continue` and `hasMore` may compare against a secret.
+
+### Scope — the `loop` root
+
+Inside a While or Paginate body every step, the closer included, reads `loop`:
+
+| Path               | While | Paginate | Value                                                                |
+| ------------------ | ----- | -------- | -------------------------------------------------------------------- |
+| `loop.index`       | ✓     | ✓        | the 0-based pass number                                              |
+| `loop.iteration`   | ✓     | ✓        | the 1-based pass number                                              |
+| `loop.page`        |       | ✓        | `start + index × increment`: the page number, or the offset         |
+| `loop.continuation`|       | ✓        | the previous closer's `continuation`; `null` on the first pass       |
+| `loop.meta`        |       | ✓        | the previous closer's `meta`; `null` on the first pass               |
+| `loop.previous`    | ✓     | ✓        | the previous closer's whole decision; `null` on the first pass       |
+| `loop.loops.<id>`  | ✓     | ✓        | every enclosing While or Paginate by opener id, the innermost included |
+
+`loop` names the INNERMOST While or Paginate, as `foreach` names the innermost For each. The two roots
+are independent: a For each inside a Paginate reads both. Outside a While or Paginate body `loop` is
+absent. `loop` is a reserved top-level state key, like `foreach` (a static write to it warns
+`state_reserved_key`).
+
+### Execution
+
+Sequential, like `foreach`. With `max = maxIterations`:
+
+```
+for i = 0 … :
+  if i == max: onMax == "fail" → fail `loop_max_reached`; onMax == "stop" → end (reachedMax = true)
+  if canceled → stop (checked between passes)
+  run the body with loop = { index: i, iteration: i + 1, page?, continuation?, meta?, previous, loops }
+  decision = this pass's closer output
+  paginate: append decision.items when it is an array
+  if decision.continue (while) / decision.hasMore (paginate) is not true: end
+```
+
+- Each pass is a sub-block run, its body-step records checkpointed under
+  `RunState.iterations[<openerId>][<pass>]`, as a `foreach` item's are.
+- A failed body step fails the loop (with no `when: "error"` body edge to route it), as in `foreach`.
+  A Stop workflow in the body ends the loop and the run; the opener's output is `{ stopped: true }`.
+- **A false If ends the loop.** A pass in which the closer did not run, because a false `if` (or any
+  skip) left it unreached, ends the loop as if the closer had returned `false`.
+- Collected `items` are capped at 100,000; one more fails the opener with `too_large`.
+- `loop_max_reached` and `too_large` are phase `execute` and not retryable.
+
+### Output
+
+Read downstream through the opener's Done port (`steps.<openerId>.output`):
+
+- `while` → `{ iterations, reachedMax, last }`: `iterations` is the number of passes run, and `last`
+  the final closer decision (`null` when the closer never ran).
+- `paginate` → `{ pages, reachedMax, items, continuation, meta }`: `items` is every page's `items`
+  concatenated in page order; `continuation` and `meta` are the last page's (`null` when absent).
+
+`reachedMax` is `true` only when `onMax: "stop"` ended the loop.
+
+### Known gaps
+
+- **Resume restarts the loop.** A run resumed after a crash mid-loop runs the loop again from pass 0,
+  as a `foreach` restarts from its first item (Open question 2 stays open for all three loops).
+  Body steps with side effects run again on those passes.
+- **No parallel passes.** A pass depends on the previous one; there is no `parallelism`.
+- **A false If is not a "continue".** There is no way to skip the rest of one pass and still run
+  another: a skipped closer ends the loop.
+
+### Conformance (additive)
+
+An engine MUST, with `while` body `[poll, end]` where `end.continue` is
+`{{ loop.iteration < 3 }}`, run `poll` three times and output `{ iterations: 3, reachedMax: false }`
+with `last` the third decision; with `maxIterations: 2` fail `loop_max_reached` under
+`onMax: "fail"`, and output `reachedMax: true` after two passes under `"stop"`. With `paginate`
+`start: 0, increment: 50` and a closer whose `items` is two records and whose `hasMore` is
+`{{ loop.page < 100 }}`, it MUST read `loop.page` as 0, 50 and 100 and output `pages: 3` with the six
+records in order. A `while-end` outside a `while` body MUST fail planning with `loop_closer_orphan`.
+Reference tests: `w6w-workflow` `tests/loop_*_test.ts`.
